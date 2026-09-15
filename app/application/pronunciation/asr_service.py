@@ -1,0 +1,58 @@
+"""ASR service: a process-wide KanaRecognizer shared by all requests."""
+
+import logging
+import threading
+from pathlib import Path
+
+from app.core.config import Settings, get_settings
+from src.asr.inference import DEFAULT_PRETRAINED, KanaRecognizer, RecognitionResult
+
+logger = logging.getLogger(__name__)
+
+_recognizer: KanaRecognizer | None = None
+_lock = threading.Lock()
+
+
+class ASRService:
+    """Thin wrapper around KanaRecognizer with lazy, thread-safe loading.
+
+    The model is heavy (315M params), so it is loaded once and reused. Inference
+    itself is serialized with a lock — one MVP process, one model instance.
+    """
+
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or get_settings()
+
+    def load(self) -> KanaRecognizer:
+        global _recognizer
+        if _recognizer is None:
+            with _lock:
+                if _recognizer is None:
+                    checkpoint = Path(self.settings.checkpoint)
+                    if not checkpoint.exists():
+                        raise FileNotFoundError(f"ASR checkpoint not found: {checkpoint}")
+                    logger.info("Loading ASR checkpoint: %s", checkpoint)
+                    _recognizer = KanaRecognizer(
+                        checkpoint,
+                        pretrained=self.settings.pretrained or DEFAULT_PRETRAINED,
+                        inter_ctc_layer=self.settings.inter_ctc_layer,
+                        device=self.settings.device,
+                        fp16=self.settings.fp16,
+                    )
+                    logger.info("ASR model ready on %s", _recognizer.device)
+        return _recognizer
+
+    @property
+    def is_loaded(self) -> bool:
+        return _recognizer is not None
+
+    def recognize(self, audio_path: str | Path) -> RecognitionResult:
+        """Transcribe an audio file to kana."""
+        recognizer = self.load()
+        with _lock:
+            return recognizer.transcribe(audio_path)
+
+
+def get_asr_service() -> ASRService:
+    """FastAPI dependency."""
+    return ASRService()
