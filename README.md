@@ -54,9 +54,11 @@ Audio (16kHz) → CNN Feature Extractor (frozen) → Transformer Encoder (24 lay
 ## Pronunciation Evaluation API
 
 A FastAPI service that scores a spoken recording against a target Japanese text.
+One process serves both the JSON API and the practice web page.
 
 ```
-WAV --> wav2vec2 Dual CTC --> recognized kana --                                                 >-- normalize (pyopenjtalk) --> CER --> score 0-100
+WAV --> wav2vec2 Dual CTC --> recognized kana --\
+                                                 >-- normalize (pyopenjtalk) --> CER --> score 0-100
 admin target text ------------------------------/
 ```
 
@@ -67,7 +69,11 @@ uv sync
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Interactive docs: <http://localhost:8000/docs> · health check: `GET /health`
+Practice page: <http://localhost:8000> · interactive API docs: <http://localhost:8000/docs> ·
+health check: `GET /health`
+
+> The page records from the microphone, so open it over `localhost` or HTTPS —
+> browsers block mic access on plain HTTP hosts.
 
 Configuration (all optional, via environment variables):
 
@@ -78,7 +84,7 @@ Configuration (all optional, via environment variables):
 | `ASR_FP16` | `0` | FP16 inference |
 | `ASR_EAGER_LOAD` | `1` | Load the model at startup instead of on first request |
 | `MAX_AUDIO_MB` | `25` | Upload size limit |
-| `CORS_ORIGINS` | `localhost:3000`, `localhost:5173` | Comma-separated allowed origins |
+| `CORS_ORIGINS` | `localhost:3000`, `localhost:5173` | Allowed origins for *external* API clients; the page itself is same-origin |
 
 ### `POST /api/pronunciation/evaluate`
 
@@ -90,7 +96,9 @@ Configuration (all optional, via environment variables):
 | `audio` | file | `.wav` recording of the user reading it |
 
 ```bash
-curl -X POST "http://localhost:8000/api/pronunciation/evaluate"   -F "text=げんきょうもいちにちがんばりましょう"   -F "audio=@test.wav"
+curl -X POST "http://localhost:8000/api/pronunciation/evaluate" \
+  -F "text=げんきょうもいちにちがんばりましょう" \
+  -F "audio=@test.wav"
 ```
 
 ```json
@@ -135,20 +143,23 @@ score      = round(similarity * 100)
 
 **This score measures how closely the ASR transcription matches the target text — not true acoustic pronunciation quality.** The model outputs hiragana only; it does not assess pitch accent, timing, or phoneme articulation. Recording noise, an unusual speaking rate, or plain ASR error will lower the score even when pronunciation is fine, and a fluent-but-wrong reading that happens to transcribe correctly will score well. Treat it as a read-aloud accuracy check.
 
+### `GET /` — practice page
+
+A server-rendered page (Jinja2 + a little vanilla JS, no build step) that shows a target
+sentence, records from the microphone, and displays the score. The browser cannot upload
+what `MediaRecorder` produces (webm/ogg), so [`static/app.js`](app/interface/static/app.js)
+decodes the recording with the Web Audio API, downmixes to mono, resamples to the model's
+16 kHz and writes the RIFF header itself. Recording stops at 30 s to stay under the upload
+limit.
+
+Edit the sentences in [`app/constants/practice_texts.py`](app/constants/practice_texts.py) —
+kanji, kana or mixed, since the target is normalized to a reading before comparison. The
+first entry is the default.
+
 ### Tests
 
 ```bash
 uv run --extra dev pytest tests/   # scoring + normalization + API (ASR stubbed, no model load)
-```
-
-### Web UI
-
-A minimal Next.js front-end for read-aloud practice lives in [`frontend/`](frontend/) — it shows a
-target sentence, records from the microphone, and displays the score. See
-[frontend/README.md](frontend/README.md).
-
-```bash
-cd frontend && npm install && npm run dev   # http://localhost:3000
 ```
 
 ## Training

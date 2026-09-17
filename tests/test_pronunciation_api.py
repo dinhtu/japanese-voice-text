@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.application.pronunciation.asr_service import get_asr_service
+from app.constants.practice_texts import DEFAULT_PRACTICE_TEXT, PRACTICE_TEXTS
 from app.main import app
 from src.asr.inference import RecognitionResult
 
@@ -103,3 +104,22 @@ def test_missing_audio_field_is_unprocessable(client):
 
 def test_health_endpoint(client):
     assert client.get("/health").json()["status"] == "ok"
+
+
+def test_practice_page_renders_every_target(client):
+    """The page and the API are served by the same app."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+    body = response.text
+    assert DEFAULT_PRACTICE_TEXT.text in body
+    for item in PRACTICE_TEXTS:
+        assert item.text in body
+
+
+def test_static_assets_are_served(client):
+    for path, content_type in [("/static/app.css", "text/css"), ("/static/app.js", "javascript")]:
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert content_type in response.headers["content-type"]

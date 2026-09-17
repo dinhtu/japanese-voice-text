@@ -1,0 +1,442 @@
+/**
+ * Read-aloud practice: record from the mic, send a WAV to the API, show the score.
+ *
+ * The target sentences are rendered server-side (see templates/index.html), so
+ * this file only deals with recording, the request, and painting the result.
+ */
+
+const API_URL = "/api/pronunciation/evaluate";
+/** Sample rate the ASR model runs at. */
+const TARGET_SAMPLE_RATE = 16_000;
+/** Stop on our own so a forgotten recording cannot exceed the upload limit. */
+const MAX_DURATION_SECONDS = 30;
+
+const $ = (id) => document.getElementById(id);
+
+const el = {
+  chips: $("chips"),
+  targetText: $("target-text"),
+  targetReading: $("target-reading"),
+  targetMeaning: $("target-meaning"),
+  speak: $("speak"),
+  dial: $("dial"),
+  level: $("level"),
+  mic: $("mic"),
+  micIcon: $("mic-icon"),
+  status: $("status"),
+  timer: $("timer"),
+  timerBar: $("timer-bar"),
+  timerMax: $("timer-max"),
+  elapsed: $("elapsed"),
+  playback: $("playback"),
+  audio: $("audio"),
+  reset: $("reset"),
+  error: $("error"),
+  errorText: $("error-text"),
+  result: $("result"),
+  ringValue: $("ring-value"),
+  score: $("score"),
+  pill: $("pill"),
+  pillIcon: $("pill-icon"),
+  pillText: $("pill-text"),
+  feedback: $("feedback"),
+  mCer: $("m-cer"),
+  mDistance: $("m-distance"),
+  mDuration: $("m-duration"),
+  rTarget: $("r-target"),
+  rHeard: $("r-heard"),
+  diffs: $("diffs"),
+  diffsLabel: $("diffs-label"),
+  diffsList: $("diffs-list"),
+};
+
+const STATUS_LABEL = {
+  idle: "Nhấn vào micro để bắt đầu ghi âm",
+  requesting: "Đang xin quyền micro…",
+  recording: "Đang ghi âm — nhấn lại để dừng",
+  processing: "Đang xử lý bản ghi…",
+  evaluating: "Đang chấm điểm…",
+};
+
+const LEVEL_BADGE = {
+  excellent: { label: "Xuất sắc", color: "#047857", bg: "#ecfdf5", border: "#a7f3d0" },
+  good: { label: "Tốt", color: "#1d4ed8", bg: "#eff6ff", border: "#bfdbfe" },
+  fair: { label: "Khá", color: "#b45309", bg: "#fffbeb", border: "#fde68a" },
+  poor: { label: "Cần luyện thêm", color: "#be123c", bg: "#fff1f2", border: "#fecdd3" },
+  mismatch: { label: "Không khớp", color: "#be123c", bg: "#fff1f2", border: "#fecdd3" },
+};
+
+const RING_COLOR = {
+  excellent: "var(--score-excellent)",
+  good: "var(--score-good)",
+  fair: "var(--score-fair)",
+  poor: "var(--score-poor)",
+  mismatch: "var(--score-poor)",
+};
+
+const formatDuration = (seconds) =>
+  `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+
+/* ------------------------------------------------------------------ WAV */
+
+/**
+ * Decode a recorded blob into mono PCM at TARGET_SAMPLE_RATE.
+ *
+ * MediaRecorder only produces compressed containers (webm/ogg) but the API
+ * accepts .wav only, so we decode, downmix and resample in one offline pass.
+ */
+async function toMonoPcm(blob) {
+  const decodeContext = new AudioContext();
+  let decoded;
+  try {
+    decoded = await decodeContext.decodeAudioData(await blob.arrayBuffer());
+  } finally {
+    decodeContext.close().catch(() => undefined);
+  }
+
+  const frameCount = Math.max(1, Math.ceil((decoded.duration || 0) * TARGET_SAMPLE_RATE));
+  const offline = new OfflineAudioContext(1, frameCount, TARGET_SAMPLE_RATE);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+
+  return (await offline.startRendering()).getChannelData(0);
+}
+
+/** Write 16-bit PCM samples into a RIFF/WAVE container. */
+function encodeWav(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const dataSize = samples.length * bytesPerSample;
+  const view = new DataView(new ArrayBuffer(44 + dataSize));
+
+  const writeString = (offset, value) => {
+    for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // audio format: PCM
+  view.setUint16(22, 1, true); // channels: mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true); // byte rate
+  view.setUint16(32, bytesPerSample, true); // block align
+  view.setUint16(34, 8 * bytesPerSample, true); // bits per sample
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i += 1) {
+    // Clamp before scaling so loud passages clip instead of wrapping around.
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    offset += bytesPerSample;
+  }
+
+  return new Blob([view], { type: "audio/wav" });
+}
+
+/* --------------------------------------------------------------- State */
+
+let target = {
+  text: el.targetText.textContent.trim(),
+};
+let status = "idle";
+let audioUrl = null;
+
+let recorder = null;
+let stream = null;
+let audioContext = null;
+let analyser = null;
+let frameId = null;
+let timerId = null;
+let startedAt = 0;
+
+function setStatus(next) {
+  status = next;
+  const recording = next === "recording";
+  const busy = next === "requesting" || next === "processing" || next === "evaluating";
+
+  el.status.textContent = STATUS_LABEL[next];
+  el.dial.classList.toggle("is-recording", recording);
+  el.dial.classList.toggle("is-busy", busy);
+  el.mic.disabled = busy;
+  el.mic.setAttribute("aria-pressed", String(recording));
+  el.mic.setAttribute("aria-label", recording ? "Dừng ghi âm" : "Bắt đầu ghi âm");
+  el.micIcon.firstElementChild.setAttribute(
+    "href",
+    busy ? "#i-loader" : recording ? "#i-stop" : "#i-mic",
+  );
+  el.timer.hidden = !recording;
+
+  for (const chip of el.chips.children) chip.disabled = recording || busy;
+  el.reset.disabled = busy;
+}
+
+function showError(message) {
+  el.errorText.textContent = message;
+  el.error.hidden = false;
+  el.result.hidden = true;
+}
+
+function clearOutput() {
+  el.error.hidden = true;
+  el.result.hidden = true;
+}
+
+function clearPlayback() {
+  if (audioUrl) URL.revokeObjectURL(audioUrl);
+  audioUrl = null;
+  el.audio.removeAttribute("src");
+  el.playback.hidden = true;
+}
+
+/* ------------------------------------------------------------ Recording */
+
+function releaseResources() {
+  if (frameId !== null) cancelAnimationFrame(frameId);
+  frameId = null;
+
+  if (timerId !== null) clearInterval(timerId);
+  timerId = null;
+
+  stream?.getTracks().forEach((track) => track.stop());
+  stream = null;
+
+  audioContext?.close().catch(() => undefined);
+  audioContext = null;
+  analyser = null;
+
+  el.level.style.transform = "scale(1)";
+}
+
+/** Drive the ring around the mic button from the real input level. */
+function trackLevel() {
+  const samples = new Uint8Array(analyser.fftSize);
+  let level = 0;
+
+  const tick = () => {
+    analyser.getByteTimeDomainData(samples);
+
+    // RMS around the 128 midpoint of the unsigned byte waveform.
+    let sum = 0;
+    for (let i = 0; i < samples.length; i += 1) {
+      const deviation = (samples[i] - 128) / 128;
+      sum += deviation * deviation;
+    }
+    const scaled = Math.min(1, Math.sqrt(sum / samples.length) * 3.2);
+
+    // Ease toward the new value so the ring pulses instead of flickering.
+    level += (scaled - level) * 0.35;
+    el.level.style.transform = `scale(${1 + level * 0.45})`;
+
+    frameId = requestAnimationFrame(tick);
+  };
+  frameId = requestAnimationFrame(tick);
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+}
+
+async function startRecording() {
+  if (status === "recording" || status === "requesting") return;
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showError("Trình duyệt không hỗ trợ ghi âm. Hãy dùng Chrome hoặc Edge (qua HTTPS hoặc localhost).");
+    return;
+  }
+
+  setStatus("requesting");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch {
+    setStatus("idle");
+    showError("Không truy cập được micro. Hãy cho phép quyền micro trong trình duyệt.");
+    return;
+  }
+
+  audioContext = new AudioContext();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 1024;
+  audioContext.createMediaStreamSource(stream).connect(analyser);
+
+  const chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  };
+
+  recorder.onstop = async () => {
+    releaseResources();
+    setStatus("processing");
+
+    let wav;
+    try {
+      const recorded = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      if (recorded.size === 0) throw new Error("empty recording");
+      wav = encodeWav(await toMonoPcm(recorded), TARGET_SAMPLE_RATE);
+    } catch {
+      setStatus("idle");
+      showError("Không xử lý được bản ghi âm. Hãy thử ghi lại.");
+      return;
+    }
+
+    clearPlayback();
+    audioUrl = URL.createObjectURL(wav);
+    el.audio.src = audioUrl;
+    el.playback.hidden = false;
+
+    await evaluate(wav);
+  };
+
+  startedAt = Date.now();
+  el.elapsed.textContent = "● 0:00";
+  el.timerBar.style.width = "0%";
+  recorder.start();
+  setStatus("recording");
+  trackLevel();
+
+  timerId = setInterval(() => {
+    const seconds = (Date.now() - startedAt) / 1000;
+    el.elapsed.textContent = `● ${formatDuration(seconds)}`;
+    el.timerBar.style.width = `${Math.min(1, seconds / MAX_DURATION_SECONDS) * 100}%`;
+    if (seconds >= MAX_DURATION_SECONDS) stopRecording();
+  }, 100);
+}
+
+/* ------------------------------------------------------------ Evaluate */
+
+async function evaluate(wav) {
+  clearOutput();
+  setStatus("evaluating");
+
+  const formData = new FormData();
+  formData.append("text", target.text);
+  formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
+
+  try {
+    const response = await fetch(API_URL, { method: "POST", body: formData });
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((body) => body.detail)
+        .catch(() => undefined);
+      throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+    }
+    renderResult(await response.json());
+  } catch (error) {
+    showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
+  } finally {
+    setStatus("idle");
+  }
+}
+
+function renderResult(result) {
+  const badge = LEVEL_BADGE[result.feedback.level] ?? LEVEL_BADGE.mismatch;
+  const color = RING_COLOR[result.feedback.level] ?? RING_COLOR.mismatch;
+
+  const circumference = 2 * Math.PI * 52;
+  const filled = (Math.min(100, Math.max(0, result.score)) / 100) * circumference;
+  el.ringValue.style.stroke = color;
+  el.ringValue.style.strokeDasharray = `${filled} ${circumference}`;
+  el.score.style.color = color;
+  el.score.textContent = result.score;
+
+  el.pill.style.color = badge.color;
+  el.pill.style.background = badge.bg;
+  el.pill.style.borderColor = badge.border;
+  el.pillText.textContent = badge.label;
+  el.pillIcon.firstElementChild.setAttribute(
+    "href",
+    result.errors.length === 0 ? "#i-check-circle" : "#i-warning",
+  );
+
+  el.feedback.textContent = result.feedback.message;
+  el.mCer.textContent = result.cer.toFixed(3);
+  el.mDistance.textContent = `${result.distance} ký tự`;
+  el.mDuration.textContent = `${result.audio_duration.toFixed(2)}s`;
+
+  // Mark the target characters the model did not hear as expected.
+  const wrong = new Set(
+    result.errors.filter((error) => error.type !== "ins").map((error) => error.position),
+  );
+  el.rTarget.replaceChildren(
+    ...[...result.target_hiragana].map((char, index) => {
+      const node = document.createElement(wrong.has(index) ? "mark" : "span");
+      node.textContent = char;
+      return node;
+    }),
+  );
+  el.rHeard.textContent = result.recognized_hiragana || "—";
+
+  el.diffs.hidden = result.errors.length === 0;
+  if (result.errors.length > 0) {
+    el.diffsLabel.textContent = `Chi tiết ${result.errors.length} điểm lệch`;
+    const items = result.errors.slice(0, 12).map((error) => {
+      const li = document.createElement("li");
+      li.innerHTML =
+        '<span class="jp"></span><span class="to">→</span>' +
+        '<span class="jp heard"></span><span class="pos"></span>';
+      li.children[0].textContent = error.target || "∅";
+      li.children[2].textContent = error.recognized || "∅";
+      li.children[3].textContent = `#${error.position}`;
+      return li;
+    });
+    if (result.errors.length > 12) {
+      const more = document.createElement("li");
+      more.className = "more";
+      more.textContent = `+${result.errors.length - 12} nữa`;
+      items.push(more);
+    }
+    el.diffsList.replaceChildren(...items);
+  }
+
+  el.result.hidden = false;
+}
+
+/* --------------------------------------------------------------- Wiring */
+
+el.chips.addEventListener("click", (event) => {
+  const chip = event.target.closest(".chip");
+  if (!chip || chip.classList.contains("chip--active")) return;
+
+  for (const other of el.chips.children) other.classList.toggle("chip--active", other === chip);
+  target = { text: chip.dataset.text };
+  el.targetText.textContent = chip.dataset.text;
+  el.targetReading.textContent = chip.dataset.reading;
+  el.targetMeaning.textContent = chip.dataset.meaning;
+
+  clearOutput();
+  clearPlayback();
+});
+
+el.speak.addEventListener("click", () => {
+  if (!window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(target.text);
+  utterance.lang = "ja-JP";
+  utterance.rate = 0.85;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+});
+
+el.mic.addEventListener("click", () => {
+  if (status === "recording") stopRecording();
+  else startRecording();
+});
+
+el.reset.addEventListener("click", () => {
+  clearOutput();
+  clearPlayback();
+});
+
+// Release the mic if the user navigates away mid-recording.
+window.addEventListener("pagehide", releaseResources);
+
+el.timerMax.textContent = `tối đa ${formatDuration(MAX_DURATION_SECONDS)}`;
+setStatus("idle");

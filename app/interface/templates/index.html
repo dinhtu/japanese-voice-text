@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#2563eb" />
+    <meta
+      name="description"
+      content="Đọc to câu tiếng Nhật và nhận điểm phát âm từ mô hình ASR hiragana."
+    />
+    <title>発音チェック | Luyện phát âm tiếng Nhật</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎤</text></svg>"
+    />
+  </head>
+  <body>
+    <!-- Icon sprite: only the glyphs this page uses, so no icon library. -->
+    <svg hidden xmlns="http://www.w3.org/2000/svg">
+      <symbol id="i-languages" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 8 6 6M4 14l6-6 3-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" />
+      </symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4.7 6.7 9H3v6h3.7l4.3 4.3zM16 9a5 5 0 0 1 0 6M19.4 5.6a9 9 0 0 1 0 12.8" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M19 10a7 7 0 0 1-14 0M12 19v3" />
+      </symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2.5" stroke-linecap="round">
+        <path d="M12 3v4M12 17v4M5.6 5.6l2.9 2.9M15.5 15.5l2.9 2.9M3 12h4M17 12h4M5.6 18.4l2.9-2.9M15.5 8.5l2.9-2.9" />
+      </symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" />
+      </symbol>
+      <symbol id="i-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.3 3.9 2.4 17a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0ZM12 9v4M12 17v.5" />
+      </symbol>
+      <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.5 2.5 5-5" />
+      </symbol>
+      <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m12 14 4-4M3.3 18a9 9 0 1 1 17.4 0Z" />
+      </symbol>
+      <symbol id="i-waves" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 6c.6.5 1.2 1 2.5 1s1.9-.5 2.5-1 1.2-1 2.5-1 1.9.5 2.5 1 1.2 1 2.5 1 1.9-.5 2.5-1 1.2-1 2.5-1M2 12c.6.5 1.2 1 2.5 1s1.9-.5 2.5-1 1.2-1 2.5-1 1.9.5 2.5 1 1.2 1 2.5 1 1.9-.5 2.5-1 1.2-1 2.5-1M2 18c.6.5 1.2 1 2.5 1s1.9-.5 2.5-1 1.2-1 2.5-1 1.9.5 2.5 1 1.2 1 2.5 1 1.9-.5 2.5-1 1.2-1 2.5-1" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+      </symbol>
+    </svg>
+
+    <main class="page">
+      <header class="page__header">
+        <span class="badge">
+          <svg class="icon icon--sm"><use href="#i-languages" /></svg>
+          hiragana ASR · wav2vec2
+        </span>
+        <h1>Luyện phát âm tiếng Nhật</h1>
+        <p class="lead">
+          Đọc to câu bên dưới, hệ thống sẽ nhận dạng giọng nói và chấm điểm mức
+          khớp với câu mục tiêu.
+        </p>
+      </header>
+
+      <div class="stack">
+        <!-- 1. Target sentence -->
+        <section class="card">
+          <div class="card__head">
+            <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
+            <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
+              <svg class="icon icon--sm"><use href="#i-volume" /></svg>
+              Nghe mẫu
+            </button>
+          </div>
+          <div class="card__body">
+            <p class="target" id="target-text">{{ default_text.text }}</p>
+            <p class="muted" id="target-reading">{{ default_text.reading }}</p>
+            <p class="muted muted--soft" id="target-meaning">{{ default_text.meaning }}</p>
+
+            <div class="divider">
+              <p class="label">Chọn câu khác</p>
+              <div class="chips" id="chips">
+                {% for item in texts %}
+                <button
+                  type="button"
+                  class="chip{% if item.id == default_text.id %} chip--active{% endif %}"
+                  data-id="{{ item.id }}"
+                  data-text="{{ item.text }}"
+                  data-reading="{{ item.reading }}"
+                  data-meaning="{{ item.meaning }}"
+                >
+                  <svg class="icon icon--xs chip__check"><use href="#i-check" /></svg>
+                  <span class="jp">{{ item.text }}</span>
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Record -->
+        <section class="card">
+          <div class="card__head">
+            <h2 class="card__title"><span class="step">2</span> Đọc to và ghi âm</h2>
+          </div>
+          <div class="card__body recorder">
+            <div class="recorder__dial" id="dial">
+              <span class="recorder__pulse"></span>
+              <span class="recorder__level" id="level"></span>
+              <button type="button" class="mic" id="mic" aria-label="Bắt đầu ghi âm" aria-pressed="false">
+                <svg class="icon mic__icon" id="mic-icon"><use href="#i-mic" /></svg>
+              </button>
+            </div>
+
+            <p class="status" id="status" role="status" aria-live="polite">
+              Nhấn vào micro để bắt đầu ghi âm
+            </p>
+
+            <div class="timer" id="timer" hidden>
+              <div class="timer__row">
+                <span class="timer__now" id="elapsed">● 0:00</span>
+                <span id="timer-max">tối đa 0:30</span>
+              </div>
+              <div class="timer__track"><div class="timer__bar" id="timer-bar"></div></div>
+            </div>
+
+            <div class="playback" id="playback" hidden>
+              <audio controls id="audio"></audio>
+              <button type="button" class="ghost-btn" id="reset">
+                <svg class="icon icon--sm"><use href="#i-reset" /></svg>
+                Ghi lại từ đầu
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Error banner -->
+        <div class="alert rise" id="error" role="alert" hidden>
+          <svg class="icon icon--sm"><use href="#i-alert" /></svg>
+          <p id="error-text"></p>
+        </div>
+
+        <!-- 3. Result -->
+        <section class="card rise" id="result" hidden>
+          <div class="card__head">
+            <h2 class="card__title"><span class="step">3</span> Kết quả đánh giá</h2>
+          </div>
+          <div class="card__body">
+            <div class="result__top">
+              <div class="ring">
+                <svg viewBox="0 0 120 120">
+                  <circle cx="60" cy="60" r="52" class="ring__track" />
+                  <circle cx="60" cy="60" r="52" class="ring__value" id="ring-value" />
+                </svg>
+                <div class="ring__label">
+                  <span class="ring__score" id="score">0</span>
+                  <span class="ring__max">/ 100</span>
+                </div>
+              </div>
+
+              <div class="result__summary">
+                <span class="pill" id="pill">
+                  <svg class="icon icon--sm" id="pill-icon"><use href="#i-check-circle" /></svg>
+                  <span id="pill-text"></span>
+                </span>
+                <p class="muted" id="feedback"></p>
+                <div class="metrics">
+                  <div class="metric">
+                    <p class="label"><svg class="icon icon--xs"><use href="#i-gauge" /></svg> CER</p>
+                    <p class="metric__value" id="m-cer"></p>
+                  </div>
+                  <div class="metric">
+                    <p class="label"><svg class="icon icon--xs"><use href="#i-waves" /></svg> Sai lệch</p>
+                    <p class="metric__value" id="m-distance"></p>
+                  </div>
+                  <div class="metric">
+                    <p class="label"><svg class="icon icon--xs"><use href="#i-clock" /></svg> Thời lượng</p>
+                    <p class="metric__value" id="m-duration"></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="readings">
+              <div>
+                <p class="label">Mục tiêu (cách đọc)</p>
+                <p class="jp reading" id="r-target"></p>
+              </div>
+              <div>
+                <p class="label">Bạn đã đọc</p>
+                <p class="jp reading reading--heard" id="r-heard"></p>
+              </div>
+            </div>
+
+            <div class="diffs" id="diffs" hidden>
+              <p class="label" id="diffs-label"></p>
+              <ul class="diffs__list" id="diffs-list"></ul>
+            </div>
+
+            <p class="note">
+              Điểm số phản ánh mức khớp giữa kết quả nhận dạng và câu mục tiêu, chưa
+              phải đánh giá ngữ âm thật sự (trọng âm, ngữ điệu). Tiếng ồn hoặc tốc độ
+              đọc bất thường cũng có thể làm giảm điểm.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <footer class="page__footer">
+        Ghi âm chỉ được gửi tới API cục bộ để chấm điểm, không lưu lại trên máy chủ.
+      </footer>
+    </main>
+
+    <script type="module" src="{{ url_for('static', path='app.js') }}"></script>
+  </body>
+</html>
