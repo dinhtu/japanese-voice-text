@@ -38,6 +38,32 @@ The training and dataset tools used by `scripts/` (`datasets`, `wandb`, `soundde
 `unidic`, ...) are listed commented-out at the bottom of the same file — uncomment what
 you need. `uv sync` also works and installs everything at once.
 
+### Download the model checkpoint (required)
+
+The checkpoint is 603MB, so it is **not** in this repository. Nothing transcribes until
+you download it into `models/checkpoints/`:
+
+```bash
+hf download sakasegawa/japanese-wav2vec2-large-hiragana-ctc \
+    best-medium-ep5-inference.pt --local-dir models/checkpoints
+```
+
+`hf` ships with `transformers`, so it is there after the pip install above. Without it,
+plain `curl` does the same job:
+
+```bash
+curl -L -o models/checkpoints/best-medium-ep5-inference.pt \
+  https://huggingface.co/sakasegawa/japanese-wav2vec2-large-hiragana-ctc/resolve/main/best-medium-ep5-inference.pt
+```
+
+The file must end up at `models/checkpoints/best-medium-ep5-inference.pt` (631,542,555
+bytes) — that is where [app/core/config.py](app/core/config.py) looks by default. To
+serve a checkpoint from somewhere else, point `ASR_CHECKPOINT` at it instead.
+
+**If it is missing**, the server still starts and the practice page still loads, but the
+log shows `ASR checkpoint not found: ...`, `GET /health` reports `"model_loaded": false`,
+and every recording comes back `500 ASR model is not available.`
+
 ## Project layout
 
 ```
@@ -52,7 +78,7 @@ app/
 src/asr/                Model, inference, dataset, kana/phoneme converters
 static/  templates/     Practice page assets (no build step)
 scripts/                Dataset prep, training, evaluation, realtime demos
-models/checkpoints/     Checkpoints (not in git)
+models/checkpoints/     Model checkpoint — download it, see Install (not in git)
 tests/                  Scoring, normalization, API tests
 run.py                  python run.py -> serves the API + page
 ```
@@ -115,7 +141,7 @@ Configuration (all optional, via environment variables):
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Bind address `run.py` listens on (`uvicorn` takes `--host` / `--port` instead) |
-| `ASR_CHECKPOINT` | `models/checkpoints/best-medium-ep5-inference.pt` | Checkpoint to serve |
+| `ASR_CHECKPOINT` | `models/checkpoints/best-medium-ep5-inference.pt` | Checkpoint to serve — [download it first](#download-the-model-checkpoint-required) |
 | `ASR_DEVICE` | auto (`cuda` > `mps` > `cpu`) | Inference device |
 | `ASR_FP16` | `0` | FP16 inference |
 | `ASR_EAGER_LOAD` | `1` | Load the model at startup instead of on first request |
