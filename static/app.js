@@ -1,8 +1,10 @@
 /**
- * Read-aloud practice: record from the mic, send a WAV to the API, show the score.
+ * Read-aloud practice: take audio from the mic or an uploaded file, send a WAV
+ * to the API, show the score.
  *
- * The target sentences are rendered server-side (see templates/index.html), so
- * this file only deals with recording, the request, and painting the result.
+ * The preset sentences are rendered server-side (see templates/index.html), so
+ * this file only deals with the target text, the audio, the request, and
+ * painting the result.
  */
 
 /** Origin the API lives on. Empty data-api-base (the default) = same origin. */
@@ -12,6 +14,13 @@ const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
 const MAX_DURATION_SECONDS = 30;
+/** Uploads are re-encoded to 16 kHz mono (32 KB/s), so this stays well under
+ *  the server's MAX_AUDIO_MB and keeps inference short. */
+const MAX_UPLOAD_SECONDS = 120;
+/** Rejected before decoding, so a huge file never reaches the AudioContext. */
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+/** Uploads are .wav only for now, to match what the API accepts. */
+const UPLOAD_EXTENSION = ".wav";
 
 const $ = (id) => document.getElementById(id);
 
@@ -21,6 +30,10 @@ const el = {
   targetReading: $("target-reading"),
   targetMeaning: $("target-meaning"),
   speak: $("speak"),
+  customForm: $("custom-form"),
+  customInput: $("custom-input"),
+  customApply: $("custom-apply"),
+  recorder: $("recorder"),
   dial: $("dial"),
   level: $("level"),
   mic: $("mic"),
@@ -30,6 +43,9 @@ const el = {
   timerBar: $("timer-bar"),
   timerMax: $("timer-max"),
   elapsed: $("elapsed"),
+  pickFile: $("pick-file"),
+  file: $("file"),
+  uploadHint: $("upload-hint"),
   playback: $("playback"),
   audio: $("audio"),
   reset: $("reset"),
@@ -53,7 +69,7 @@ const el = {
 };
 
 const STATUS_LABEL = {
-  idle: "Nhấn vào micro để bắt đầu ghi âm",
+  idle: "Nhấn vào micro để ghi âm, hoặc tải lên file có sẵn",
   requesting: "Đang xin quyền micro…",
   recording: "Đang ghi âm — nhấn lại để dừng",
   processing: "Đang xử lý bản ghi…",
@@ -82,20 +98,25 @@ const formatDuration = (seconds) =>
 /* ------------------------------------------------------------------ WAV */
 
 /**
- * Decode a recorded blob into mono PCM at TARGET_SAMPLE_RATE.
- *
- * MediaRecorder only produces compressed containers (webm/ogg) but the API
- * accepts .wav only, so we decode, downmix and resample in one offline pass.
+ * Decode a container the browser understands (webm/ogg from MediaRecorder,
+ * wav from an upload) into an AudioBuffer.
  */
-async function toMonoPcm(blob) {
+async function decodeAudio(blob) {
   const decodeContext = new AudioContext();
-  let decoded;
   try {
-    decoded = await decodeContext.decodeAudioData(await blob.arrayBuffer());
+    return await decodeContext.decodeAudioData(await blob.arrayBuffer());
   } finally {
     decodeContext.close().catch(() => undefined);
   }
+}
 
+/**
+ * Downmix a decoded buffer to mono PCM at TARGET_SAMPLE_RATE.
+ *
+ * The API accepts .wav only and the model runs at 16 kHz, so every source —
+ * recorded or uploaded — goes through this one offline pass.
+ */
+async function toMonoPcm(decoded) {
   const frameCount = Math.max(1, Math.ceil((decoded.duration || 0) * TARGET_SAMPLE_RATE));
   const offline = new OfflineAudioContext(1, frameCount, TARGET_SAMPLE_RATE);
   const source = offline.createBufferSource();
@@ -175,7 +196,25 @@ function setStatus(next) {
   el.timer.hidden = !recording;
 
   for (const chip of el.chips.children) chip.disabled = recording || busy;
+  el.customInput.disabled = recording || busy;
+  el.customApply.disabled = recording || busy;
+  el.pickFile.disabled = recording || busy;
   el.reset.disabled = busy;
+}
+
+/** Point the practice at another sentence, whichever source picked it. */
+function setTarget({ text, reading = "", meaning = "", chip = null }) {
+  target = { text };
+  el.targetText.textContent = text;
+  el.targetReading.textContent = reading;
+  el.targetReading.hidden = !reading;
+  el.targetMeaning.textContent = meaning;
+  el.targetMeaning.hidden = !meaning;
+
+  for (const other of el.chips.children) other.classList.toggle("chip--active", other === chip);
+
+  clearOutput();
+  clearPlayback();
 }
 
 function showError(message) {
@@ -282,18 +321,14 @@ async function startRecording() {
     try {
       const recorded = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
       if (recorded.size === 0) throw new Error("empty recording");
-      wav = encodeWav(await toMonoPcm(recorded), TARGET_SAMPLE_RATE);
+      wav = encodeWav(await toMonoPcm(await decodeAudio(recorded)), TARGET_SAMPLE_RATE);
     } catch {
       setStatus("idle");
       showError("Không xử lý được bản ghi âm. Hãy thử ghi lại.");
       return;
     }
 
-    clearPlayback();
-    audioUrl = URL.createObjectURL(wav);
-    el.audio.src = audioUrl;
-    el.playback.hidden = false;
-
+    showPlayback(wav);
     await evaluate(wav);
   };
 
@@ -310,6 +345,55 @@ async function startRecording() {
     el.timerBar.style.width = `${Math.min(1, seconds / MAX_DURATION_SECONDS) * 100}%`;
     if (seconds >= MAX_DURATION_SECONDS) stopRecording();
   }, 100);
+}
+
+/* --------------------------------------------------------------- Upload */
+
+/** Show the WAV we are about to send, so the user can listen back to it. */
+function showPlayback(wav) {
+  clearPlayback();
+  audioUrl = URL.createObjectURL(wav);
+  el.audio.src = audioUrl;
+  el.playback.hidden = false;
+}
+
+/** Re-encode a picked/dropped file and score it like a fresh recording. */
+async function submitFile(file) {
+  if (!file || status !== "idle") return;
+
+  // A dropped file bypasses the input's accept filter, so check it here too.
+  if (!file.name.toLowerCase().endsWith(UPLOAD_EXTENSION)) {
+    showError(`Chỉ nhận file ${UPLOAD_EXTENSION} — file bạn chọn là "${file.name}".`);
+    return;
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    showError(`File quá lớn (tối đa ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB).`);
+    return;
+  }
+
+  clearOutput();
+  setStatus("processing");
+
+  let wav;
+  try {
+    const decoded = await decodeAudio(file);
+    if (decoded.duration > MAX_UPLOAD_SECONDS) {
+      setStatus("idle");
+      showError(
+        `File dài ${formatDuration(decoded.duration)} — tối đa ${formatDuration(MAX_UPLOAD_SECONDS)}.`,
+      );
+      return;
+    }
+    wav = encodeWav(await toMonoPcm(decoded), TARGET_SAMPLE_RATE);
+  } catch {
+    setStatus("idle");
+    showError("Không đọc được file WAV này. Hãy thử một file khác.");
+    return;
+  }
+
+  showPlayback(wav);
+  await evaluate(wav);
 }
 
 /* ------------------------------------------------------------ Evaluate */
@@ -408,14 +492,33 @@ el.chips.addEventListener("click", (event) => {
   const chip = event.target.closest(".chip");
   if (!chip || chip.classList.contains("chip--active")) return;
 
-  for (const other of el.chips.children) other.classList.toggle("chip--active", other === chip);
-  target = { text: chip.dataset.text };
-  el.targetText.textContent = chip.dataset.text;
-  el.targetReading.textContent = chip.dataset.reading;
-  el.targetMeaning.textContent = chip.dataset.meaning;
+  el.customInput.value = "";
+  setTarget({
+    text: chip.dataset.text,
+    reading: chip.dataset.reading,
+    meaning: chip.dataset.meaning,
+    chip,
+  });
+});
 
-  clearOutput();
-  clearPlayback();
+el.customForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  // Collapse the newlines a textarea allows; the API scores one sentence.
+  const text = el.customInput.value.replace(/\s+/g, " ").trim();
+  if (!text) {
+    el.customInput.focus();
+    return;
+  }
+  // No preset chip owns this text, so there is no reading or meaning to show.
+  setTarget({ text });
+});
+
+// Enter submits, Shift+Enter keeps the newline.
+el.customInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    el.customForm.requestSubmit();
+  }
 });
 
 el.speak.addEventListener("click", () => {
@@ -432,6 +535,37 @@ el.mic.addEventListener("click", () => {
   else startRecording();
 });
 
+el.pickFile.addEventListener("click", () => el.file.click());
+
+el.file.addEventListener("change", () => {
+  // One recording at a time — the input has no `multiple`, so take the first.
+  const [file] = el.file.files;
+  // Clear first, so picking the same file twice still fires a change event.
+  el.file.value = "";
+  submitFile(file);
+});
+
+// Drag & drop anywhere on the recorder card.
+for (const type of ["dragenter", "dragover"]) {
+  el.recorder.addEventListener(type, (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    el.recorder.classList.add("is-dropping");
+  });
+}
+
+for (const type of ["dragleave", "dragend"]) {
+  el.recorder.addEventListener(type, (event) => {
+    if (event.target === el.recorder) el.recorder.classList.remove("is-dropping");
+  });
+}
+
+el.recorder.addEventListener("drop", (event) => {
+  event.preventDefault();
+  el.recorder.classList.remove("is-dropping");
+  submitFile(event.dataTransfer?.files?.[0]);
+});
+
 el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
@@ -441,4 +575,6 @@ el.reset.addEventListener("click", () => {
 window.addEventListener("pagehide", releaseResources);
 
 el.timerMax.textContent = `tối đa ${formatDuration(MAX_DURATION_SECONDS)}`;
+el.uploadHint.textContent =
+  `Chỉ nhận file ${UPLOAD_EXTENSION}, tối đa ${formatDuration(MAX_UPLOAD_SECONDS)} — kéo thả vào đây cũng được`;
 setStatus("idle");

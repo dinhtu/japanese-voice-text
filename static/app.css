@@ -101,6 +101,11 @@ button:disabled {
 .muted { color: var(--ink-muted); }
 .muted--soft { color: color-mix(in srgb, var(--ink-muted) 80%, transparent); }
 
+.label svg {
+  vertical-align: -0.1em;
+  margin-right: 0.25rem;
+}
+
 .label {
   display: flex;
   align-items: center;
@@ -236,6 +241,46 @@ button:disabled {
   color: var(--ink-muted);
 }
 
+.solid-btn,
+.outline-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 0.375rem;
+  height: 2.5rem;
+  padding: 0 1rem;
+  border: 1px solid var(--brand-600);
+  border-radius: 0.625rem;
+  background: var(--brand-600);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.solid-btn:hover:not(:disabled) {
+  background: var(--brand-700);
+  border-color: var(--brand-700);
+}
+
+.outline-btn {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--brand-700);
+}
+
+.outline-btn:hover:not(:disabled) {
+  border-color: var(--brand-300);
+  background: var(--brand-50);
+}
+
+.solid-btn:disabled,
+.outline-btn:disabled {
+  opacity: 0.55;
+}
+
 /* ---------- Target sentence ---------- */
 
 .target {
@@ -295,12 +340,53 @@ button:disabled {
 .chip__check { display: none; }
 .chip--active .chip__check { display: block; }
 
+/* ---------- Custom sentence ---------- */
+
+.compose {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.compose__input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.6;
+  resize: vertical;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.compose__input::placeholder {
+  color: color-mix(in srgb, var(--ink-muted) 70%, transparent);
+}
+
+.compose__input:focus {
+  outline: 0;
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 15%, transparent);
+}
+
+.compose__input:disabled {
+  background: var(--canvas);
+  opacity: 0.7;
+}
+
 /* ---------- Recorder ---------- */
 
 .recorder {
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* Also the drop target for uploaded audio (see .is-dropping). */
+  border-radius: 0.75rem;
+  transition: background-color 0.15s;
 }
 
 .recorder__dial {
@@ -405,6 +491,51 @@ button:disabled {
   border-radius: 9999px;
   background: #f43f5e;
   transition: width 0.1s linear;
+}
+
+.upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 24rem;
+  margin-top: 1.25rem;
+}
+
+/* "hoặc" centred on a hairline, so the two input paths read as alternatives. */
+.upload__or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.upload__or::before,
+.upload__or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.upload__hint {
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+/* Drop target feedback — the whole recorder body accepts the file. */
+.recorder.is-dropping {
+  background: var(--brand-50);
+  outline: 2px dashed var(--brand-300);
+  outline-offset: -4px;
+}
+
+.recorder.is-dropping > * {
+  pointer-events: none;
 }
 
 .playback {
@@ -643,6 +774,10 @@ button:disabled {
 
   .target { font-size: 1.875rem; }
   .reading { font-size: 1.5rem; }
+
+  .compose { flex-direction: row; align-items: flex-start; }
+  /* Fixed height, pinned to the top: the textarea can grow, the button must not. */
+  .compose .solid-btn { align-self: flex-start; }
 
   .recorder__dial { width: 9rem; height: 9rem; }
   .mic { width: 7rem; height: 7rem; }

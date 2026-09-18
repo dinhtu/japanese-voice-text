@@ -250,15 +250,20 @@ score      = round(similarity * 100)
 ### `GET /` — practice page
 
 A server-rendered page (Jinja2 + a little vanilla JS, no build step) that shows a target
-sentence, records from the microphone, and displays the score. The browser cannot upload
-what `MediaRecorder` produces (webm/ogg), so [`static/app.js`](static/app.js)
-decodes the recording with the Web Audio API, downmixes to mono, resamples to the model's
-16 kHz and writes the RIFF header itself. Recording stops at 30 s to stay under the upload
-limit.
+sentence, takes the audio, and displays the score.
 
-Edit the sentences in [`app/constants/practice_texts.py`](app/constants/practice_texts.py) —
-kanji, kana or mixed, since the target is normalized to a reading before comparison. The
-first entry is the default.
+Audio comes from either the microphone or a file the user picks or drops on the recorder
+card. Neither is uploadable as-is — the API accepts `.wav` only and `MediaRecorder`
+produces webm/ogg — so [`static/app.js`](static/app.js) puts both through one path: decode
+with the Web Audio API, downmix to mono, resample to the model's 16 kHz, write the RIFF
+header itself. Recording stops at 30 s and uploads are capped at 2 min, both to stay under
+the upload limit.
+
+The target sentence is a preset chip or whatever the user types into the custom-sentence
+box. Edit the presets in
+[`app/constants/practice_texts.py`](app/constants/practice_texts.py) — kanji, kana or
+mixed, since the target is normalized to a reading before comparison. The first entry is
+the default.
 
 ### Tests
 
