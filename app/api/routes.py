@@ -7,13 +7,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from app.application.pronunciation.asr_service import ASRService, get_asr_service
-from app.application.pronunciation.use_cases import (
+from app.services.asr_service import ASRService, get_asr_service
+from app.services.use_cases import (
     EmptyTargetError,
     EvaluatePronunciationUseCase,
 )
 from app.core.config import Settings, get_settings
-from app.interface.schemas.pronunciation import EvaluateResponse
+from app.schemas.pronunciation import EvaluateResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

@@ -6,7 +6,7 @@ import struct
 import pytest
 from fastapi.testclient import TestClient
 
-from app.application.pronunciation.asr_service import get_asr_service
+from app.services.asr_service import get_asr_service
 from app.constants.practice_texts import DEFAULT_PRACTICE_TEXT, PRACTICE_TEXTS
 from app.main import app
 from src.asr.inference import RecognitionResult

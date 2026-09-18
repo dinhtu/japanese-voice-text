@@ -19,21 +19,55 @@ Available on HuggingFace: [sakasegawa/japanese-wav2vec2-large-hiragana-ctc](http
 |-------|------|:--------:|:-------:|:----------------:|
 | wav2vec2-large + 1,000h (ep5) | ReazonSpeech medium | 7.47% | 15.68% | 21.65% |
 
-## Quick Start
+## Install
 
+Python 3.11+. `pyopenjtalk` is compiled from source, so install a C++ toolchain first —
+on Windows the [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/)
+with the "Desktop development with C++" workload, on macOS/Linux a working `cc` + CMake.
+Without it the install fails on `pyopenjtalk`.
 
 ```bash
-# Install dependencies
-uv sync
+python -m venv .venv
+.venv\Scripts\activate           # macOS/Linux: source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-# Download UniDic (first time only)
-uv run python -m unidic download
+[requirements.txt](requirements.txt) covers the API, the practice page and the tests.
+The training and dataset tools used by `scripts/` (`datasets`, `wandb`, `sounddevice`,
+`unidic`, ...) are listed commented-out at the bottom of the same file — uncomment what
+you need. `uv sync` also works and installs everything at once.
+
+## Project layout
+
+```
+app/
+  main.py               FastAPI app: middleware, routers, /health
+  api/routes.py         POST /api/pronunciation/evaluate
+  api/pages.py          GET / (practice page)
+  core/config.py        Settings read from the environment
+  schemas/              Response models
+  services/             ASR service, normalization, scoring, use case
+  constants/            Practice sentences
+src/asr/                Model, inference, dataset, kana/phoneme converters
+static/  templates/     Practice page assets (no build step)
+scripts/                Dataset prep, training, evaluation, realtime demos
+models/checkpoints/     Checkpoints (not in git)
+tests/                  Scoring, normalization, API tests
+run.py                  python run.py -> serves the API + page
+```
+
+## Quick Start
+
+```bash
+# Download UniDic (first time only; needs the training deps)
+python -m unidic download
 
 # Inference on audio file
-uv run python scripts/03_infer.py --audio your_audio.wav
+python scripts/03_infer.py --audio your_audio.wav
 
 # Real-time ASR from microphone
-uv run python scripts/realtime_asr.py
+python scripts/realtime_asr.py
 ```
 
 
@@ -65,8 +99,9 @@ admin target text ------------------------------/
 ### Start
 
 ```bash
-uv sync
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python run.py
+# or, with auto-reload while developing:
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Practice page: <http://localhost:8000> · interactive API docs: <http://localhost:8000/docs> ·
@@ -79,6 +114,7 @@ Configuration (all optional, via environment variables):
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | Bind address `run.py` listens on (`uvicorn` takes `--host` / `--port` instead) |
 | `ASR_CHECKPOINT` | `models/checkpoints/best-medium-ep5-inference.pt` | Checkpoint to serve |
 | `ASR_DEVICE` | auto (`cuda` > `mps` > `cpu`) | Inference device |
 | `ASR_FP16` | `0` | FP16 inference |
@@ -147,7 +183,7 @@ score      = round(similarity * 100)
 
 A server-rendered page (Jinja2 + a little vanilla JS, no build step) that shows a target
 sentence, records from the microphone, and displays the score. The browser cannot upload
-what `MediaRecorder` produces (webm/ogg), so [`static/app.js`](app/interface/static/app.js)
+what `MediaRecorder` produces (webm/ogg), so [`static/app.js`](static/app.js)
 decodes the recording with the Web Audio API, downmixes to mono, resamples to the model's
 16 kHz and writes the RIFF header itself. Recording stops at 30 s to stay under the upload
 limit.
@@ -159,24 +195,24 @@ first entry is the default.
 ### Tests
 
 ```bash
-uv run --extra dev pytest tests/   # scoring + normalization + API (ASR stubbed, no model load)
+pytest tests/   # scoring + normalization + API (ASR stubbed, no model load)
 ```
 
 ## Training
 
 ```bash
 # Prepare dataset
-uv run python scripts/00_prepare_dataset.py --splits medium
+python scripts/00_prepare_dataset.py --splits medium
 
 # Train (large model, 1000h)
-uv run python scripts/01_train.py \
+python scripts/01_train.py \
     --pretrained reazon-research/japanese-wav2vec2-large \
     --data-split medium --dataset-dir data/datasets/reazonspeech \
     --epochs 5 --batch-size 8 --grad-accum 4 --lr 5e-5 --bf16
 
 # Evaluate
-uv run python scripts/02_evaluate.py --checkpoint models/checkpoints/best.pt --dataset jsut
-uv run python scripts/02_evaluate.py --checkpoint models/checkpoints/best.pt --dataset jvs
+python scripts/02_evaluate.py --checkpoint models/checkpoints/best.pt --dataset jsut
+python scripts/02_evaluate.py --checkpoint models/checkpoints/best.pt --dataset jvs
 ```
 
 ## Evaluation Datasets

@@ -1,16 +1,11 @@
 """Server-rendered pages (the practice UI lives in the same app as the API)."""
 
-from pathlib import Path
-
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.constants.practice_texts import DEFAULT_PRACTICE_TEXT, PRACTICE_TEXTS
-
-INTERFACE_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = INTERFACE_DIR / "templates"
-STATIC_DIR = INTERFACE_DIR / "static"
+from app.core.config import TEMPLATES_DIR
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))

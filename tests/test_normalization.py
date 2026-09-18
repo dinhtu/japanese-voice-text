@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.application.pronunciation.normalization import to_hiragana
+from app.services.normalization import to_hiragana
 
 
 @pytest.mark.parametrize(

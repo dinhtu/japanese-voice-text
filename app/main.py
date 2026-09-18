@@ -3,7 +3,8 @@
 Serves both the JSON API and the practice web page from one process.
 
 Run:
-    uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    python run.py
+    # or, with auto-reload: uvicorn app.main:app --reload --port 8000
 """
 
 import logging
@@ -13,10 +14,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.application.pronunciation.asr_service import ASRService
-from app.core.config import get_settings
-from app.interface import pages_router
-from app.interface.api import pronunciation_router
+from app.api import pages, routes
+from app.core.config import STATIC_DIR, get_settings
+from app.services.asr_service import ASRService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -54,18 +54,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount(
-    "/static",
-    StaticFiles(directory=str(pages_router.STATIC_DIR)),
-    name="static",
-)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-app.include_router(
-    pronunciation_router.router,
-    prefix="/api/pronunciation",
-    tags=["pronunciation"],
-)
-app.include_router(pages_router.router, tags=["web"])
+app.include_router(routes.router, prefix="/api/pronunciation", tags=["pronunciation"])
+app.include_router(pages.router, tags=["web"])
 
 
 @app.get("/health", tags=["health"])

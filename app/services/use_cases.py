@@ -11,9 +11,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.application.pronunciation.asr_service import ASRService
-from app.application.pronunciation.normalization import to_hiragana
-from app.application.pronunciation.scoring import ScoreResult, score_pronunciation
+from app.services.asr_service import ASRService
+from app.services.normalization import to_hiragana
+from app.services.scoring import ScoreResult, score_pronunciation
 
 logger = logging.getLogger(__name__)
 

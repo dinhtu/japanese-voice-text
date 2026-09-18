@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 
-from app.application.pronunciation.use_cases import EvaluationResult
+from app.services.use_cases import EvaluationResult
 
 
 class PronunciationErrorItem(BaseModel):

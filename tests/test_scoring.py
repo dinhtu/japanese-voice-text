@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.application.pronunciation.normalization import to_hiragana
-from app.application.pronunciation.scoring import score_pronunciation
+from app.services.normalization import to_hiragana
+from app.services.scoring import score_pronunciation
 
 TARGET = "げんきょうもいちにちがんばりましょう"
 
