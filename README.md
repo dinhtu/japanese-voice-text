@@ -157,7 +157,8 @@ health check: `GET /health`
 > The page records from the microphone, so open it over `localhost` or HTTPS —
 > browsers block mic access on plain HTTP hosts.
 
-Configuration (all optional, via environment variables):
+Configuration — copy `.env.example` to `.env` and edit it; real environment
+variables override the file:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -167,7 +168,27 @@ Configuration (all optional, via environment variables):
 | `ASR_FP16` | `0` | FP16 inference |
 | `ASR_EAGER_LOAD` | `1` | Load the model at startup instead of on first request |
 | `MAX_AUDIO_MB` | `25` | Upload size limit |
-| `CORS_ORIGINS` | `localhost:3000`, `localhost:5173` | Allowed origins for *external* API clients; the page itself is same-origin |
+| `PUBLIC_BASE_URL` | empty | Public origin for `/static/...` and `/api/...` in the page. Empty = same-origin relative URLs, which is what a reverse proxy wants |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxy IPs whose `X-Forwarded-Proto` / `-Host` headers are trusted |
+| `CORS_ORIGINS` | `localhost:3000`, `localhost:5173` | Allowed origins for *external* API clients; the page itself is same-origin, and `PUBLIC_BASE_URL` is added automatically |
+
+### Behind a reverse proxy
+
+The page emits relative asset URLs, so a plain proxy needs no configuration
+beyond forwarding the headers:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8005;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Keep `PUBLIC_BASE_URL` empty unless the HTML is served from a different host
+than the API — setting it to the wrong domain is what makes the browser fetch
+`http://127.0.0.1:8005/static/app.js` and fail CORS.
 
 ### `POST /api/pronunciation/evaluate`
 

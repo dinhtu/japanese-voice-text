@@ -5,7 +5,9 @@
  * this file only deals with recording, the request, and painting the result.
  */
 
-const API_URL = "/api/pronunciation/evaluate";
+/** Origin the API lives on. Empty data-api-base (the default) = same origin. */
+const API_BASE = (document.body.dataset.apiBase || "").replace(/\/$/, "");
+const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */

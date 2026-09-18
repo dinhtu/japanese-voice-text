@@ -5,10 +5,16 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.constants.practice_texts import DEFAULT_PRACTICE_TEXT, PRACTICE_TEXTS
-from app.core.config import TEMPLATES_DIR
+from app.core.config import TEMPLATES_DIR, get_settings
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+settings = get_settings()
+
+# Starlette's url_for() returns an absolute URL built from the request host, so
+# behind a reverse proxy it leaks the internal address (http://127.0.0.1:8005).
+# asset_url() honours PUBLIC_BASE_URL and falls back to a relative path.
+templates.env.globals["asset_url"] = settings.asset_url
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -17,5 +23,9 @@ def practice_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"texts": PRACTICE_TEXTS, "default_text": DEFAULT_PRACTICE_TEXT},
+        {
+            "texts": PRACTICE_TEXTS,
+            "default_text": DEFAULT_PRACTICE_TEXT,
+            "api_base_url": settings.api_base_url,
+        },
     )

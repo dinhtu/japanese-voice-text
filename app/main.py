@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api import pages, routes
 from app.core.config import STATIC_DIR, get_settings
@@ -44,6 +45,13 @@ app = FastAPI(
     ),
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Behind nginx/Caddy: rebuild scheme and host from X-Forwarded-*, otherwise the
+# app thinks it is on http://127.0.0.1:<port> and hands that out in redirects.
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts=settings.forwarded_allow_ips,
 )
 
 app.add_middleware(

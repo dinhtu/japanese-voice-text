@@ -4,9 +4,14 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 STATIC_DIR = ROOT_DIR / "static"
 TEMPLATES_DIR = ROOT_DIR / "templates"
+
+# Real environment variables win over the file (systemd / Docker / CI).
+load_dotenv(ROOT_DIR / ".env", override=False)
 
 DEFAULT_CHECKPOINT = ROOT_DIR / "models" / "checkpoints" / "best-medium-ep5-inference.pt"
 DEFAULT_CORS_ORIGINS = [
@@ -21,6 +26,11 @@ class Settings:
     """Config read once from the environment.
 
     Environment variables:
+        APP_HOST / APP_PORT   Bind address for `python run.py`.
+        PUBLIC_BASE_URL       Public origin the browser sees (e.g. behind nginx).
+                              Empty = emit same-origin relative URLs, which is
+                              what you want for a normal reverse proxy.
+        FORWARDED_ALLOW_IPS   Proxy IPs whose X-Forwarded-* headers are trusted.
         ASR_CHECKPOINT     Path to the .pt checkpoint.
         ASR_PRETRAINED     Base encoder id (default: taken from the checkpoint).
         ASR_INTER_CTC_LAYER
@@ -32,6 +42,12 @@ class Settings:
     """
 
     def __init__(self) -> None:
+        self.app_host = os.getenv("APP_HOST", "0.0.0.0")
+        self.app_port = int(os.getenv("APP_PORT", "8000"))
+        # No trailing slash, so f"{base}/static/..." is always well formed.
+        self.public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        self.forwarded_allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1").strip()
+
         self.checkpoint = Path(os.getenv("ASR_CHECKPOINT", str(DEFAULT_CHECKPOINT)))
         self.pretrained = os.getenv("ASR_PRETRAINED") or None
         layer = os.getenv("ASR_INTER_CTC_LAYER")
@@ -47,6 +63,24 @@ class Settings:
             if origins
             else list(DEFAULT_CORS_ORIGINS)
         )
+        # The public domain is always allowed to call its own API.
+        if self.public_base_url and self.public_base_url not in self.cors_origins:
+            self.cors_origins.append(self.public_base_url)
+
+    def asset_url(self, path: str) -> str:
+        """URL for a file in /static.
+
+        Relative by default: the page is same-origin with the API, so the
+        browser resolves it against whatever domain it loaded the page from.
+        Set PUBLIC_BASE_URL only when assets must be absolute (CDN, embedding
+        the page on another host).
+        """
+        return f"{self.public_base_url}/static/{path.lstrip('/')}"
+
+    @property
+    def api_base_url(self) -> str:
+        """Origin the page calls for /api/... ("" = same origin)."""
+        return self.public_base_url
 
 
 @lru_cache

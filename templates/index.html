@@ -9,13 +9,13 @@
       content="Đọc to câu tiếng Nhật và nhận điểm phát âm từ mô hình ASR hiragana."
     />
     <title>発音チェック | Luyện phát âm tiếng Nhật</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+    <link rel="stylesheet" href="{{ asset_url('app.css') }}" />
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎤</text></svg>"
     />
   </head>
-  <body>
+  <body data-api-base="{{ api_base_url }}">
     <!-- Icon sprite: only the glyphs this page uses, so no icon library. -->
     <svg hidden xmlns="http://www.w3.org/2000/svg">
       <symbol id="i-languages" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -234,6 +234,6 @@
       </footer>
     </main>
 
-    <script type="module" src="{{ url_for('static', path='app.js') }}"></script>
+    <script type="module" src="{{ asset_url('app.js') }}"></script>
   </body>
 </html>
