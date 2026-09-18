@@ -44,16 +44,14 @@ The checkpoint is 603MB, so it is **not** in this repository. Nothing transcribe
 you download it into `models/checkpoints/`:
 
 ```bash
-hf download sakasegawa/japanese-wav2vec2-large-hiragana-ctc \
-    best-medium-ep5-inference.pt --local-dir models/checkpoints
+hf download sakasegawa/japanese-wav2vec2-large-hiragana-ctc \ best-medium-ep5-inference.pt --local-dir models/checkpoints
 ```
 
 `hf` ships with `transformers`, so it is there after the pip install above. Without it,
 plain `curl` does the same job:
 
 ```bash
-curl -L -o models/checkpoints/best-medium-ep5-inference.pt \
-  https://huggingface.co/sakasegawa/japanese-wav2vec2-large-hiragana-ctc/resolve/main/best-medium-ep5-inference.pt
+curl -L -o models/checkpoints/best-medium-ep5-inference.pt \ https://huggingface.co/sakasegawa/japanese-wav2vec2-large-hiragana-ctc/resolve/main/best-medium-ep5-inference.pt
 ```
 
 The file must end up at `models/checkpoints/best-medium-ep5-inference.pt` (631,542,555
