@@ -6,9 +6,16 @@
 #   python -m pip install -r requirements.txt
 #   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 #
-# pyopenjtalk is compiled from source. Install a C++ toolchain FIRST or it fails:
-#   Windows      "Visual Studio Build Tools" with the "Desktop development with C++" workload
-#   macOS/Linux  a working cc + CMake
+# pyopenjtalk has no wheels on PyPI - it compiles from source on EVERY platform.
+# Install a C/C++ toolchain + CMake first or pip dies on it:
+#   Ubuntu/Debian  sudo apt update && sudo apt install -y python3.14-venv build-essential cmake python3-dev
+#   Fedora/RHEL    sudo dnf install -y gcc gcc-c++ make cmake python3-devel
+#   macOS          xcode-select --install  &&  brew install cmake
+#   Windows        "Visual Studio Build Tools" + "Desktop development with C++"
+#
+# Linux x86_64: the PyPI torch wheel pulls ~16 nvidia-* CUDA packages (several GB)
+# even with no GPU. On a CPU-only box, install torch first from the CPU index:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Web API + server-rendered practice page
 fastapi>=0.115.0

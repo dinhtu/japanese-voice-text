@@ -21,16 +21,36 @@ Available on HuggingFace: [sakasegawa/japanese-wav2vec2-large-hiragana-ctc](http
 
 ## Install
 
-Python 3.11+. `pyopenjtalk` is compiled from source, so install a C++ toolchain first —
-on Windows the [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/)
-with the "Desktop development with C++" workload, on macOS/Linux a working `cc` + CMake.
-Without it the install fails on `pyopenjtalk`.
+Python 3.11+. `pyopenjtalk` publishes no wheels on PyPI — it compiles from source on
+every platform — so install a C/C++ toolchain and CMake **before** pip runs, or the
+install dies on `pyopenjtalk`:
+
+| OS | Prerequisites |
+|----|---------------|
+| Ubuntu / Debian | `sudo apt update && sudo apt install -y python3.14-venv build-essential cmake python3-dev` |
+| Fedora / RHEL | `sudo dnf install -y gcc gcc-c++ make cmake python3-devel` |
+| macOS | `xcode-select --install` then `brew install cmake` |
+| Windows | [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/), "Desktop development with C++" workload |
+
+On Ubuntu the forgotten one is `python3-dev`: without the CPython headers the build stops
+at `fatal error: Python.h: No such file or directory`. If Python came from deadsnakes,
+install the matching `python3.11-dev` instead.
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate           # macOS/Linux: source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+On **Linux x86_64 only**, PyPI's `torch` wheel depends on ~16 `nvidia-*` CUDA packages
+plus `triton` — several GB — even on a machine with no GPU. (The Windows and macOS wheels
+are CPU-only, so this never happens there.) On a CPU-only Linux box, install torch from
+PyTorch's CPU index first:
+
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 ```
 
 [requirements.txt](requirements.txt) covers the API, the practice page and the tests.
@@ -44,15 +64,18 @@ The checkpoint is 603MB, so it is **not** in this repository. Nothing transcribe
 you download it into `models/checkpoints/`:
 
 ```bash
-hf download sakasegawa/japanese-wav2vec2-large-hiragana-ctc \ best-medium-ep5-inference.pt --local-dir models/checkpoints
+hf download sakasegawa/japanese-wav2vec2-large-hiragana-ctc best-medium-ep5-inference.pt --local-dir models/checkpoints
 ```
 
 `hf` ships with `transformers`, so it is there after the pip install above. Without it,
 plain `curl` does the same job:
 
 ```bash
-curl -L -o models/checkpoints/best-medium-ep5-inference.pt \ https://huggingface.co/sakasegawa/japanese-wav2vec2-large-hiragana-ctc/resolve/main/best-medium-ep5-inference.pt
+curl -L -o models/checkpoints/best-medium-ep5-inference.pt https://huggingface.co/sakasegawa/japanese-wav2vec2-large-hiragana-ctc/resolve/main/best-medium-ep5-inference.pt
 ```
+
+Both commands are deliberately on one line: a `\` line continuation is bash-only and
+breaks in PowerShell, where it is passed through as a literal argument.
 
 The file must end up at `models/checkpoints/best-medium-ep5-inference.pt` (631,542,555
 bytes) — that is where [app/core/config.py](app/core/config.py) looks by default. To
