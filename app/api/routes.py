@@ -96,7 +96,28 @@ async def evaluate_pronunciation(
             f.write(content)
 
         result = use_case.execute(text.strip(), tmp_path)
-        return EvaluateResponse.from_result(result)
+
+        # Same dictionary-based H/L pattern logic as /pitch-accent, but run
+        # on the ASR-recognized text instead of the target text -- gives the
+        # frontend a learner pitch curve in the exact same shape as the
+        # reference pattern (see EvaluateResponse.recognized_pitch_pattern),
+        # instead of a differently-shaped measured-audio curve. Optional and
+        # never fatal to /evaluate: garbled or empty recognition just means
+        # an empty pattern, same graceful-degrade rule as the other
+        # pitch-related facts in this file (see /coach, /pitch-contour).
+        try:
+            recognized_moras = pitch_accent_pattern(result.recognized_hiragana)
+        except ValueError:
+            recognized_moras = []
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Recognized-text pitch pattern failed; "
+                "recognized_pitch_pattern will be empty",
+                exc_info=True,
+            )
+            recognized_moras = []
+
+        return EvaluateResponse.from_result(result, recognized_moras)
 
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

@@ -2,7 +2,9 @@
 
 from pydantic import BaseModel, Field
 
+from app.schemas.pitch_accent import MoraPitchItem
 from app.services.mora_diff import mora_status
+from app.services.pitch_accent import MoraPitch
 from app.services.use_cases import EvaluationResult
 
 
@@ -44,9 +46,24 @@ class EvaluateResponse(BaseModel):
         default_factory=list,
         description="Target sentence broken into morae, each flagged correct/incorrect",
     )
+    recognized_pitch_pattern: list[MoraPitchItem] = Field(
+        default_factory=list,
+        description="Same H/L-per-mora pitch pattern shape as /pitch-accent's "
+        "`pattern`, but computed from the ASR-recognized text instead of the "
+        "target text -- i.e. the dictionary accent pattern for whatever the "
+        "model actually heard, not a measurement of the recording's audio. "
+        "This lets the frontend draw the learner's pitch with the exact same "
+        "chart as the reference pattern instead of a different-shaped, "
+        "audio-measured curve. Empty when the recognized text had no "
+        "pronounceable content.",
+    )
 
     @classmethod
-    def from_result(cls, result: EvaluationResult) -> "EvaluateResponse":
+    def from_result(
+        cls,
+        result: EvaluationResult,
+        recognized_moras: list[MoraPitch] | None = None,
+    ) -> "EvaluateResponse":
         score = result.score
         return cls(
             target_text=result.target_text,
@@ -63,5 +80,9 @@ class EvaluateResponse(BaseModel):
             mora_status=[
                 MoraStatusItem(mora=m.mora, ok=m.ok)
                 for m in mora_status(result.target_hiragana, score.errors)
+            ],
+            recognized_pitch_pattern=[
+                MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase)
+                for m in (recognized_moras or [])
             ],
         )

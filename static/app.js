@@ -11,7 +11,6 @@
 const API_BASE = (document.body.dataset.apiBase || "").replace(/\/$/, "");
 const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
 const PITCH_API_URL = `${API_BASE}/api/pronunciation/pitch-accent`;
-const PITCH_CONTOUR_API_URL = `${API_BASE}/api/pronunciation/pitch-contour`;
 const COACH_API_URL = `${API_BASE}/api/pronunciation/coach`;
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
@@ -354,7 +353,7 @@ async function startRecording() {
     }
 
     showPlayback(wav);
-    await Promise.all([evaluate(wav), comparePitch(wav)]);
+    await Promise.all([evaluate(wav), comparePitch()]);
   };
 
   startedAt = Date.now();
@@ -419,7 +418,7 @@ async function submitFile(file) {
   }
 
   showPlayback(wav);
-  await Promise.all([evaluate(wav), comparePitch(wav)]);
+  await Promise.all([evaluate(wav), comparePitch()]);
 }
 
 /* ------------------------------------------------------------ Evaluate */
@@ -441,7 +440,13 @@ async function evaluate(wav) {
         .catch(() => undefined);
       throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
     }
-    renderResult(await response.json());
+    const result = await response.json();
+    renderResult(result);
+    // Same accent-pattern shape as /pitch-accent's reference, just for the
+    // recognized text -- see EvaluateResponse.recognized_pitch_pattern and
+    // renderPitchChart()/renderPatternRow() above.
+    learnerPattern = result.recognized_pitch_pattern ?? [];
+    if (referencePattern) renderPitchChart();
   } catch (error) {
     showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
   } finally {
@@ -593,14 +598,19 @@ async function requestCoach() {
 let pitchLoadedFor = null;
 /** Reference H/L pattern for `pitchLoadedFor`, from /pitch-accent. */
 let referencePattern = null;
-/** Learner's own pitch curve for the take just recorded/uploaded, from
- *  /pitch-contour — time-normalized, not mora-aligned (see renderPitchChart). */
-let learnerContour = null;
+/** The learner's own H/L pattern, from /evaluate's recognized_pitch_pattern
+ *  -- the exact same dictionary-based accent-pattern shape as
+ *  `referencePattern` (see app/services/pitch_accent.py), just computed
+ *  from whatever the ASR actually recognized instead of the target text,
+ *  so both rows can be drawn with the same renderPatternRow(). `null` =
+ *  no take scored yet for this sentence; `[]` = a take was scored but
+ *  nothing pronounceable was recognized. Set directly by evaluate(). */
+let learnerPattern = null;
 
 function resetPitch() {
   pitchLoadedFor = null;
   referencePattern = null;
-  learnerContour = null;
+  learnerPattern = null;
   el.pitch.hidden = true;
   el.pitchBtn.setAttribute("aria-expanded", "false");
   el.pitchChart.hidden = true;
@@ -614,100 +624,89 @@ function setPitchStatus(message, isError = false) {
   el.pitchChart.hidden = true;
 }
 
-/** Semitone span (± this many semitones) mapped onto the same vertical
- *  space as the reference chart's H/L levels. */
-const PITCH_SEMITONE_RANGE = 7;
-
-/** One evenly-spaced High/Low point per mora, drawn as a single polyline
- *  between two guide levels — the same shape shown on OJAD-style pitch
- *  accent references. If the learner's own recording has been analyzed,
- *  /pitch-contour bucketed it into the same number of morae, so its curve
- *  is drawn through the *exact same x positions* as the reference dots —
- *  see the docstring on extract_pitch_per_mora for what that alignment
- *  does and does not guarantee. */
-function renderPitchChart() {
-  if (!referencePattern || referencePattern.length === 0) {
-    setPitchStatus("Không phân tích được cao độ cho câu này.", true);
-    return;
+/** Render one H/L accent pattern as a single row: a polyline/dots SVG
+ *  between two guide levels, plus its own mora labels underneath -- the
+ *  same OJAD-style shape /pitch-accent's reference chart has always used.
+ *  `variant` is "ref" or "you" (styling only). Reference and learner rows
+ *  are drawn with this exact same function -- see renderPitchChart() --
+ *  so the two look identical in shape; they're stacked rather than
+ *  overlaid because the learner's mora count can differ from the
+ *  target's (the ASR may have heard more, fewer or different morae than
+ *  the target text has), so the two patterns don't share one x-axis. */
+function renderPatternRow(pattern, variant, label) {
+  if (!pattern || pattern.length === 0) {
+    if (variant !== "you") return "";
+    return `
+      <div class="pitch__row pitch__row--empty">
+        <p class="pitch__row-label">${label}</p>
+        <p class="pitch__row-empty">Kh\u00f4ng nh\u1eadn d\u1ea1ng \u0111\u01b0\u1ee3c n\u1ed9i dung \u0111\u1ec3 ph\u00e2n t\u00edch cao \u0111\u1ed9.</p>
+      </div>
+    `;
   }
 
-  const hasLearner = Boolean(learnerContour && learnerContour.some((point) => point.voiced));
-  el.pitchTitle.textContent = hasLearner ? "Cao độ: mẫu và bạn" : "Cao độ mẫu";
-  el.pitchLegend.innerHTML = `
-    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>Mẫu</span>
-    ${hasLearner ? '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>Bạn</span>' : ""}
-  `;
-
   const columnWidth = 40;
-  const width = referencePattern.length * columnWidth;
+  const width = pattern.length * columnWidth;
   const yHigh = 22;
   const yLow = 72;
 
-  const refPoints = referencePattern.map((mora, index) => ({
+  const points = pattern.map((mora, index) => ({
     x: (index + 0.5) * columnWidth,
     y: mora.pitch === "H" ? yHigh : yLow,
   }));
-  const refPolyline = refPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  const refDots = refPoints
+  const polyline = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const dots = points
     .map((p, index) => {
-      const isHigh = referencePattern[index].pitch === "H";
+      const isHigh = pattern[index].pitch === "H";
       return `<circle class="pitch__dot${isHigh ? " pitch__dot--h" : ""}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" />`;
     })
     .join("");
-  const labels = referencePattern
+  const labels = pattern
     .map((mora) => `<span class="pitch__label">${mora.mora}</span>`)
     .join("");
 
-  let learnerSvg = "";
-  let hint = "";
-  if (hasLearner) {
-    const yMid = (yHigh + yLow) / 2;
-    const yScale = (yLow - yHigh) / 2 / PITCH_SEMITONE_RANGE;
-    const toY = (semitone) => {
-      const clamped = Math.max(-PITCH_SEMITONE_RANGE, Math.min(PITCH_SEMITONE_RANGE, semitone));
-      return yMid - clamped * yScale;
-    };
+  return `
+    <div class="pitch__row pitch__row--${variant}">
+      <p class="pitch__row-label">${label}</p>
+      <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
+        <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
+        <polyline class="pitch__line pitch__line--${variant}" points="${polyline}" />
+        ${dots}
+      </svg>
+      <div class="pitch__labels" style="grid-template-columns: repeat(${pattern.length}, 1fr)">
+        ${labels}
+      </div>
+    </div>
+  `;
+}
 
-    // One learner point per reference point (same array length, same x) —
-    // break into separate polylines wherever a mora had no voiced audio,
-    // instead of drawing a straight (misleading) line across the gap.
-    const segments = [];
-    let current = [];
-    learnerContour.forEach((point, index) => {
-      if (point.voiced && point.semitone !== null) {
-        current.push(`${refPoints[index].x.toFixed(1)},${toY(point.semitone).toFixed(1)}`);
-      } else if (current.length) {
-        segments.push(current);
-        current = [];
-      }
-    });
-    if (current.length) segments.push(current);
-
-    learnerSvg = segments
-      .filter((segment) => segment.length > 1)
-      .map((segment) => `<polyline class="pitch__line pitch__line--learner" points="${segment.join(" ")}" />`)
-      .join("");
-    hint = `<p class="pitch__hint">So khớp theo thứ tự mora, không phải căn chỉnh thời gian chính xác từng âm.</p>`;
+/** Reference pattern (from /pitch-accent, target text) and learner pattern
+ *  (from /evaluate's recognized_pitch_pattern, ASR-recognized text) drawn
+ *  as two stacked rows with the exact same renderPatternRow() -- see its
+ *  docstring for why they're stacked rather than overlaid on one axis. */
+function renderPitchChart() {
+  if (!referencePattern || referencePattern.length === 0) {
+    setPitchStatus("Kh\u00f4ng ph\u00e2n t\u00edch \u0111\u01b0\u1ee3c cao \u0111\u1ed9 cho c\u00e2u n\u00e0y.", true);
+    return;
   }
 
-  el.pitchChart.innerHTML = `
-    <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
-      <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
-      <polyline class="pitch__line" points="${refPolyline}" />
-      ${refDots}
-      ${learnerSvg}
-    </svg>
-    <div class="pitch__labels" style="grid-template-columns: repeat(${referencePattern.length}, 1fr)">
-      ${labels}
-    </div>
-    ${hint}
+  const learnerReady = learnerPattern !== null;
+  const hasLearner = learnerReady && learnerPattern.length > 0;
+  el.pitchTitle.textContent = hasLearner ? "Cao \u0111\u1ed9: m\u1eabu v\u00e0 b\u1ea1n" : "Cao \u0111\u1ed9 m\u1eabu";
+  el.pitchLegend.innerHTML = `
+    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>M\u1eabu</span>
+    ${hasLearner ? '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>B\u1ea1n</span>' : ""}
   `;
+
+  const refRow = renderPatternRow(referencePattern, "ref", "M\u1eabu");
+  const learnerRow = learnerReady ? renderPatternRow(learnerPattern, "you", "B\u1ea1n \u0111\u1ecdc") : "";
+
+  el.pitchChart.innerHTML = `${refRow}${learnerRow}`;
   el.pitchChart.hidden = false;
   el.pitchStatus.hidden = true;
 }
 
 async function loadPitchAccent(text) {
-  setPitchStatus("Đang phân tích cao độ…");
+  setPitchStatus("\u0110ang ph\u00e2n t\u00edch cao \u0111\u1ed9\u2026");
 
   try {
     const response = await fetch(`${PITCH_API_URL}?text=${encodeURIComponent(text)}`);
@@ -716,7 +715,7 @@ async function loadPitchAccent(text) {
         .json()
         .then((body) => body.detail)
         .catch(() => undefined);
-      throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+      throw new Error(detail || `Y\u00eau c\u1ea7u th\u1ea5t b\u1ea1i (HTTP ${response.status})`);
     }
     const result = await response.json();
     referencePattern = result.pattern;
@@ -726,40 +725,22 @@ async function loadPitchAccent(text) {
     referencePattern = null;
     pitchLoadedFor = null;
     setPitchStatus(
-      error instanceof Error ? error.message : "Không lấy được cao độ mẫu.",
+      error instanceof Error ? error.message : "Kh\u00f4ng l\u1ea5y \u0111\u01b0\u1ee3c cao \u0111\u1ed9 m\u1eabu.",
       true,
     );
   }
 }
 
-/** Analyze the take just recorded/uploaded and overlay it on the chart.
- *  Failure here is non-fatal — the reference pattern alone is still useful
- *  — so it degrades quietly instead of showing an error banner. */
-async function loadPitchContour(wav) {
-  try {
-    const formData = new FormData();
-    formData.append("text", target.text);
-    formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
-    const response = await fetch(PITCH_CONTOUR_API_URL, { method: "POST", body: formData });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const result = await response.json();
-    learnerContour = result.points;
-  } catch (error) {
-    learnerContour = null;
-    console.warn("Pitch contour extraction failed:", error);
-  }
-  if (referencePattern) renderPitchChart();
-}
-
-/** Show the pitch panel and load whatever it is missing: the reference
- *  pattern (once per target sentence) and the learner's contour (every
- *  take). Called right after a recording/upload is sent for scoring. */
-async function comparePitch(wav) {
+/** Show the pitch panel and make sure the reference pattern for the
+ *  current sentence is loaded (once per sentence, like before). The
+ *  learner's own pattern no longer needs a separate request: evaluate()
+ *  sets it directly from /evaluate's recognized_pitch_pattern and
+ *  re-renders once scoring finishes -- see evaluate(). */
+function comparePitch() {
   el.pitch.hidden = false;
   el.pitchBtn.setAttribute("aria-expanded", "true");
-  const tasks = [loadPitchContour(wav)];
-  if (pitchLoadedFor !== target.text) tasks.unshift(loadPitchAccent(target.text));
-  await Promise.all(tasks);
+  if (pitchLoadedFor !== target.text) return loadPitchAccent(target.text);
+  return Promise.resolve();
 }
 
 el.coachBtn.addEventListener("click", requestCoach);
@@ -854,7 +835,7 @@ el.recorder.addEventListener("drop", (event) => {
 el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
-  learnerContour = null;
+  learnerPattern = null;
   if (referencePattern) renderPitchChart();
 });
 

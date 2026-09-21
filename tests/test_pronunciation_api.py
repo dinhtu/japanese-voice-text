@@ -68,6 +68,36 @@ def test_evaluate_returns_full_result(client):
     assert body["feedback"]["level"] == "excellent"
 
 
+def test_evaluate_returns_recognized_pitch_pattern(client):
+    """Same H/L-per-mora shape as /pitch-accent's `pattern`, but computed
+    from recognized_hiragana (see app/api/routes.py's /evaluate handler
+    and app/schemas/pronunciation.py's recognized_pitch_pattern field)."""
+    response = post(client)
+    assert response.status_code == 200
+    body = response.json()
+    pattern = body["recognized_pitch_pattern"]
+    assert isinstance(pattern, list)
+    assert len(pattern) > 0
+    for item in pattern:
+        assert set(item) == {"mora", "pitch", "phrase"}
+        assert item["pitch"] in ("H", "L")
+        assert isinstance(item["phrase"], int)
+
+
+def test_evaluate_recognized_pitch_pattern_is_empty_when_recognition_is_empty():
+    """Graceful degrade: an ASR result with no pronounceable content must
+    not fail /evaluate -- it just means an empty pitch pattern (same rule
+    as the other pitch-related facts in this app, see /coach)."""
+    app.dependency_overrides[get_asr_service] = lambda: StubASRService(kana="")
+    try:
+        with TestClient(app) as c:
+            response = post(c)
+            assert response.status_code == 200
+            assert response.json()["recognized_pitch_pattern"] == []
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_empty_text_is_rejected(client):
     assert post(client, text="   ").status_code == 400
 

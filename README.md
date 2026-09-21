@@ -222,9 +222,13 @@ curl -X POST "http://localhost:8000/api/pronunciation/evaluate" \
   "audio_duration": 6.34,
   "inference_ms": 1225.2,
   "feedback": { "level": "excellent", "message": "Pronunciation matches the target very closely." },
-  "errors": []
+  "errors": [],
+  "mora_status": [{ "mora": "げ", "ok": true }],
+  "recognized_pitch_pattern": [{ "mora": "げ", "pitch": "L", "phrase": 0 }]
 }
 ```
+
+`recognized_pitch_pattern` is the same H/L-per-mora shape `/pitch-accent`'s `pattern` field returns, but run on `recognized_hiragana` instead of the target text -- the dictionary accent pattern for whatever the ASR actually heard, not a measurement of the recording's audio (see `app/services/pitch_accent.py`). This lets the practice page draw the learner's pitch with the exact same chart as the reference pattern. It is `[]` when the recognized text had no pronounceable content; it never fails the request.
 
 Errors: `400` (empty/unpronounceable `text`, non-WAV upload, oversized file), `422` (undecodable audio or a missing field), `500` (model or inference failure).
 
