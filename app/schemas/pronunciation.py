@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, Field
 
+from app.services.mora_diff import mora_status
 from app.services.use_cases import EvaluationResult
 
 
@@ -12,6 +13,13 @@ class PronunciationErrorItem(BaseModel):
     target: str
     recognized: str
     position: int
+
+
+class MoraStatusItem(BaseModel):
+    """One mora of the target sentence, correct or not (see mora_diff.py)."""
+
+    mora: str
+    ok: bool = Field(description="True = matched the target, False = mispronounced")
 
 
 class Feedback(BaseModel):
@@ -32,6 +40,10 @@ class EvaluateResponse(BaseModel):
     inference_ms: float
     feedback: Feedback
     errors: list[PronunciationErrorItem] = Field(default_factory=list)
+    mora_status: list[MoraStatusItem] = Field(
+        default_factory=list,
+        description="Target sentence broken into morae, each flagged correct/incorrect",
+    )
 
     @classmethod
     def from_result(cls, result: EvaluationResult) -> "EvaluateResponse":
@@ -48,4 +60,8 @@ class EvaluateResponse(BaseModel):
             inference_ms=result.inference_ms,
             feedback=Feedback(level=score.level, message=score.message),
             errors=[PronunciationErrorItem(**vars(e)) for e in score.errors],
+            mora_status=[
+                MoraStatusItem(mora=m.mora, ok=m.ok)
+                for m in mora_status(result.target_hiragana, score.errors)
+            ],
         )

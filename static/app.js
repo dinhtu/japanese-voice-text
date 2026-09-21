@@ -65,6 +65,8 @@ const el = {
   mDuration: $("m-duration"),
   rTarget: $("r-target"),
   rHeard: $("r-heard"),
+  syll: $("syll"),
+  syllGrid: $("syll-grid"),
   diffs: $("diffs"),
   diffsLabel: $("diffs-label"),
   diffsList: $("diffs-list"),
@@ -469,6 +471,22 @@ function renderResult(result) {
     }),
   );
   el.rHeard.textContent = result.recognized_hiragana || "—";
+
+  // Per-mora "dung/sai" grid - real character-level edit-distance data
+  // (see app/services/mora_diff.py) regrouped onto the target's morae, not
+  // a fabricated confidence score.
+  const moraStatus = result.mora_status || [];
+  el.syll.hidden = moraStatus.length === 0;
+  if (moraStatus.length > 0) {
+    el.syllGrid.replaceChildren(
+      ...moraStatus.map((m) => {
+        const cell = document.createElement("span");
+        cell.className = m.ok ? "syll__cell" : "syll__cell syll__cell--bad";
+        cell.textContent = m.mora;
+        return cell;
+      }),
+    );
+  }
 
   el.diffs.hidden = result.errors.length === 0;
   if (result.errors.length > 0) {
