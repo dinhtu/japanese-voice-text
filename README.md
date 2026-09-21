@@ -171,6 +171,10 @@ variables override the file:
 | `PUBLIC_BASE_URL` | empty | Public origin for `/static/...` and `/api/...` in the page. Empty = same-origin relative URLs, which is what a reverse proxy wants |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxy IPs whose `X-Forwarded-Proto` / `-Host` headers are trusted |
 | `CORS_ORIGINS` | `localhost:3000`, `localhost:5173` | Allowed origins for *external* API clients; the page itself is same-origin, and `PUBLIC_BASE_URL` is added automatically |
+| `OLLAMA_HOST` | `http://localhost:11434` | Local Ollama server used by `POST /api/pronunciation/coach` — never sent to a third party |
+| `OLLAMA_MODEL` | `qwen3:8b` | Model tag `/coach` asks Ollama for (must already be pulled — see [below](#post-apipronunciationcoach)) |
+| `OLLAMA_TIMEOUT_S` | `30` | Request timeout for the Ollama call |
+| `OLLAMA_TEMPERATURE` | `0.4` | Sampling temperature for the generated comment |
 
 ### Behind a reverse proxy
 
@@ -247,6 +251,68 @@ score      = round(similarity * 100)
 
 **This score measures how closely the ASR transcription matches the target text — not true acoustic pronunciation quality.** The model outputs hiragana only; it does not assess pitch accent, timing, or phoneme articulation. Recording noise, an unusual speaking rate, or plain ASR error will lower the score even when pronunciation is fine, and a fluent-but-wrong reading that happens to transcribe correctly will score well. Treat it as a read-aloud accuracy check.
 
+### `POST /api/pronunciation/coach`
+
+Natural-language Vietnamese coaching comment for one recording — the kind of
+note a teacher would leave ("ngữ điệu tự nhiên, nhưng âm ngắt っ hơi ngắn...")
+instead of raw numbers. Written by a **locally-run Ollama model**, and only
+from facts this app has already measured itself:
+
+* the same score/level/per-mora errors as `/evaluate`
+* sokuon (`っ`) / chouon (`ー`) held for less than ~55% of the recording's own
+  median mora duration (`app/services/prosody_issues.py`) — the classic
+  Vietnamese-learner "chotto" → "choto" mistake
+* whether each mora's pitch went the right direction (high/low) relative to
+  the reference pattern from `/pitch-accent`
+
+The model is never given the raw audio and is never asked to judge or measure
+anything itself — it only phrases these pre-computed facts in natural
+Vietnamese (see `app/services/coaching.py` for the full grounding rationale).
+Nothing is sent to a third party: the request goes to `OLLAMA_HOST`, normally
+`http://localhost:11434` on the same machine.
+
+**Setup (optional — the rest of the API works without it):**
+
+```bash
+# 1. Install Ollama: https://ollama.com/download
+# 2. Start the server
+ollama serve
+# 3. Pull a model (qwen3:8b is a good default: strong Vietnamese, ~5.2GB)
+ollama pull qwen3:8b
+# 4. Install the Python client
+pip install ollama
+```
+
+`multipart/form-data` — same fields as `/evaluate`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | string | Target Japanese text — same one sent to `/evaluate` |
+| `audio` | file | `.wav` recording of the user reading it |
+
+```bash
+curl -X POST "http://localhost:8000/api/pronunciation/coach" \
+  -F "text=ちょっとまってください" \
+  -F "audio=@test.wav"
+```
+
+```json
+{
+  "success": true,
+  "comment": "Ngữ điệu cả câu khá tự nhiên. Còn một chỗ: âm ngắt hơi ngắn. Ở 「っ」 hãy ngắt hẳn một nhịp — im lặng đúng bằng một âm tiết, rồi mới bật ra 「と」. Người Việt thường nối liền nên nghe thành \"choto\"."
+}
+```
+
+Errors: `400` (empty/unpronounceable `text`, non-WAV upload, oversized file),
+`422` (undecodable audio), `500` (ASR model or inference failure), `503`
+(Ollama unreachable, the model isn't pulled, or the `ollama` package isn't
+installed — the response `detail` says which, and how to fix it).
+
+Sokuon/chouon timing and pitch-direction facts both need the ASR model's own
+per-mora timing (same mechanism as `/pitch-contour`); if that alignment isn't
+available for a given recording, the comment is still generated, just without
+those two fact categories — it never blocks on them.
+
 ### `GET /` — practice page
 
 A server-rendered page (Jinja2 + a little vanilla JS, no build step) that shows a target
@@ -269,6 +335,8 @@ the default.
 
 ```bash
 pytest tests/   # scoring + normalization + API (ASR stubbed, no model load)
+                 # tests/test_coaching.py covers the pure fact-formatting logic
+                 # only -- it does not call Ollama, so it passes with no server running
 ```
 
 ## Training

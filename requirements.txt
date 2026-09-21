@@ -37,6 +37,15 @@ pyopenjtalk>=0.4.1
 pytest>=8.0
 httpx>=0.27.0
 
+# /coach: natural-language Vietnamese coaching comments via a locally-run
+# Ollama model (https://ollama.com). Optional -- the rest of the API works
+# fine without it, /coach just returns HTTP 503 until this is set up:
+#   1. Install Ollama and start it:  ollama serve
+#   2. Pull a model:                 ollama pull qwen3:8b
+#   3. pip install this package (below), then set OLLAMA_MODEL in .env if
+#      you picked a different model.
+ollama>=0.4.0
+
 # Training / dataset tooling for scripts/ — NOT needed to serve the API.
 # Uncomment the ones you need before training or running the realtime demos.
 # datasets>=3.0.0,<4.0.0

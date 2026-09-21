@@ -39,6 +39,12 @@ class Settings:
         ASR_EAGER_LOAD     1 to load the model at startup instead of first request.
         MAX_AUDIO_MB       Upload size limit (default 25).
         CORS_ORIGINS       Comma-separated origins.
+        OLLAMA_HOST        Local Ollama server URL (default http://localhost:11434).
+        OLLAMA_MODEL       Model tag to use for /coach, e.g. "qwen3:8b" (must
+                           already be pulled: `ollama pull qwen3:8b`).
+        OLLAMA_TIMEOUT_S   Request timeout in seconds (default 30).
+        OLLAMA_TEMPERATURE Sampling temperature for /coach's generated text
+                           (default 0.4 -- fairly grounded, not too random).
     """
 
     def __init__(self) -> None:
@@ -66,6 +72,15 @@ class Settings:
         # The public domain is always allowed to call its own API.
         if self.public_base_url and self.public_base_url not in self.cors_origins:
             self.cors_origins.append(self.public_base_url)
+
+        # /coach: turns app.services.prosody_issues / mora_diff / pitch
+        # findings into a natural-language Vietnamese coaching comment via
+        # a locally-run Ollama model. Never sent to a third party -- the
+        # request stays on this machine (or wherever OLLAMA_HOST points).
+        self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434").strip().rstrip("/")
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "qwen3:8b").strip()
+        self.ollama_timeout_s = float(os.getenv("OLLAMA_TIMEOUT_S", "30"))
+        self.ollama_temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.4"))
 
     def asset_url(self, path: str) -> str:
         """URL for a file in /static.

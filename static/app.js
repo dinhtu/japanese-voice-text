@@ -12,6 +12,7 @@ const API_BASE = (document.body.dataset.apiBase || "").replace(/\/$/, "");
 const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
 const PITCH_API_URL = `${API_BASE}/api/pronunciation/pitch-accent`;
 const PITCH_CONTOUR_API_URL = `${API_BASE}/api/pronunciation/pitch-contour`;
+const COACH_API_URL = `${API_BASE}/api/pronunciation/coach`;
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
@@ -76,6 +77,10 @@ const el = {
   pitchLegend: $("pitch-legend"),
   pitchStatus: $("pitch-status"),
   pitchChart: $("pitch-chart"),
+  coachBtn: $("coach-btn"),
+  coachPanel: $("coach-panel"),
+  coachStatus: $("coach-status"),
+  coachComment: $("coach-comment"),
 };
 
 const STATUS_LABEL = {
@@ -179,6 +184,9 @@ let target = {
 };
 let status = "idle";
 let audioUrl = null;
+/** The exact WAV last sent to /evaluate, kept so the on-demand /coach
+ *  request (see requestCoach()) can reuse it instead of re-recording. */
+let lastWav = null;
 
 let recorder = null;
 let stream = null;
@@ -237,6 +245,7 @@ function showError(message) {
 function clearOutput() {
   el.error.hidden = true;
   el.result.hidden = true;
+  resetCoach();
 }
 
 function clearPlayback() {
@@ -244,6 +253,7 @@ function clearPlayback() {
   audioUrl = null;
   el.audio.removeAttribute("src");
   el.playback.hidden = true;
+  lastWav = null;
 }
 
 /* ------------------------------------------------------------ Recording */
@@ -366,6 +376,7 @@ function showPlayback(wav) {
   audioUrl = URL.createObjectURL(wav);
   el.audio.src = audioUrl;
   el.playback.hidden = false;
+  lastWav = wav;
 }
 
 /** Re-encode a picked/dropped file and score it like a fresh recording. */
@@ -511,6 +522,58 @@ function renderResult(result) {
   }
 
   el.result.hidden = false;
+}
+
+/* -------------------------------------------------------------- Coaching */
+
+function resetCoach() {
+  el.coachPanel.hidden = true;
+  el.coachStatus.hidden = true;
+  el.coachStatus.classList.remove("is-error");
+  el.coachStatus.textContent = "";
+  el.coachComment.hidden = true;
+  el.coachComment.textContent = "";
+  el.coachBtn.disabled = false;
+}
+
+/** Ask the locally-run Ollama model (see app/services/coaching.py) for a
+ *  natural-language Vietnamese comment on the take just scored. On-demand
+ *  rather than automatic -- generation takes a few seconds and this app's
+ *  own score/diff/pitch feedback is already shown instantly above. */
+async function requestCoach() {
+  if (!lastWav || el.coachBtn.disabled) return;
+
+  el.coachPanel.hidden = false;
+  el.coachComment.hidden = true;
+  el.coachStatus.hidden = false;
+  el.coachStatus.classList.remove("is-error");
+  el.coachStatus.textContent = "Đang phân tích và viết nhận xét…";
+  el.coachBtn.disabled = true;
+
+  const formData = new FormData();
+  formData.append("text", target.text);
+  formData.append("audio", new File([lastWav], "recording.wav", { type: "audio/wav" }));
+
+  try {
+    const response = await fetch(COACH_API_URL, { method: "POST", body: formData });
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((body) => body.detail)
+        .catch(() => undefined);
+      throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+    }
+    const result = await response.json();
+    el.coachComment.textContent = result.comment;
+    el.coachComment.hidden = false;
+    el.coachStatus.hidden = true;
+  } catch (error) {
+    el.coachStatus.textContent =
+      error instanceof Error ? error.message : "Không tạo được nhận xét. Hãy thử lại.";
+    el.coachStatus.classList.add("is-error");
+  } finally {
+    el.coachBtn.disabled = false;
+  }
 }
 
 /* ---------------------------------------------------------- Pitch accent */
@@ -688,6 +751,8 @@ async function comparePitch(wav) {
   if (pitchLoadedFor !== target.text) tasks.unshift(loadPitchAccent(target.text));
   await Promise.all(tasks);
 }
+
+el.coachBtn.addEventListener("click", requestCoach);
 
 el.pitchBtn.addEventListener("click", () => {
   const opening = el.pitch.hidden;

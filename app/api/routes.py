@@ -9,15 +9,19 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.services.asr_service import ASRService, get_asr_service
 from src.asr.inference import load_audio
+from app.services.coaching import CoachingUnavailableError, build_facts, generate_comment
 from app.services.mora_timing import mora_time_windows
 from app.services.normalization import to_hiragana
 from app.services.pitch_accent import pitch_accent_pattern
 from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
+from app.services.prosody_issues import detect_duration_issues
+from app.services.scoring import score_pronunciation
 from app.services.use_cases import (
     EmptyTargetError,
     EvaluatePronunciationUseCase,
 )
 from app.core.config import Settings, get_settings
+from app.schemas.coaching import CoachResponse
 from app.schemas.pronunciation import EvaluateResponse
 from app.schemas.pitch_accent import PitchAccentResponse
 from app.schemas.pitch_contour import PitchContourResponse
@@ -222,3 +226,120 @@ async def get_pitch_contour(
         Path(tmp_path).unlink(missing_ok=True)
 
     return PitchContourResponse(duration=duration, points=points)
+
+
+@router.post(
+    "/coach",
+    response_model=CoachResponse,
+    summary=(
+        "Natural-language Vietnamese coaching comment for a recording, "
+        "written by a locally-run Ollama model strictly from this app's "
+        "own measured facts (score, per-mora errors, sokuon/chouon "
+        "timing, pitch-accent direction) -- never given the raw audio, "
+        "never asked to judge anything itself"
+    ),
+)
+async def coach_pronunciation(
+    text: str = Form(
+        ..., description="Same target text sent to /evaluate, so the facts line up"
+    ),
+    audio: UploadFile = File(..., description="WAV recording to analyze"),
+    asr_service: ASRService = Depends(get_asr_service),
+    settings: Settings = Depends(get_settings),
+) -> CoachResponse:
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+
+    _validate_upload(audio)
+
+    content = await audio.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+    if len(content) > settings.max_audio_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Audio exceeds the {settings.max_audio_bytes // (1024 * 1024)}MB limit.",
+        )
+    if not content.startswith(RIFF_MAGIC):
+        raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
+
+    try:
+        moras = pitch_accent_pattern(text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    target_hiragana = to_hiragana(text)
+    if not target_hiragana:
+        raise HTTPException(
+            status_code=400,
+            detail="Target text contains no pronounceable Japanese content.",
+        )
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="coach_")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+
+        recognition = asr_service.recognize(tmp_path, with_timing=True)
+        recognized_hiragana = to_hiragana(recognition.kana)
+        score = score_pronunciation(target_hiragana, recognized_hiragana)
+
+        # Sokuon/chouon duration and pitch-direction facts both need real
+        # per-mora timing (app.services.mora_timing) -- optional, same
+        # graceful-degrade rule as /pitch-contour: if ASR timing isn't
+        # available or doesn't line up, the comment is still generated,
+        # just without those two fact categories.
+        duration_issues: list = []
+        pitch_points = None
+        if recognition.char_spans is not None:
+            try:
+                samples, sample_rate = load_audio(tmp_path)
+                duration = len(samples) / sample_rate
+                windows = mora_time_windows(
+                    target_hiragana, recognition.kana, recognition.char_spans, duration,
+                )
+                if len(windows) == len(moras):
+                    duration_issues = detect_duration_issues(moras, windows)
+                    pitch_points = extract_pitch_for_windows(
+                        samples,
+                        sample_rate,
+                        windows,
+                        phrases=[m.phrase for m in moras],
+                        pitch_labels=[m.pitch for m in moras],
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Timing-dependent coaching facts (duration/pitch) failed; "
+                    "comment will be generated without them",
+                    exc_info=True,
+                )
+
+        facts = build_facts(
+            text=text,
+            score=score.score,
+            level=score.level,
+            moras=moras,
+            errors=score.errors,
+            duration_issues=duration_issues,
+            pitch_points=pitch_points,
+        )
+
+        comment = await generate_comment(facts, settings)
+        return CoachResponse(comment=comment)
+
+    except CoachingUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except RuntimeError as e:
+        logger.warning("Audio decode failed: %s", e)
+        raise HTTPException(status_code=422, detail=f"Could not read the audio: {e}") from e
+    except FileNotFoundError as e:
+        logger.error("Model unavailable: %s", e)
+        raise HTTPException(status_code=500, detail="ASR model is not available.") from e
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Coaching comment generation failed")
+        raise HTTPException(status_code=500, detail=f"Coaching failed: {e}") from e
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
