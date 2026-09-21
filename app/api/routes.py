@@ -5,15 +5,17 @@ import os
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.services.asr_service import ASRService, get_asr_service
+from app.services.pitch_accent import pitch_accent_pattern
 from app.services.use_cases import (
     EmptyTargetError,
     EvaluatePronunciationUseCase,
 )
 from app.core.config import Settings, get_settings
 from app.schemas.pronunciation import EvaluateResponse
+from app.schemas.pitch_accent import PitchAccentResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -97,3 +99,28 @@ async def evaluate_pronunciation(
         raise HTTPException(status_code=500, detail=f"Inference failed: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@router.get(
+    "/pitch-accent",
+    response_model=PitchAccentResponse,
+    summary="Reference pitch-accent pattern (cao do mau) for a Japanese text",
+)
+def get_pitch_accent(
+    text: str = Query(..., min_length=1, description="Japanese target text (kanji or kana)"),
+) -> PitchAccentResponse:
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+
+    try:
+        moras = pitch_accent_pattern(text)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Pitch accent extraction failed")
+        raise HTTPException(
+            status_code=500, detail=f"Pitch accent extraction failed: {e}"
+        ) from e
+
+    return PitchAccentResponse.from_result(text, moras)

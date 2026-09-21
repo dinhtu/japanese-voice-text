@@ -78,6 +78,10 @@
         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
       </symbol>
+      <symbol id="i-pitch" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 17 7 7l5 10 3-6 2 4 3-6" />
+      </symbol>
     </svg>
 
     <main class="page">
@@ -98,15 +102,32 @@
         <section class="card">
           <div class="card__head">
             <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
-            <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
-              <svg class="icon icon--sm"><use href="#i-volume" /></svg>
-              Nghe mẫu
-            </button>
+            <div class="card__actions">
+              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu của câu này" aria-expanded="false">
+                <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
+                Cao độ mẫu
+              </button>
+              <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
+                <svg class="icon icon--sm"><use href="#i-volume" /></svg>
+                Nghe mẫu
+              </button>
+            </div>
           </div>
           <div class="card__body">
             <p class="target" id="target-text">{{ default_text.text }}</p>
             <p class="muted" id="target-reading">{{ default_text.reading }}</p>
             <p class="muted muted--soft" id="target-meaning">{{ default_text.meaning }}</p>
+
+            <div class="pitch" id="pitch" hidden>
+              <div class="pitch__head">
+                <span class="pitch__title">Cao độ mẫu</span>
+                <span class="pitch__tag">Mẫu</span>
+              </div>
+              <div class="pitch__body" id="pitch-body">
+                <p class="pitch__status" id="pitch-status">Đang phân tích cao độ…</p>
+                <div class="pitch__chart" id="pitch-chart" hidden></div>
+              </div>
+            </div>
 
             <div class="divider">
               <p class="label">Chọn câu khác</p>

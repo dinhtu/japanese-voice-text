@@ -10,6 +10,7 @@
 /** Origin the API lives on. Empty data-api-base (the default) = same origin. */
 const API_BASE = (document.body.dataset.apiBase || "").replace(/\/$/, "");
 const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
+const PITCH_API_URL = `${API_BASE}/api/pronunciation/pitch-accent`;
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
@@ -66,6 +67,10 @@ const el = {
   diffs: $("diffs"),
   diffsLabel: $("diffs-label"),
   diffsList: $("diffs-list"),
+  pitchBtn: $("pitch-btn"),
+  pitch: $("pitch"),
+  pitchStatus: $("pitch-status"),
+  pitchChart: $("pitch-chart"),
 };
 
 const STATUS_LABEL = {
@@ -215,6 +220,7 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
 
   clearOutput();
   clearPlayback();
+  resetPitch();
 }
 
 function showError(message) {
@@ -485,6 +491,102 @@ function renderResult(result) {
 
   el.result.hidden = false;
 }
+
+/* ---------------------------------------------------------- Pitch accent */
+
+/** Text the chart currently on screen belongs to, so re-opening the panel
+ *  for the same sentence does not re-fetch it. Reset by resetPitch(). */
+let pitchLoadedFor = null;
+
+function resetPitch() {
+  pitchLoadedFor = null;
+  el.pitch.hidden = true;
+  el.pitchBtn.setAttribute("aria-expanded", "false");
+  el.pitchChart.hidden = true;
+  el.pitchChart.innerHTML = "";
+}
+
+function setPitchStatus(message, isError = false) {
+  el.pitchStatus.textContent = message;
+  el.pitchStatus.classList.toggle("is-error", isError);
+  el.pitchStatus.hidden = false;
+  el.pitchChart.hidden = true;
+}
+
+/** One evenly-spaced High/Low point per mora, drawn as a single polyline
+ *  between two guide levels — the same shape shown on OJAD-style pitch
+ *  accent references. */
+function renderPitchChart(pattern) {
+  if (!pattern || pattern.length === 0) {
+    setPitchStatus("Không phân tích được cao độ cho câu này.", true);
+    return;
+  }
+
+  const columnWidth = 40;
+  const width = pattern.length * columnWidth;
+  const yHigh = 22;
+  const yLow = 72;
+
+  const points = pattern.map((mora, index) => ({
+    x: (index + 0.5) * columnWidth,
+    y: mora.pitch === "H" ? yHigh : yLow,
+  }));
+
+  const polyline = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const dots = points
+    .map((p, index) => {
+      const isHigh = pattern[index].pitch === "H";
+      return `<circle class="pitch__dot${isHigh ? " pitch__dot--h" : ""}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" />`;
+    })
+    .join("");
+  const labels = pattern
+    .map((mora) => `<span class="pitch__label">${mora.mora}</span>`)
+    .join("");
+
+  el.pitchChart.innerHTML = `
+    <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
+      <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
+      <polyline class="pitch__line" points="${polyline}" />
+      ${dots}
+    </svg>
+    <div class="pitch__labels" style="grid-template-columns: repeat(${pattern.length}, 1fr)">
+      ${labels}
+    </div>
+  `;
+  el.pitchChart.hidden = false;
+  el.pitchStatus.hidden = true;
+}
+
+async function loadPitchAccent(text) {
+  setPitchStatus("Đang phân tích cao độ…");
+
+  try {
+    const response = await fetch(`${PITCH_API_URL}?text=${encodeURIComponent(text)}`);
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((body) => body.detail)
+        .catch(() => undefined);
+      throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+    }
+    const result = await response.json();
+    pitchLoadedFor = text;
+    renderPitchChart(result.pattern);
+  } catch (error) {
+    pitchLoadedFor = null;
+    setPitchStatus(
+      error instanceof Error ? error.message : "Không lấy được cao độ mẫu.",
+      true,
+    );
+  }
+}
+
+el.pitchBtn.addEventListener("click", () => {
+  const opening = el.pitch.hidden;
+  el.pitch.hidden = !opening;
+  el.pitchBtn.setAttribute("aria-expanded", String(opening));
+  if (opening && pitchLoadedFor !== target.text) loadPitchAccent(target.text);
+});
 
 /* --------------------------------------------------------------- Wiring */
 
