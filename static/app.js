@@ -353,7 +353,7 @@ async function startRecording() {
     }
 
     showPlayback(wav);
-    await Promise.all([evaluate(wav), comparePitch()]);
+    await Promise.all([evaluate(wav), comparePitch(), requestCoach()]);
   };
 
   startedAt = Date.now();
@@ -418,7 +418,7 @@ async function submitFile(file) {
   }
 
   showPlayback(wav);
-  await Promise.all([evaluate(wav), comparePitch()]);
+  await Promise.all([evaluate(wav), comparePitch(), requestCoach()]);
 }
 
 /* ------------------------------------------------------------ Evaluate */
@@ -548,9 +548,12 @@ function resetCoach() {
 }
 
 /** Ask the locally-run Ollama model (see app/services/coaching.py) for a
- *  natural-language Vietnamese comment on the take just scored. On-demand
- *  rather than automatic -- generation takes a few seconds and this app's
- *  own score/diff/pitch feedback is already shown instantly above. */
+ *  natural-language comment on the take just scored, in `el.coachLang`'s
+ *  language. Fired automatically alongside evaluate()/comparePitch() for
+ *  every take (see the two Promise.all([...]) call sites), and also
+ *  re-triggered by the coach button (e.g. to regenerate after switching
+ *  language) -- the `disabled` guard below keeps a manual click a no-op
+ *  while a request from either source is already in flight. */
 async function requestCoach() {
   if (!lastWav || el.coachBtn.disabled) return;
 
