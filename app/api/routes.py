@@ -166,9 +166,12 @@ async def get_pitch_contour(
         raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
 
     try:
-        num_morae = len(pitch_accent_pattern(text))
+        moras = pitch_accent_pattern(text)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    num_morae = len(moras)
+    phrase_indices = [m.phrase for m in moras]
+    pitch_labels = [m.pitch for m in moras]
 
     target_hiragana = to_hiragana(text)
 
@@ -202,7 +205,9 @@ async def get_pitch_contour(
                 windows = None
 
         if windows is not None and len(windows) == num_morae:
-            points = extract_pitch_for_windows(samples, sample_rate, windows)
+            points = extract_pitch_for_windows(
+                samples, sample_rate, windows, phrases=phrase_indices, pitch_labels=pitch_labels,
+            )
         else:
             points = extract_pitch_per_mora(samples, sample_rate, num_morae)
     except RuntimeError as e:
