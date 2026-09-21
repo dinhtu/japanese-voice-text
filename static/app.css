@@ -22,6 +22,11 @@
   --score-fair: #d97706;
   --score-poor: #e11d48;
 
+  /* Pitch-comparison chart: reference line is plain ink, the learner's own
+     recording gets a distinct warm color so it never reads as "correct"
+     or "wrong" the way reusing a score color would. */
+  --pitch-you: #ea580c;
+
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Hiragino Kaku Gothic ProN",
     "Noto Sans JP", "Yu Gothic", sans-serif;
   --font-jp: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic Medium",
@@ -323,10 +328,7 @@ button:disabled {
   color: var(--ink);
 }
 
-.pitch__tag {
-  font-size: 11px;
-  color: var(--ink-muted);
-}
+
 
 .pitch__status {
   margin: 0.5rem 0 0;
@@ -380,6 +382,47 @@ button:disabled {
   font-family: var(--font-jp);
   font-size: 0.95rem;
   color: var(--ink);
+}
+
+.pitch__line--learner {
+  stroke: var(--pitch-you);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+}
+
+.pitch__legend {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 11px;
+  color: var(--ink-muted);
+  flex: none;
+}
+
+.pitch__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.pitch__swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+}
+
+.pitch__swatch--you {
+  background: repeating-linear-gradient(
+    90deg, var(--pitch-you) 0 4px, transparent 4px 7px
+  );
+}
+
+.pitch__hint {
+  margin: 0.5rem 0 0;
+  font-size: 11px;
+  color: var(--ink-muted);
 }
 
 .divider {

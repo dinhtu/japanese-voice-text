@@ -8,7 +8,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.services.asr_service import ASRService, get_asr_service
+from src.asr.inference import load_audio
 from app.services.pitch_accent import pitch_accent_pattern
+from app.services.pitch_extraction import extract_pitch_per_mora
 from app.services.use_cases import (
     EmptyTargetError,
     EvaluatePronunciationUseCase,
@@ -16,6 +18,7 @@ from app.services.use_cases import (
 from app.core.config import Settings, get_settings
 from app.schemas.pronunciation import EvaluateResponse
 from app.schemas.pitch_accent import PitchAccentResponse
+from app.schemas.pitch_contour import PitchContourResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -124,3 +127,61 @@ def get_pitch_accent(
         ) from e
 
     return PitchAccentResponse.from_result(text, moras)
+
+
+@router.post(
+    "/pitch-contour",
+    response_model=PitchContourResponse,
+    summary=(
+        "Learner's pitch (F0) per mora from a recording, bucketed to line up "
+        "with /pitch-accent's reference pattern for the same text"
+    ),
+)
+async def get_pitch_contour(
+    text: str = Form(
+        ..., description="Same target text sent to /pitch-accent, so the buckets line up"
+    ),
+    audio: UploadFile = File(..., description="WAV recording to analyze"),
+    settings: Settings = Depends(get_settings),
+) -> PitchContourResponse:
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+
+    _validate_upload(audio)
+
+    content = await audio.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+    if len(content) > settings.max_audio_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Audio exceeds the {settings.max_audio_bytes // (1024 * 1024)}MB limit.",
+        )
+    if not content.startswith(RIFF_MAGIC):
+        raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
+
+    try:
+        num_morae = len(pitch_accent_pattern(text))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="pitch_contour_")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        samples, sample_rate = load_audio(tmp_path)
+        points = extract_pitch_per_mora(samples, sample_rate, num_morae)
+        duration = round(len(samples) / sample_rate, 2)
+    except RuntimeError as e:
+        logger.warning("Audio decode failed: %s", e)
+        raise HTTPException(status_code=422, detail=f"Could not read the audio: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Pitch contour extraction failed")
+        raise HTTPException(
+            status_code=500, detail=f"Pitch extraction failed: {e}"
+        ) from e
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    return PitchContourResponse(duration=duration, points=points)

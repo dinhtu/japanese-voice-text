@@ -11,6 +11,7 @@
 const API_BASE = (document.body.dataset.apiBase || "").replace(/\/$/, "");
 const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
 const PITCH_API_URL = `${API_BASE}/api/pronunciation/pitch-accent`;
+const PITCH_CONTOUR_API_URL = `${API_BASE}/api/pronunciation/pitch-contour`;
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
@@ -69,6 +70,8 @@ const el = {
   diffsList: $("diffs-list"),
   pitchBtn: $("pitch-btn"),
   pitch: $("pitch"),
+  pitchTitle: $("pitch-title"),
+  pitchLegend: $("pitch-legend"),
   pitchStatus: $("pitch-status"),
   pitchChart: $("pitch-chart"),
 };
@@ -335,7 +338,7 @@ async function startRecording() {
     }
 
     showPlayback(wav);
-    await evaluate(wav);
+    await Promise.all([evaluate(wav), comparePitch(wav)]);
   };
 
   startedAt = Date.now();
@@ -399,7 +402,7 @@ async function submitFile(file) {
   }
 
   showPlayback(wav);
-  await evaluate(wav);
+  await Promise.all([evaluate(wav), comparePitch(wav)]);
 }
 
 /* ------------------------------------------------------------ Evaluate */
@@ -494,12 +497,19 @@ function renderResult(result) {
 
 /* ---------------------------------------------------------- Pitch accent */
 
-/** Text the chart currently on screen belongs to, so re-opening the panel
- *  for the same sentence does not re-fetch it. Reset by resetPitch(). */
+/** Text the reference pattern on screen belongs to, so re-opening the
+ *  panel for the same sentence does not re-fetch it. Reset by resetPitch(). */
 let pitchLoadedFor = null;
+/** Reference H/L pattern for `pitchLoadedFor`, from /pitch-accent. */
+let referencePattern = null;
+/** Learner's own pitch curve for the take just recorded/uploaded, from
+ *  /pitch-contour — time-normalized, not mora-aligned (see renderPitchChart). */
+let learnerContour = null;
 
 function resetPitch() {
   pitchLoadedFor = null;
+  referencePattern = null;
+  learnerContour = null;
   el.pitch.hidden = true;
   el.pitchBtn.setAttribute("aria-expanded", "false");
   el.pitchChart.hidden = true;
@@ -513,45 +523,93 @@ function setPitchStatus(message, isError = false) {
   el.pitchChart.hidden = true;
 }
 
+/** Semitone span (± this many semitones) mapped onto the same vertical
+ *  space as the reference chart's H/L levels. */
+const PITCH_SEMITONE_RANGE = 7;
+
 /** One evenly-spaced High/Low point per mora, drawn as a single polyline
  *  between two guide levels — the same shape shown on OJAD-style pitch
- *  accent references. */
-function renderPitchChart(pattern) {
-  if (!pattern || pattern.length === 0) {
+ *  accent references. If the learner's own recording has been analyzed,
+ *  /pitch-contour bucketed it into the same number of morae, so its curve
+ *  is drawn through the *exact same x positions* as the reference dots —
+ *  see the docstring on extract_pitch_per_mora for what that alignment
+ *  does and does not guarantee. */
+function renderPitchChart() {
+  if (!referencePattern || referencePattern.length === 0) {
     setPitchStatus("Không phân tích được cao độ cho câu này.", true);
     return;
   }
 
+  const hasLearner = Boolean(learnerContour && learnerContour.some((point) => point.voiced));
+  el.pitchTitle.textContent = hasLearner ? "Cao độ: mẫu và bạn" : "Cao độ mẫu";
+  el.pitchLegend.innerHTML = `
+    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>Mẫu</span>
+    ${hasLearner ? '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>Bạn</span>' : ""}
+  `;
+
   const columnWidth = 40;
-  const width = pattern.length * columnWidth;
+  const width = referencePattern.length * columnWidth;
   const yHigh = 22;
   const yLow = 72;
 
-  const points = pattern.map((mora, index) => ({
+  const refPoints = referencePattern.map((mora, index) => ({
     x: (index + 0.5) * columnWidth,
     y: mora.pitch === "H" ? yHigh : yLow,
   }));
-
-  const polyline = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  const dots = points
+  const refPolyline = refPoints.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const refDots = refPoints
     .map((p, index) => {
-      const isHigh = pattern[index].pitch === "H";
+      const isHigh = referencePattern[index].pitch === "H";
       return `<circle class="pitch__dot${isHigh ? " pitch__dot--h" : ""}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" />`;
     })
     .join("");
-  const labels = pattern
+  const labels = referencePattern
     .map((mora) => `<span class="pitch__label">${mora.mora}</span>`)
     .join("");
+
+  let learnerSvg = "";
+  let hint = "";
+  if (hasLearner) {
+    const yMid = (yHigh + yLow) / 2;
+    const yScale = (yLow - yHigh) / 2 / PITCH_SEMITONE_RANGE;
+    const toY = (semitone) => {
+      const clamped = Math.max(-PITCH_SEMITONE_RANGE, Math.min(PITCH_SEMITONE_RANGE, semitone));
+      return yMid - clamped * yScale;
+    };
+
+    // One learner point per reference point (same array length, same x) —
+    // break into separate polylines wherever a mora had no voiced audio,
+    // instead of drawing a straight (misleading) line across the gap.
+    const segments = [];
+    let current = [];
+    learnerContour.forEach((point, index) => {
+      if (point.voiced && point.semitone !== null) {
+        current.push(`${refPoints[index].x.toFixed(1)},${toY(point.semitone).toFixed(1)}`);
+      } else if (current.length) {
+        segments.push(current);
+        current = [];
+      }
+    });
+    if (current.length) segments.push(current);
+
+    learnerSvg = segments
+      .filter((segment) => segment.length > 1)
+      .map((segment) => `<polyline class="pitch__line pitch__line--learner" points="${segment.join(" ")}" />`)
+      .join("");
+    hint = `<p class="pitch__hint">So khớp theo thứ tự mora, không phải căn chỉnh thời gian chính xác từng âm.</p>`;
+  }
 
   el.pitchChart.innerHTML = `
     <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
       <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
-      <polyline class="pitch__line" points="${polyline}" />
-      ${dots}
+      <polyline class="pitch__line" points="${refPolyline}" />
+      ${refDots}
+      ${learnerSvg}
     </svg>
-    <div class="pitch__labels" style="grid-template-columns: repeat(${pattern.length}, 1fr)">
+    <div class="pitch__labels" style="grid-template-columns: repeat(${referencePattern.length}, 1fr)">
       ${labels}
     </div>
+    ${hint}
   `;
   el.pitchChart.hidden = false;
   el.pitchStatus.hidden = true;
@@ -570,15 +628,47 @@ async function loadPitchAccent(text) {
       throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
     }
     const result = await response.json();
+    referencePattern = result.pattern;
     pitchLoadedFor = text;
-    renderPitchChart(result.pattern);
+    renderPitchChart();
   } catch (error) {
+    referencePattern = null;
     pitchLoadedFor = null;
     setPitchStatus(
       error instanceof Error ? error.message : "Không lấy được cao độ mẫu.",
       true,
     );
   }
+}
+
+/** Analyze the take just recorded/uploaded and overlay it on the chart.
+ *  Failure here is non-fatal — the reference pattern alone is still useful
+ *  — so it degrades quietly instead of showing an error banner. */
+async function loadPitchContour(wav) {
+  try {
+    const formData = new FormData();
+    formData.append("text", target.text);
+    formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
+    const response = await fetch(PITCH_CONTOUR_API_URL, { method: "POST", body: formData });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    learnerContour = result.points;
+  } catch (error) {
+    learnerContour = null;
+    console.warn("Pitch contour extraction failed:", error);
+  }
+  if (referencePattern) renderPitchChart();
+}
+
+/** Show the pitch panel and load whatever it is missing: the reference
+ *  pattern (once per target sentence) and the learner's contour (every
+ *  take). Called right after a recording/upload is sent for scoring. */
+async function comparePitch(wav) {
+  el.pitch.hidden = false;
+  el.pitchBtn.setAttribute("aria-expanded", "true");
+  const tasks = [loadPitchContour(wav)];
+  if (pitchLoadedFor !== target.text) tasks.unshift(loadPitchAccent(target.text));
+  await Promise.all(tasks);
 }
 
 el.pitchBtn.addEventListener("click", () => {
@@ -671,6 +761,8 @@ el.recorder.addEventListener("drop", (event) => {
 el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
+  learnerContour = null;
+  if (referencePattern) renderPitchChart();
 });
 
 // Release the mic if the user navigates away mid-recording.
