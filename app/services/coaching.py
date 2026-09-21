@@ -1,10 +1,18 @@
 """Turns this app's already-measured pronunciation facts (score, per-mora
 correctness, sokuon/chouon timing, pitch-accent direction match) into a
-short, natural-language Vietnamese coaching comment, via a locally-run LLM
-through Ollama (https://ollama.com) -- see .env.example for OLLAMA_HOST /
-OLLAMA_MODEL, and the README for install/pull instructions. Nothing here
-is sent to a third party: the request goes to whatever OLLAMA_HOST points
-at, normally http://localhost:11434 on the same machine.
+short, natural-language coaching comment -- split into an "assessment" and
+a "suggestion" (see CoachingComment) and written in the caller's requested
+language, see SUPPORTED_LANGUAGES -- via a locally-run LLM through Ollama
+(https://ollama.com) -- see .env.example for OLLAMA_HOST / OLLAMA_MODEL,
+and the README for install/pull instructions. Nothing here is sent to a
+third party: the request goes to whatever OLLAMA_HOST points at, normally
+http://localhost:11434 on the same machine.
+
+The `facts` block handed to the model (see _format_facts) stays
+Vietnamese-labeled regardless of the requested output language -- it is
+never shown to the end user, only read by the model, and the system
+prompt for each language explicitly tells it to write its answer in that
+language no matter what language the data itself is labeled in.
 
 ## Why an LLM at all, and why grounded
 
@@ -22,19 +30,31 @@ facts, in natural Vietnamese. The measurement stays 100% deterministic
 and testable (see tests/test_coaching.py for the parts that don't need
 Ollama itself); the model's only job is phrasing.
 
+## Why structured JSON output
+
+The frontend shows the assessment ("nhan xet") and the practice suggestion
+("goi y tap luyen") as two separately labeled sections rather than one
+paragraph, so the model is constrained (via Ollama's `format` parameter,
+see COMMENT_JSON_SCHEMA) to return a small JSON object with exactly those
+two keys instead of free text this module would otherwise have to split
+itself with no reliable boundary between the two.
+
 ## Limitation
 
 A local model can still ignore "only describe these facts" occasionally --
 smaller/faster models drift more than larger ones (this is exactly why
 the system prompt repeats the constraint and gives a style example rather
-than trusting a single instruction). This module does not fact-check the
-generated text against `facts` before returning it: treat the comment as
-a best-effort coaching aid to read alongside the verified score, mora
-grid and pitch chart, not as a verified report on its own.
+than trusting a single instruction). The `format` schema constrains the
+JSON *shape* the model returns, not the *truthfulness* of its content --
+this module does not fact-check the generated text against `facts` before
+returning it: treat the comment as a best-effort coaching aid to read
+alongside the verified score, mora grid and pitch chart, not as a
+verified report on its own.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -45,7 +65,15 @@ if TYPE_CHECKING:
     from app.services.pitch_accent import MoraPitch
     from app.services.scoring import PronunciationError
 
-SYSTEM_PROMPT = """\
+DEFAULT_LANG = "vi"
+
+# One full system prompt per supported output language, rather than one
+# prompt plus a "write in {lang}" bolt-on -- a translated instruction set
+# keeps the rules (grounding, JSON shape, no bullet points, no raw numbers,
+# style example) natural in that language instead of reading like a
+# translation of a translation once relayed through the model.
+SYSTEM_PROMPTS: dict[str, str] = {
+    "vi": """\
 Bạn là một giáo viên dạy phát âm tiếng Nhật cho người Việt, đang nhận xét một \
 lượt học viên đọc to một câu tiếng Nhật. Bạn sẽ nhận được một khối dữ liệu mô \
 tả CHÍNH XÁC những gì đã đo được từ lượt đọc đó.
@@ -53,20 +81,94 @@ tả CHÍNH XÁC những gì đã đo được từ lượt đọc đó.
 QUY TẮC BẮT BUỘC:
 - Chỉ nhận xét đúng những gì có trong dữ liệu được cung cấp. Tuyệt đối không \
 suy đoán hay bịa thêm lỗi không có trong dữ liệu.
-- Nếu dữ liệu cho thấy không có vấn đề gì đáng kể, hãy khen ngắn gọn và thành \
-thật - đừng cố bịa ra một lỗi để góp ý cho có.
-- Viết bằng tiếng Việt tự nhiên, giọng điệu khích lệ như một giáo viên, KHÔNG \
-liệt kê kiểu bullet point, không nhắc lại số liệu thô (ví dụ đừng nói "0.03 \
-giây" hay "9/12 mora") - hãy diễn đạt lại bằng lời tự nhiên.
-- Độ dài: 2-4 câu.
-- Nếu có vấn đề về âm ngắt (っ) hoặc âm kéo dài (ー), hãy giải thích ngắn gọn \
-CÁCH sửa, đúng tinh thần ví dụ mẫu dưới đây.
+- Trả lời DUY NHẤT một object JSON hợp lệ, không kèm lời giải thích, không \
+kèm markdown, đúng 2 khóa: "assessment" và "suggestion".
+- "assessment": nhận xét tổng quan 1-2 câu về lượt đọc này - ngữ điệu và độ \
+chính xác nhìn chung thế nào. Nếu dữ liệu cho thấy không có vấn đề gì đáng \
+kể, hãy khen ngắn gọn và thành thật ở đây.
+- "suggestion": gợi ý luyện tập CỤ THỂ, 1-2 câu, chỉ nêu CÁCH sửa lỗi lớn \
+nhất nếu có - ví dụ cách ngắt âm 「っ」 hay giữ âm kéo dài 「ー」. Nếu không \
+có lỗi nào đáng để gợi ý luyện tập, để "suggestion" là chuỗi rỗng "".
+- Cả hai trường viết bằng tiếng Việt tự nhiên, giọng điệu khích lệ như một \
+giáo viên, KHÔNG liệt kê kiểu bullet point, không nhắc lại số liệu thô (ví \
+dụ đừng nói "0.03 giây" hay "9/12 mora") - hãy diễn đạt lại bằng lời tự \
+nhiên.
 
-VÍ DỤ VĂN PHONG MONG MUỐN (chỉ tham khảo giọng điệu, không copy nguyên văn):
-"Ngữ điệu cả câu rất tự nhiên. Còn một chỗ: âm ngắt hơi ngắn. Ở 「っ」 hãy \
-ngắt hẳn một nhịp - im lặng đúng bằng một âm tiết, rồi mới bật ra 「と」. \
-Người Việt thường nối liền nên nghe thành "choto"."\
-"""
+VÍ DỤ ĐẦU RA MONG MUỐN (chỉ tham khảo giọng điệu và cấu trúc, không copy \
+nguyên văn):
+{"assessment": "Ngữ điệu cả câu rất tự nhiên, hầu hết các mora đều đọc \
+đúng.", "suggestion": "Còn một chỗ: âm ngắt hơi ngắn. Ở 「っ」 hãy ngắt hẳn \
+một nhịp - im lặng đúng bằng một âm tiết, rồi mới bật ra 「と」. Người Việt \
+thường nối liền nên nghe thành \\"choto\\"."}\
+""",
+    "en": """\
+You are a Japanese pronunciation teacher giving feedback to a \
+Vietnamese-speaking learner on one attempt at reading a Japanese sentence \
+aloud. You will be given a block of data describing EXACTLY what was \
+measured from that attempt.
+
+MANDATORY RULES:
+- Only comment on what is actually in the data provided. Never guess or \
+invent an issue that isn't in the data.
+- Reply with ONLY a single valid JSON object, no explanation, no markdown, \
+with exactly 2 keys: "assessment" and "suggestion".
+- "assessment": a 1-2 sentence overall assessment of this attempt -- how \
+the intonation and accuracy sounded overall. If the data shows nothing \
+significant wrong, give brief, sincere praise here.
+- "suggestion": a CONCRETE 1-2 sentence practice suggestion, naming HOW to \
+fix the single biggest issue if there is one -- for example how to hold a \
+glottal stop (っ) or a long vowel (ー). If there is nothing worth \
+suggesting, leave "suggestion" as the empty string "".
+- Write both fields in natural, encouraging English, in a teacher's voice. \
+Do NOT use bullet points, and do not repeat raw numbers (for example, \
+don't say "0.03 seconds" or "9 out of 12 morae") -- rephrase them in \
+natural words instead.
+- Write your entire response in English, regardless of what language the \
+data block itself is labeled in.
+
+EXAMPLE OF THE DESIRED OUTPUT (for tone and structure only -- do not copy \
+it verbatim):
+{"assessment": "The overall intonation of the sentence sounds very \
+natural, and most morae were pronounced correctly.", "suggestion": "One \
+thing to work on: the pause is a little short. At 「っ」, hold a full beat \
+of silence -- exactly the length of one syllable -- before releasing into \
+「と」. Vietnamese speakers often run the two sounds together, so it comes \
+out sounding like 'choto' instead of 'chotto'."}\
+""",
+}
+
+SUPPORTED_LANGUAGES: tuple[str, ...] = tuple(SYSTEM_PROMPTS)
+
+# JSON schema passed to Ollama's `format` parameter (see generate_comment)
+# so the model is constrained to emit exactly this shape instead of free
+# text -- this is what makes the assessment/suggestion split in the UI
+# reliable rather than something this module has to parse out of prose
+# after the fact. It constrains shape only, not truthfulness -- see the
+# module docstring's Limitation section.
+COMMENT_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "assessment": {"type": "string"},
+        "suggestion": {"type": "string"},
+    },
+    "required": ["assessment", "suggestion"],
+}
+
+
+def resolve_system_prompt(lang: str) -> str:
+    """System prompt for `lang` (e.g. "vi", "en") -- this, not
+    _format_facts, is what actually controls the generated comment's
+    language; see the module docstring.
+
+    Raises:
+        ValueError: `lang` isn't one of SUPPORTED_LANGUAGES.
+    """
+    try:
+        return SYSTEM_PROMPTS[lang]
+    except KeyError:
+        raise ValueError(
+            f"Unsupported lang '{lang}'. Supported: {', '.join(SUPPORTED_LANGUAGES)}"
+        ) from None
 
 
 class CoachingUnavailableError(RuntimeError):
@@ -88,6 +190,16 @@ class PronunciationFacts:
     duration_issues: list[DurationIssue] = field(default_factory=list)
     pitch_matched: int | None = None
     pitch_total: int | None = None
+
+
+@dataclass
+class CoachingComment:
+    """The two-part coaching comment the frontend displays as separate
+    sections -- see templates/index.html's coach panel. `suggestion` is
+    the empty string when the model had nothing notable to suggest."""
+
+    assessment: str
+    suggestion: str
 
 
 def pitch_direction_match(
@@ -197,16 +309,50 @@ def _format_facts(facts: PronunciationFacts) -> str:
     return "\n".join(lines)
 
 
-async def generate_comment(facts: PronunciationFacts, settings: "Settings") -> str:
-    """Call the local Ollama model to phrase `facts` as a natural
-    Vietnamese coaching comment.
+def _parse_comment(content: str) -> CoachingComment:
+    """Parse the model's JSON response (constrained by COMMENT_JSON_SCHEMA)
+    into a CoachingComment.
+
+    Falls back gracefully if the model still returns non-JSON text despite
+    the `format` constraint (smaller/local models can drift -- see the
+    module docstring's Limitation section): the whole response becomes the
+    assessment and suggestion is left empty, which degrades to the same
+    single-block look the UI had before this split, instead of losing the
+    comment entirely.
+    """
+    try:
+        data = json.loads(content)
+        assessment = str(data.get("assessment", "") or "").strip()
+        suggestion = str(data.get("suggestion", "") or "").strip()
+    except (json.JSONDecodeError, AttributeError):
+        assessment = content.strip()
+        suggestion = ""
+
+    if not assessment and not suggestion:
+        raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
+    return CoachingComment(assessment=assessment, suggestion=suggestion)
+
+
+async def generate_comment(
+    facts: PronunciationFacts, settings: "Settings", lang: str = DEFAULT_LANG
+) -> CoachingComment:
+    """Call the local Ollama model to phrase `facts` as a natural, two-part
+    coaching comment (see CoachingComment), written in `lang` (see
+    SUPPORTED_LANGUAGES).
 
     Raises:
+        ValueError: `lang` isn't supported (see resolve_system_prompt).
+            Callers with an HTTP boundary (routes.py) should validate
+            `lang` before doing any other work so this never fires after
+            an expensive ASR call -- this check is a defensive second
+            layer, not the primary one.
         CoachingUnavailableError: the `ollama` package isn't installed,
             Ollama isn't reachable at settings.ollama_host, the model
             named in settings.ollama_model hasn't been pulled, or the
             model returned nothing usable.
     """
+    system_prompt = resolve_system_prompt(lang)
+
     try:
         from ollama import AsyncClient, ResponseError
     except ImportError as e:
@@ -219,11 +365,12 @@ async def generate_comment(facts: PronunciationFacts, settings: "Settings") -> s
         response = await client.chat(
             model=settings.ollama_model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": _format_facts(facts)},
             ],
             think=False,
             stream=False,
+            format=COMMENT_JSON_SCHEMA,
             options={"temperature": settings.ollama_temperature, "num_predict": 300},
         )
     except ResponseError as e:
@@ -244,4 +391,4 @@ async def generate_comment(facts: PronunciationFacts, settings: "Settings") -> s
     content = (response.get("message", {}) or {}).get("content", "").strip()
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
-    return content
+    return _parse_comment(content)

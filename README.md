@@ -253,10 +253,13 @@ score      = round(similarity * 100)
 
 ### `POST /api/pronunciation/coach`
 
-Natural-language Vietnamese coaching comment for one recording — the kind of
-note a teacher would leave ("ngữ điệu tự nhiên, nhưng âm ngắt っ hơi ngắn...")
-instead of raw numbers. Written by a **locally-run Ollama model**, and only
-from facts this app has already measured itself:
+Natural-language coaching comment for one recording, split into two parts —
+an overall **assessment** and a concrete **suggestion** for what to practice
+next (the practice page shows these as two separately labeled sections) —
+the kind of note a teacher would leave ("ngữ điệu tự nhiên, nhưng âm ngắt っ
+hơi ngắn...") instead of raw numbers. Written by a **locally-run Ollama
+model**, constrained to that two-field JSON shape via Ollama's `format`
+parameter, and only from facts this app has already measured itself:
 
 * the same score/level/per-mora errors as `/evaluate`
 * sokuon (`っ`) / chouon (`ー`) held for less than ~55% of the recording's own
@@ -283,25 +286,34 @@ ollama pull qwen3:8b
 pip install ollama
 ```
 
-`multipart/form-data` — same fields as `/evaluate`:
+`multipart/form-data` — same fields as `/evaluate`, plus `lang`:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `text` | string | Target Japanese text — same one sent to `/evaluate` |
 | `audio` | file | `.wav` recording of the user reading it |
+| `lang` | string | Comment language: `vi` (default) or `en` |
 
 ```bash
 curl -X POST "http://localhost:8000/api/pronunciation/coach" \
   -F "text=ちょっとまってください" \
   -F "audio=@test.wav"
+# Same request, comment written in English instead:
+#   -F "lang=en"
 ```
 
 ```json
 {
   "success": true,
-  "comment": "Ngữ điệu cả câu khá tự nhiên. Còn một chỗ: âm ngắt hơi ngắn. Ở 「っ」 hãy ngắt hẳn một nhịp — im lặng đúng bằng một âm tiết, rồi mới bật ra 「と」. Người Việt thường nối liền nên nghe thành \"choto\"."
+  "lang": "vi",
+  "assessment": "Ngữ điệu cả câu khá tự nhiên, hầu hết các mora đều đọc đúng.",
+  "suggestion": "Còn một chỗ: âm ngắt hơi ngắn. Ở 「っ」 hãy ngắt hẳn một nhịp — im lặng đúng bằng một âm tiết, rồi mới bật ra 「と」. Người Việt thường nối liền nên nghe thành \"choto\"."
 }
 ```
+
+`suggestion` is the empty string `""` when the model found nothing worth
+practicing (the frontend then hides that section and shows only the
+assessment).
 
 Errors: `400` (empty/unpronounceable `text`, non-WAV upload, oversized file),
 `422` (undecodable audio), `500` (ASR model or inference failure), `503`

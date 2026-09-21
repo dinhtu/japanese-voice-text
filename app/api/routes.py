@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.services.asr_service import ASRService, get_asr_service
 from src.asr.inference import load_audio
-from app.services.coaching import CoachingUnavailableError, build_facts, generate_comment
+from app.services.coaching import (
+    SUPPORTED_LANGUAGES,
+    CoachingUnavailableError,
+    build_facts,
+    generate_comment,
+)
 from app.services.mora_timing import mora_time_windows
 from app.services.normalization import to_hiragana
 from app.services.pitch_accent import pitch_accent_pattern
@@ -232,11 +237,12 @@ async def get_pitch_contour(
     "/coach",
     response_model=CoachResponse,
     summary=(
-        "Natural-language Vietnamese coaching comment for a recording, "
-        "written by a locally-run Ollama model strictly from this app's "
-        "own measured facts (score, per-mora errors, sokuon/chouon "
-        "timing, pitch-accent direction) -- never given the raw audio, "
-        "never asked to judge anything itself"
+        "Natural-language coaching comment for a recording, in the "
+        "requested `lang` (vi | en), written by a locally-run Ollama "
+        "model strictly from this app's own measured facts (score, "
+        "per-mora errors, sokuon/chouon timing, pitch-accent direction) "
+        "-- never given the raw audio, never asked to judge anything "
+        "itself"
     ),
 )
 async def coach_pronunciation(
@@ -244,12 +250,23 @@ async def coach_pronunciation(
         ..., description="Same target text sent to /evaluate, so the facts line up"
     ),
     audio: UploadFile = File(..., description="WAV recording to analyze"),
+    lang: str = Form(
+        "vi",
+        description=f"Comment language. One of: {', '.join(SUPPORTED_LANGUAGES)}",
+    ),
     asr_service: ASRService = Depends(get_asr_service),
     settings: Settings = Depends(get_settings),
 ) -> CoachResponse:
     text = text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+
+    lang = (lang or "vi").strip().lower()
+    if lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported lang '{lang}'. Supported: {', '.join(SUPPORTED_LANGUAGES)}",
+        )
 
     _validate_upload(audio)
 
@@ -325,8 +342,10 @@ async def coach_pronunciation(
             pitch_points=pitch_points,
         )
 
-        comment = await generate_comment(facts, settings)
-        return CoachResponse(comment=comment)
+        comment = await generate_comment(facts, settings, lang=lang)
+        return CoachResponse(
+            assessment=comment.assessment, suggestion=comment.suggestion, lang=lang
+        )
 
     except CoachingUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

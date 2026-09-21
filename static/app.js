@@ -78,9 +78,13 @@ const el = {
   pitchStatus: $("pitch-status"),
   pitchChart: $("pitch-chart"),
   coachBtn: $("coach-btn"),
+  coachLang: $("coach-lang"),
   coachPanel: $("coach-panel"),
   coachStatus: $("coach-status"),
-  coachComment: $("coach-comment"),
+  coachAssessmentBlock: $("coach-assessment-block"),
+  coachAssessment: $("coach-assessment"),
+  coachSuggestionBlock: $("coach-suggestion-block"),
+  coachSuggestion: $("coach-suggestion"),
 };
 
 const STATUS_LABEL = {
@@ -531,8 +535,10 @@ function resetCoach() {
   el.coachStatus.hidden = true;
   el.coachStatus.classList.remove("is-error");
   el.coachStatus.textContent = "";
-  el.coachComment.hidden = true;
-  el.coachComment.textContent = "";
+  el.coachAssessmentBlock.hidden = true;
+  el.coachAssessment.textContent = "";
+  el.coachSuggestionBlock.hidden = true;
+  el.coachSuggestion.textContent = "";
   el.coachBtn.disabled = false;
 }
 
@@ -544,7 +550,8 @@ async function requestCoach() {
   if (!lastWav || el.coachBtn.disabled) return;
 
   el.coachPanel.hidden = false;
-  el.coachComment.hidden = true;
+  el.coachAssessmentBlock.hidden = true;
+  el.coachSuggestionBlock.hidden = true;
   el.coachStatus.hidden = false;
   el.coachStatus.classList.remove("is-error");
   el.coachStatus.textContent = "Đang phân tích và viết nhận xét…";
@@ -553,6 +560,7 @@ async function requestCoach() {
   const formData = new FormData();
   formData.append("text", target.text);
   formData.append("audio", new File([lastWav], "recording.wav", { type: "audio/wav" }));
+  formData.append("lang", el.coachLang.value);
 
   try {
     const response = await fetch(COACH_API_URL, { method: "POST", body: formData });
@@ -564,8 +572,10 @@ async function requestCoach() {
       throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
     }
     const result = await response.json();
-    el.coachComment.textContent = result.comment;
-    el.coachComment.hidden = false;
+    el.coachAssessment.textContent = result.assessment;
+    el.coachAssessmentBlock.hidden = !result.assessment;
+    el.coachSuggestion.textContent = result.suggestion;
+    el.coachSuggestionBlock.hidden = !result.suggestion;
     el.coachStatus.hidden = true;
   } catch (error) {
     el.coachStatus.textContent =

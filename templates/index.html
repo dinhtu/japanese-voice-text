@@ -311,13 +311,29 @@
             </div>
 
             <div class="coach" id="coach">
-              <button type="button" class="outline-btn" id="coach-btn">
-                <svg class="icon icon--sm"><use href="#i-chat" /></svg>
-                Nhận xét chi tiết từ AI
-              </button>
+              <div class="coach__head">
+                <button type="button" class="outline-btn" id="coach-btn">
+                  <svg class="icon icon--sm"><use href="#i-chat" /></svg>
+                  Nhận xét chi tiết từ AI
+                </button>
+                <label class="coach__lang" for="coach-lang">
+                  Ngôn ngữ nhận xét
+                  <select id="coach-lang">
+                    <option value="vi" selected>Tiếng Việt</option>
+                    <option value="en">English</option>
+                  </select>
+                </label>
+              </div>
               <div class="coach__panel" id="coach-panel" hidden>
                 <p class="coach__status" id="coach-status"></p>
-                <p class="coach__comment" id="coach-comment" hidden></p>
+                <div class="coach__block" id="coach-assessment-block" hidden>
+                  <p class="coach__block-label">Nhận xét</p>
+                  <p class="coach__block-text" id="coach-assessment"></p>
+                </div>
+                <div class="coach__block" id="coach-suggestion-block" hidden>
+                  <p class="coach__block-label">Gợi ý luyện tập</p>
+                  <p class="coach__block-text" id="coach-suggestion"></p>
+                </div>
               </div>
             </div>
 
