@@ -444,7 +444,7 @@ async function evaluate(wav) {
     renderResult(result);
     // Same accent-pattern shape as /pitch-accent's reference, just for the
     // recognized text -- see EvaluateResponse.recognized_pitch_pattern and
-    // renderPitchChart()/renderPatternRow() above.
+    // renderPitchChart()/patternPoints() above.
     learnerPattern = result.recognized_pitch_pattern ?? [];
     if (referencePattern) renderPitchChart();
   } catch (error) {
@@ -602,7 +602,7 @@ let referencePattern = null;
  *  -- the exact same dictionary-based accent-pattern shape as
  *  `referencePattern` (see app/services/pitch_accent.py), just computed
  *  from whatever the ASR actually recognized instead of the target text,
- *  so both rows can be drawn with the same renderPatternRow(). `null` =
+ *  so both curves can be drawn on the same chart. `null` =
  *  no take scored yet for this sentence; `[]` = a take was scored but
  *  nothing pronounceable was recognized. Set directly by evaluate(). */
 let learnerPattern = null;
@@ -624,65 +624,46 @@ function setPitchStatus(message, isError = false) {
   el.pitchChart.hidden = true;
 }
 
-/** Render one H/L accent pattern as a single row: a polyline/dots SVG
- *  between two guide levels, plus its own mora labels underneath -- the
- *  same OJAD-style shape /pitch-accent's reference chart has always used.
- *  `variant` is "ref" or "you" (styling only). Reference and learner rows
- *  are drawn with this exact same function -- see renderPitchChart() --
- *  so the two look identical in shape; they're stacked rather than
- *  overlaid because the learner's mora count can differ from the
- *  target's (the ASR may have heard more, fewer or different morae than
- *  the target text has), so the two patterns don't share one x-axis. */
-function renderPatternRow(pattern, variant, label) {
-  if (!pattern || pattern.length === 0) {
-    if (variant !== "you") return "";
-    return `
-      <div class="pitch__row pitch__row--empty">
-        <p class="pitch__row-label">${label}</p>
-        <p class="pitch__row-empty">Kh\u00f4ng nh\u1eadn d\u1ea1ng \u0111\u01b0\u1ee3c n\u1ed9i dung \u0111\u1ec3 ph\u00e2n t\u00edch cao \u0111\u1ed9.</p>
-      </div>
-    `;
-  }
-
-  const columnWidth = 40;
-  const width = pattern.length * columnWidth;
-  const yHigh = 22;
-  const yLow = 72;
-
-  const points = pattern.map((mora, index) => ({
-    x: (index + 0.5) * columnWidth,
+/** Turn one accent pattern into evenly-spaced {x, y} points across a
+ *  shared chart `width` -- x is the mora's *fractional* position in its
+ *  own pattern (index+0.5)/length, not a fixed per-mora column, so a
+ *  pattern with a different mora count still spans the full width and
+ *  overlays sensibly with the other curve (see renderPitchChart()). */
+function patternPoints(pattern, width, yHigh, yLow) {
+  return pattern.map((mora, index) => ({
+    x: ((index + 0.5) / pattern.length) * width,
     y: mora.pitch === "H" ? yHigh : yLow,
   }));
-  const polyline = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-  const dots = points
-    .map((p, index) => {
-      const isHigh = pattern[index].pitch === "H";
-      return `<circle class="pitch__dot${isHigh ? " pitch__dot--h" : ""}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" />`;
-    })
-    .join("");
-  const labels = pattern
-    .map((mora) => `<span class="pitch__label">${mora.mora}</span>`)
-    .join("");
-
-  return `
-    <div class="pitch__row pitch__row--${variant}">
-      <p class="pitch__row-label">${label}</p>
-      <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
-        <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
-        <polyline class="pitch__line pitch__line--${variant}" points="${polyline}" />
-        ${dots}
-      </svg>
-      <div class="pitch__labels" style="grid-template-columns: repeat(${pattern.length}, 1fr)">
-        ${labels}
-      </div>
-    </div>
-  `;
 }
 
-/** Reference pattern (from /pitch-accent, target text) and learner pattern
- *  (from /evaluate's recognized_pitch_pattern, ASR-recognized text) drawn
- *  as two stacked rows with the exact same renderPatternRow() -- see its
- *  docstring for why they're stacked rather than overlaid on one axis. */
+function patternPolyline(points) {
+  return points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+
+function patternDots(pattern, points, variant) {
+  return points
+    .map((p, index) => {
+      const classes = ["pitch__dot"];
+      if (variant === "you") classes.push("pitch__dot--you");
+      if (pattern[index].pitch === "H") classes.push("pitch__dot--h");
+      return `<circle class="${classes.join(" ")}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" />`;
+    })
+    .join("");
+}
+
+function patternLabels(pattern, variant) {
+  const cls = variant === "you" ? "pitch__label pitch__label--you" : "pitch__label";
+  const labels = pattern.map((mora) => `<span class="${cls}">${mora.mora}</span>`).join("");
+  const rowCls = variant === "you" ? "pitch__labels pitch__labels--you" : "pitch__labels";
+  return `<div class="${rowCls}" style="grid-template-columns: repeat(${pattern.length}, 1fr)">${labels}</div>`;
+}
+
+/** One combined chart: the reference pattern (target text, from
+ *  /pitch-accent) and the learner pattern (ASR-recognized text, from
+ *  /evaluate's recognized_pitch_pattern) drawn as two overlaid H/L
+ *  curves in the same SVG -- solid for the reference, dashed for the
+ *  learner -- with their own label row each underneath, since the two
+ *  texts (and so mora counts) can differ. */
 function renderPitchChart() {
   if (!referencePattern || referencePattern.length === 0) {
     setPitchStatus("Kh\u00f4ng ph\u00e2n t\u00edch \u0111\u01b0\u1ee3c cao \u0111\u1ed9 cho c\u00e2u n\u00e0y.", true);
@@ -697,10 +678,38 @@ function renderPitchChart() {
     ${hasLearner ? '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>B\u1ea1n</span>' : ""}
   `;
 
-  const refRow = renderPatternRow(referencePattern, "ref", "M\u1eabu");
-  const learnerRow = learnerReady ? renderPatternRow(learnerPattern, "you", "B\u1ea1n \u0111\u1ecdc") : "";
+  const columnWidth = 40;
+  const width = referencePattern.length * columnWidth;
+  const yHigh = 22;
+  const yLow = 72;
 
-  el.pitchChart.innerHTML = `${refRow}${learnerRow}`;
+  const refPoints = patternPoints(referencePattern, width, yHigh, yLow);
+  const refDots = patternDots(referencePattern, refPoints, "ref");
+
+  let learnerSvg = "";
+  let learnerLabels = "";
+  let hint = "";
+  if (hasLearner) {
+    const learnerPoints = patternPoints(learnerPattern, width, yHigh, yLow);
+    const learnerDots = patternDots(learnerPattern, learnerPoints, "you");
+    learnerSvg = `<polyline class="pitch__line pitch__line--you" points="${patternPolyline(learnerPoints)}" />${learnerDots}`;
+    learnerLabels = patternLabels(learnerPattern, "you");
+    hint = `<p class="pitch__hint">N\u00e9t \u0111\u1ee9t l\u00e0 cao \u0111\u1ed9 theo ch\u1eef ASR nh\u1eadn d\u1ea1ng \u0111\u01b0\u1ee3c \u2014 so kh\u1edbp theo th\u1ee9 t\u1ef1 mora, kh\u00f4ng theo th\u1eddi gian th\u1ef1c, n\u00ean s\u1ed1 mora c\u00f3 th\u1ec3 kh\u00e1c c\u00e2u m\u1eabu.</p>`;
+  } else if (learnerReady) {
+    hint = `<p class="pitch__hint">Kh\u00f4ng nh\u1eadn d\u1ea1ng \u0111\u01b0\u1ee3c n\u1ed9i dung \u0111\u1ec3 ph\u00e2n t\u00edch cao \u0111\u1ed9 c\u1ee7a b\u1ea1n.</p>`;
+  }
+
+  el.pitchChart.innerHTML = `
+    <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
+      <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
+      <polyline class="pitch__line" points="${patternPolyline(refPoints)}" />
+      ${refDots}
+      ${learnerSvg}
+    </svg>
+    ${patternLabels(referencePattern, "ref")}
+    ${learnerLabels}
+    ${hint}
+  `;
   el.pitchChart.hidden = false;
   el.pitchStatus.hidden = true;
 }
