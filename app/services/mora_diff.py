@@ -56,6 +56,13 @@ def _split_mora_spans(kana: str) -> list[tuple[str, int, int]]:
     return spans
 
 
+def split_mora_spans(kana: str) -> list[tuple[str, int, int]]:
+    """Public entry point for `_split_mora_spans`, for other modules that
+    need target-mora character boundaries (e.g. app.services.mora_timing's
+    ASR-based pitch alignment)."""
+    return _split_mora_spans(kana)
+
+
 def mora_status(
     target_hiragana: str, errors: list[PronunciationError]
 ) -> list[MoraStatus]:

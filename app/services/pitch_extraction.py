@@ -5,38 +5,38 @@ torchaudio's built-in pitch detector (normalized cross-correlation + median
 smoothing -- no extra dependency beyond what the ASR pipeline already
 needs), gates out frames that are not actually voiced speech with a
 short-time energy threshold (the detector itself has no voiced/unvoiced
-output and guesses a "pitch" even in silence), converts Hz to semitones
-relative to the *speaker's own* median pitch (so a low male voice and a
-high female voice read as the same shape), trims off leading/trailing
-silence, and buckets what is left into exactly `num_morae` slices -- one
-per mora of the target text, in order -- so the frontend can plot the
-learner's curve on the *same x positions* as the reference chart's mora
-columns.
+output and guesses a "pitch" even in silence), and converts Hz to
+semitones relative to the *speaker's own* median pitch (so a low male
+voice and a high female voice read as the same shape). Two ways to then
+split that into one point per mora:
 
-## Bucket boundaries: equal time, nudged toward real pauses
+  extract_pitch_for_windows -- given REAL per-mora time windows (from
+      app.services.mora_timing, which derives them from the ASR model's
+      own CTC decode timing), just averages the semitone curve inside
+      each one. This is the accurate path and is used whenever the ASR
+      recognition needed to build those windows succeeded.
 
-A pure equal-time split assumes every mora takes the same amount of time,
-which is wrong exactly where it matters most: a sokuon (small tsu, "cl")
-is a brief silence, a chouon (long vowel, "-") is a held tone, and
-real speech is never perfectly evenly paced. So each *interior* boundary
-starts at its equal-time position and then searches a small window around
-it for a genuine dip in short-time energy (a pause between syllables) and
-snaps to that instead -- only when the dip is clearly quieter than its
-surroundings, so a smoothly-voiced stretch with no real gap is left at its
-equal-time split rather than snapping to whatever's marginally quietest.
+  extract_pitch_per_mora -- the ASR-free fallback: trims to the voiced
+      span and buckets it into `num_morae` equal-time slices, each
+      interior boundary nudged toward a nearby silence (see its own
+      docstring). Used when ASR-based alignment isn't available (the
+      recognizer failed, or produced something the alignment couldn't use)
+      so there is always *some* pitch curve to show.
 
 ## Limitation
 
-This is still not a real forced alignment: there is no model tying a
-specific moment of audio to a specific mora, just a heuristic that prefers
-actual silences over blind equal division. A dropped or inserted mora (or
-very uneven pacing without any pause between syllables) can still shift
-buckets. Good enough to compare overall shape at a glance; not a
-phoneme-accurate score. See app/services/pitch_accent.py for the
+Neither path is a phoneme-accurate forced alignment. The windowed path is
+only as good as the ASR's own recognition and CTC spike timing (see
+app.services.mora_timing's docstring for specifics); the bucketed
+fallback has no model behind it at all, just a heuristic preference for
+real pauses over blind equal division. Good enough to compare overall
+shape at a glance. See app/services/pitch_accent.py for the
 (text -> expected pattern) half of the comparison.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -54,6 +54,16 @@ _SNAP_SEARCH_FRACTION = 0.4
 _SNAP_DIP_RATIO = 0.7
 
 
+@dataclass
+class _PitchAnalysis:
+    """Shared per-frame analysis both extraction paths aggregate over."""
+
+    semitone: np.ndarray  # pitch in semitones relative to this clip's own median voiced pitch
+    voiced: np.ndarray  # bool mask -- has real speech energy AND a detected pitch
+    energy: np.ndarray  # short-time RMS energy (kept for extract_pitch_per_mora's boundary snapping)
+    frame_time: float  # seconds per frame (== FRAME_TIME, kept alongside for clarity)
+
+
 def _frame_energy(samples: np.ndarray, sample_rate: int, n_frames: int) -> np.ndarray:
     """Short-time RMS energy, one value per pitch-detector frame.
 
@@ -69,6 +79,51 @@ def _frame_energy(samples: np.ndarray, sample_rate: int, n_frames: int) -> np.nd
         if window.size:
             energy[i] = float(np.sqrt(np.mean(np.square(window))))
     return energy
+
+
+def _analyze(samples: np.ndarray, sample_rate: int) -> _PitchAnalysis | None:
+    """Run the pitch detector once and gate/convert it, shared by both
+    extraction paths below. Returns None if there's nothing to analyze
+    (no audio, no frames, or no voiced speech detected at all)."""
+    if samples.size == 0:
+        return None
+
+    waveform = torch.from_numpy(np.ascontiguousarray(samples)).float().unsqueeze(0)
+    pitch_hz = (
+        torchaudio.functional.detect_pitch_frequency(
+            waveform,
+            sample_rate,
+            frame_time=FRAME_TIME,
+            freq_low=FREQ_LOW,
+            freq_high=FREQ_HIGH,
+        )
+        .squeeze(0)
+        .numpy()
+    )
+    n_frames = pitch_hz.shape[0]
+    if n_frames == 0:
+        return None
+
+    energy = _frame_energy(samples, sample_rate, n_frames)
+    threshold = max(0.25 * float(energy.max()), 1e-4) if energy.size else 1e-4
+    voiced = (energy > threshold) & (pitch_hz > 0)
+    if not np.any(voiced):
+        return None
+
+    reference_hz = float(np.median(pitch_hz[voiced]))
+    semitone = 12.0 * np.log2(np.clip(pitch_hz, 1e-6, None) / reference_hz)
+    return _PitchAnalysis(semitone=semitone, voiced=voiced, energy=energy, frame_time=FRAME_TIME)
+
+
+def _aggregate(analysis: _PitchAnalysis, lo: int, hi: int) -> dict:
+    """Mean semitone over the voiced frames of analysis.semitone[lo:hi]."""
+    lo = max(0, lo)
+    hi = max(lo + 1, min(hi, analysis.voiced.shape[0]))
+    window_voiced = analysis.voiced[lo:hi]
+    if np.any(window_voiced):
+        value = float(np.mean(analysis.semitone[lo:hi][window_voiced]))
+        return {"semitone": round(value, 2), "voiced": True}
+    return {"semitone": None, "voiced": False}
 
 
 def _snap_to_pause(energy: np.ndarray, naive_idx: int, lo: int, hi: int, radius: int) -> int:
@@ -115,12 +170,46 @@ def _pause_aware_bucket_edges(energy: np.ndarray, start: int, end: int, num_mora
     return edges
 
 
+def extract_pitch_for_windows(
+    samples: np.ndarray,
+    sample_rate: int,
+    windows: list[tuple[float, float]],
+) -> list[dict]:
+    """Return one pitch sample per `windows` entry, using REAL per-mora time
+    windows (app.services.mora_timing.mora_time_windows) instead of a
+    guessed equal-time split.
+
+    Each point is {"semitone": float | None, "voiced": bool}. `windows` is
+    a list of (start_sec, end_sec) pairs, one per target mora, in order --
+    always returns a list the same length as `windows`, so the frontend can
+    zip it positionally against the reference pattern without a length
+    check.
+    """
+    empty = [{"semitone": None, "voiced": False} for _ in windows]
+    if not windows:
+        return empty
+
+    analysis = _analyze(samples, sample_rate)
+    if analysis is None:
+        return empty
+
+    points: list[dict] = []
+    for start_sec, end_sec in windows:
+        lo = int(round(start_sec / analysis.frame_time))
+        hi = int(round(end_sec / analysis.frame_time))
+        points.append(_aggregate(analysis, lo, hi))
+    return points
+
+
 def extract_pitch_per_mora(
     samples: np.ndarray,
     sample_rate: int,
     num_morae: int,
 ) -> list[dict]:
-    """Return exactly `num_morae` pitch samples, one per target mora.
+    """Return exactly `num_morae` pitch samples, one per target mora, using
+    equal-time buckets nudged toward real pauses (see module docstring --
+    this is the ASR-free fallback; prefer extract_pitch_for_windows when
+    real per-mora timing from the ASR model is available).
 
     Each point is {"semitone": float | None, "voiced": bool}, in the same
     order as the target text's morae (app.services.pitch_accent's output).
@@ -133,47 +222,20 @@ def extract_pitch_per_mora(
     positionally against the reference pattern without a length check.
     """
     empty = [{"semitone": None, "voiced": False} for _ in range(max(num_morae, 0))]
-    if num_morae <= 0 or samples.size == 0:
+    if num_morae <= 0:
         return empty
 
-    waveform = torch.from_numpy(np.ascontiguousarray(samples)).float().unsqueeze(0)
-    pitch_hz = (
-        torchaudio.functional.detect_pitch_frequency(
-            waveform,
-            sample_rate,
-            frame_time=FRAME_TIME,
-            freq_low=FREQ_LOW,
-            freq_high=FREQ_HIGH,
-        )
-        .squeeze(0)
-        .numpy()
-    )
-    n_frames = pitch_hz.shape[0]
-    if n_frames == 0:
+    analysis = _analyze(samples, sample_rate)
+    if analysis is None:
         return empty
-
-    energy = _frame_energy(samples, sample_rate, n_frames)
-    threshold = max(0.25 * float(energy.max()), 1e-4) if energy.size else 1e-4
-    voiced = (energy > threshold) & (pitch_hz > 0)
-    if not np.any(voiced):
-        return empty
-
-    reference_hz = float(np.median(pitch_hz[voiced]))
-    semitone = 12.0 * np.log2(np.clip(pitch_hz, 1e-6, None) / reference_hz)
 
     # Trim to the voiced span so leading/trailing silence (very common in a
     # mic recording) does not compress where the actual speech lands.
-    voiced_indices = np.flatnonzero(voiced)
+    voiced_indices = np.flatnonzero(analysis.voiced)
     start, end = int(voiced_indices[0]), int(voiced_indices[-1]) + 1
 
-    bucket_edges = _pause_aware_bucket_edges(energy, start, end, num_morae)
-    points: list[dict] = []
-    for i in range(num_morae):
-        lo, hi = int(bucket_edges[i]), max(int(bucket_edges[i]) + 1, int(bucket_edges[i + 1]))
-        window_voiced = voiced[lo:hi]
-        if np.any(window_voiced):
-            value = float(np.mean(semitone[lo:hi][window_voiced]))
-            points.append({"semitone": round(value, 2), "voiced": True})
-        else:
-            points.append({"semitone": None, "voiced": False})
-    return points
+    bucket_edges = _pause_aware_bucket_edges(analysis.energy, start, end, num_morae)
+    return [
+        _aggregate(analysis, int(bucket_edges[i]), int(bucket_edges[i + 1]))
+        for i in range(num_morae)
+    ]

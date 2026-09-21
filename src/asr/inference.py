@@ -124,6 +124,65 @@ def swd_decode(logits: torch.Tensor, window: int = 1) -> torch.Tensor:
     return pred_ids
 
 
+def _ctc_collapse_with_onsets(
+    pred_ids: list[int], blank_idx: int = 0
+) -> tuple[list[int], list[int]]:
+    """CTC greedy collapse (skip blanks, merge consecutive repeats) that also
+    records, for each emitted token, the frame index where its run began.
+
+    Mirrors KanaVocab.decode()'s collapse rule exactly (same skip-blank,
+    skip-repeat logic), so the token sequence this returns lines up
+    character-for-character with the `kana` string that decode() produces
+    from the same `pred_ids` -- that 1:1 correspondence is what lets each
+    character of RecognitionResult.kana be paired with an onset frame.
+    """
+    tokens: list[int] = []
+    onsets: list[int] = []
+    prev: int | None = None
+    for frame_idx, idx in enumerate(pred_ids):
+        if idx == blank_idx:
+            prev = idx
+            continue
+        if idx == prev:
+            continue
+        tokens.append(idx)
+        onsets.append(frame_idx)
+        prev = idx
+    return tokens, onsets
+
+
+def _char_spans_from_pred_ids(
+    pred_ids: list[int], kana: str, num_frames: int, duration: float
+) -> list[tuple[float, float]] | None:
+    """(start_sec, end_sec) per character of `kana`, from CTC onset frames.
+
+    Each character's window runs from its own onset to the next
+    character's onset (or the clip's end for the last character) -- the
+    stretch of audio during which the model was "on" that symbol before
+    moving to the next one. `num_frames` is the model's own frame count for
+    this clip (kana_logits.shape[1]); dividing `duration` by it gives the
+    (roughly uniform, thanks to the encoder's fixed conv stride) time each
+    frame represents.
+
+    Returns None instead of possibly-misaligned data if the collapsed
+    token count doesn't match len(kana) one-for-one -- should not happen
+    (same collapse rule as KanaVocab.decode()), but this is speech ASR:
+    fail soft rather than hand out timing that might not line up.
+    """
+    if num_frames == 0:
+        return None
+    tokens, onset_frames = _ctc_collapse_with_onsets(pred_ids)
+    if len(tokens) != len(kana):
+        return None
+    frame_time = duration / num_frames
+    onset_times = [idx * frame_time for idx in onset_frames]
+    spans: list[tuple[float, float]] = []
+    for i, start in enumerate(onset_times):
+        end = onset_times[i + 1] if i + 1 < len(onset_times) else duration
+        spans.append((start, max(end, start)))
+    return spans
+
+
 @dataclass
 class RecognitionResult:
     """Output of a single transcription."""
@@ -132,6 +191,11 @@ class RecognitionResult:
     duration: float
     inference_time: float
     phonemes: str | None = None
+    char_spans: list[tuple[float, float]] | None = None
+    """(start_sec, end_sec) per character of `kana`, from the CTC decode's
+    own frame timing. Only populated when transcribe(with_timing=True) was
+    used; see _char_spans_from_pred_ids for how it's derived and when it
+    falls back to None instead."""
 
     @property
     def rtf(self) -> float:
@@ -172,6 +236,7 @@ class KanaRecognizer:
         swd: bool = False,
         swd_window: int = 1,
         with_phonemes: bool = False,
+        with_timing: bool = False,
     ) -> RecognitionResult:
         """Transcribe an audio file (or a pre-loaded 16kHz mono array) to kana."""
         if isinstance(audio, np.ndarray):
@@ -208,9 +273,19 @@ class KanaRecognizer:
             phoneme_pred_ids = outputs["phoneme_logits"].squeeze(0).argmax(dim=-1)
             phonemes = self.phoneme_vocab.decode(phoneme_pred_ids.tolist())
 
+        kana_ids_list = kana_pred_ids.tolist()
+        kana = self.kana_vocab.decode(kana_ids_list)
+
+        char_spans = None
+        if with_timing:
+            char_spans = _char_spans_from_pred_ids(
+                kana_ids_list, kana, kana_logits.shape[1], duration
+            )
+
         return RecognitionResult(
-            kana=self.kana_vocab.decode(kana_pred_ids.tolist()),
+            kana=kana,
             duration=duration,
             inference_time=inference_time,
             phonemes=phonemes,
+            char_spans=char_spans,
         )

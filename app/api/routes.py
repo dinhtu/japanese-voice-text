@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.services.asr_service import ASRService, get_asr_service
 from src.asr.inference import load_audio
+from app.services.mora_timing import mora_time_windows
+from app.services.normalization import to_hiragana
 from app.services.pitch_accent import pitch_accent_pattern
-from app.services.pitch_extraction import extract_pitch_per_mora
+from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
 from app.services.use_cases import (
     EmptyTargetError,
     EvaluatePronunciationUseCase,
@@ -133,15 +135,17 @@ def get_pitch_accent(
     "/pitch-contour",
     response_model=PitchContourResponse,
     summary=(
-        "Learner's pitch (F0) per mora from a recording, bucketed to line up "
-        "with /pitch-accent's reference pattern for the same text"
+        "Learner's pitch (F0) per mora from a recording, aligned to "
+        "/pitch-accent's reference pattern for the same text using the "
+        "ASR model's own recognition timing where possible"
     ),
 )
 async def get_pitch_contour(
     text: str = Form(
-        ..., description="Same target text sent to /pitch-accent, so the buckets line up"
+        ..., description="Same target text sent to /pitch-accent, so the points line up"
     ),
     audio: UploadFile = File(..., description="WAV recording to analyze"),
+    asr_service: ASRService = Depends(get_asr_service),
     settings: Settings = Depends(get_settings),
 ) -> PitchContourResponse:
     text = text.strip()
@@ -166,13 +170,41 @@ async def get_pitch_contour(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    target_hiragana = to_hiragana(text)
+
     fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="pitch_contour_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
         samples, sample_rate = load_audio(tmp_path)
-        points = extract_pitch_per_mora(samples, sample_rate, num_morae)
         duration = round(len(samples) / sample_rate, 2)
+
+        # Prefer real per-mora timing from the ASR model's own CTC decode
+        # (app.services.mora_timing) over the equal-time/pause-snap
+        # fallback -- but never let that path's failure break this
+        # endpoint: recognition can fail for reasons unrelated to pitch
+        # (missing model, garbled audio), and a worse-but-working pitch
+        # chart beats none at all.
+        windows = None
+        if target_hiragana:
+            try:
+                recognition = asr_service.recognize(tmp_path, with_timing=True)
+                if recognition.char_spans is not None:
+                    windows = mora_time_windows(
+                        target_hiragana, recognition.kana, recognition.char_spans, duration,
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "ASR-based pitch alignment failed; falling back to "
+                    "equal-time buckets",
+                    exc_info=True,
+                )
+                windows = None
+
+        if windows is not None and len(windows) == num_morae:
+            points = extract_pitch_for_windows(samples, sample_rate, windows)
+        else:
+            points = extract_pitch_per_mora(samples, sample_rate, num_morae)
     except RuntimeError as e:
         logger.warning("Audio decode failed: %s", e)
         raise HTTPException(status_code=422, detail=f"Could not read the audio: {e}") from e

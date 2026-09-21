@@ -46,11 +46,19 @@ class ASRService:
     def is_loaded(self) -> bool:
         return _recognizer is not None
 
-    def recognize(self, audio_path: str | Path) -> RecognitionResult:
-        """Transcribe an audio file to kana."""
+    def recognize(
+        self, audio_path: str | Path, with_timing: bool = False
+    ) -> RecognitionResult:
+        """Transcribe an audio file to kana.
+
+        `with_timing=True` also computes per-character CTC onset timing
+        (see RecognitionResult.char_spans) -- used by /pitch-contour to
+        align the learner's real pitch curve to the target's morae instead
+        of guessing with equal time division.
+        """
         recognizer = self.load()
         with _lock:
-            return recognizer.transcribe(audio_path)
+            return recognizer.transcribe(audio_path, with_timing=with_timing)
 
 
 def get_asr_service() -> ASRService:

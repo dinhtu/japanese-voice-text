@@ -10,6 +10,7 @@ import numpy as np
 from app.services.pitch_extraction import (
     _pause_aware_bucket_edges,
     _snap_to_pause,
+    extract_pitch_for_windows,
     extract_pitch_per_mora,
 )
 
@@ -115,3 +116,39 @@ def test_pause_aware_bucket_edges_never_collide_on_one_shared_pause():
     edges = _pause_aware_bucket_edges(energy, start=0, end=90, num_morae=3)
     assert list(edges) == sorted(edges)
     assert len(set(int(e) for e in edges)) == len(edges)
+
+
+def test_extract_pitch_for_windows_reads_the_right_tone_per_window():
+    """Two back-to-back tones with REAL windows handed in (as
+    app.services.mora_timing would produce from ASR timing) should each
+    read close to their own tone, even though the tones aren't equal
+    length -- unlike extract_pitch_per_mora, there's no bucketing/snapping
+    heuristic here, just "average the pitch inside this exact window"."""
+    tone1 = _tone(300, 0.2)
+    tone2 = _tone(500, 0.6)
+    audio = np.concatenate([tone1, tone2])
+    windows = [(0.0, 0.2), (0.2, 0.8)]
+    points = extract_pitch_for_windows(audio, SAMPLE_RATE, windows)
+
+    assert len(points) == 2
+    assert points[0]["voiced"] and points[1]["voiced"]
+    # 300 -> 500 Hz is 12*log2(500/300) ~= 8.8 semitones.
+    assert (points[1]["semitone"] - points[0]["semitone"]) > 6
+
+
+def test_extract_pitch_for_windows_marks_silent_window_unvoiced():
+    audio = np.concatenate([_tone(300, 0.3), _silence(0.3)])
+    windows = [(0.0, 0.3), (0.3, 0.6)]
+    points = extract_pitch_for_windows(audio, SAMPLE_RATE, windows)
+    assert points[0]["voiced"]
+    assert not points[1]["voiced"] and points[1]["semitone"] is None
+
+
+def test_extract_pitch_for_windows_empty_windows_list():
+    assert extract_pitch_for_windows(_tone(220, 0.3), SAMPLE_RATE, []) == []
+
+
+def test_extract_pitch_for_windows_no_audio_returns_placeholders():
+    windows = [(0.0, 0.1), (0.1, 0.2), (0.2, 0.3)]
+    points = extract_pitch_for_windows(np.array([], dtype=np.float32), SAMPLE_RATE, windows)
+    assert points == [{"semitone": None, "voiced": False}] * 3
