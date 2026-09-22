@@ -818,6 +818,61 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.aspects {
+  margin-top: 1rem;
+}
+
+.aspects__list {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.aspect {
+  display: grid;
+  grid-template-columns: 6.25rem minmax(0, 1fr) 2.75rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.aspect__name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.aspect__track {
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.aspect__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--score-good);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.aspect__fill[data-tone="excellent"] { background: var(--score-excellent); }
+.aspect__fill[data-tone="good"] { background: var(--score-good); }
+.aspect__fill[data-tone="fair"] { background: var(--score-fair); }
+.aspect__fill[data-tone="poor"] { background: var(--score-poor); }
+
+.aspect__num {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.aspect__num--na {
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
 .readings {
   display: grid;
   gap: 1rem;

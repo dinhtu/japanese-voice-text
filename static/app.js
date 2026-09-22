@@ -63,6 +63,8 @@ const el = {
   mCer: $("m-cer"),
   mDistance: $("m-distance"),
   mDuration: $("m-duration"),
+  aspects: $("aspects"),
+  aspectsList: $("aspects-list"),
   rTarget: $("r-target"),
   rHeard: $("r-heard"),
   syll: $("syll"),
@@ -454,16 +456,63 @@ async function evaluate(wav) {
   }
 }
 
+function aspectTone(value) {
+  if (value >= 90) return "excellent";
+  if (value >= 75) return "good";
+  if (value >= 60) return "fair";
+  return "poor";
+}
+
+function renderAspects(result) {
+  const rows = [
+    ["Phát âm", result.pronunciation_score, true],
+    ["Trôi chảy", result.fluency_score, true],
+    ["Nhịp", result.rhythm_score, result.rhythm_measured !== false],
+    ["Ngữ điệu", result.intonation_score, result.intonation_measured],
+  ];
+  el.aspectsList.replaceChildren(
+    ...rows.map(([label, value, measured]) => {
+      const row = document.createElement("div");
+      row.className = "aspect";
+      const title = document.createElement("span");
+      title.className = "aspect__name";
+      title.textContent = label;
+      const track = document.createElement("div");
+      track.className = "aspect__track";
+      const fill = document.createElement("i");
+      fill.className = "aspect__fill";
+      const num = document.createElement("span");
+      num.className = "aspect__num";
+      if (value == null || (label === "Ngữ điệu" && !measured)) {
+        fill.style.width = "0%";
+        num.textContent = "—";
+        num.classList.add("aspect__num--na");
+      } else {
+        const n = Math.min(100, Math.max(0, Number(value)));
+        fill.style.width = `${n}%`;
+        fill.dataset.tone = aspectTone(n);
+        num.textContent = n.toFixed(1);
+      }
+      track.appendChild(fill);
+      row.append(title, track, num);
+      return row;
+    }),
+  );
+}
+
 function renderResult(result) {
   const badge = LEVEL_BADGE[result.feedback.level] ?? LEVEL_BADGE.mismatch;
-  const color = RING_COLOR[result.feedback.level] ?? RING_COLOR.mismatch;
+  const ringScore = Number(result.overall_score ?? result.score);
+  const color = RING_COLOR[aspectTone(ringScore)] ?? RING_COLOR.mismatch;
 
   const circumference = 2 * Math.PI * 52;
-  const filled = (Math.min(100, Math.max(0, result.score)) / 100) * circumference;
+  const filled = (Math.min(100, Math.max(0, ringScore)) / 100) * circumference;
   el.ringValue.style.stroke = color;
   el.ringValue.style.strokeDasharray = `${filled} ${circumference}`;
   el.score.style.color = color;
-  el.score.textContent = result.score;
+  el.score.textContent = Number.isInteger(ringScore)
+    ? String(ringScore)
+    : ringScore.toFixed(1);
 
   el.pill.style.color = badge.color;
   el.pill.style.background = badge.bg;
@@ -478,6 +527,7 @@ function renderResult(result) {
   el.mCer.textContent = result.cer.toFixed(3);
   el.mDistance.textContent = `${result.distance} ký tự`;
   el.mDuration.textContent = `${result.audio_duration.toFixed(2)}s`;
+  renderAspects(result);
 
   // Mark the target characters the model did not hear as expected.
   const wrong = new Set(

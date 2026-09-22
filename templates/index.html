@@ -92,7 +92,7 @@
       <header class="page__header">
         <span class="badge">
           <svg class="icon icon--sm"><use href="#i-languages" /></svg>
-          hiragana ASR · wav2vec2
+          hiragana ASR · 5 khía cạnh
         </span>
         <h1>Luyện phát âm tiếng Nhật</h1>
         <p class="lead">
@@ -254,7 +254,7 @@
                 </svg>
                 <div class="ring__label">
                   <span class="ring__score" id="score">0</span>
-                  <span class="ring__max">/ 100</span>
+                  <span class="ring__max">tổng / 100</span>
                 </div>
               </div>
 
@@ -277,6 +277,11 @@
                     <p class="label"><svg class="icon icon--xs"><use href="#i-clock" /></svg> Thời lượng</p>
                     <p class="metric__value" id="m-duration"></p>
                   </div>
+                </div>
+
+                <div class="aspects" id="aspects">
+                  <p class="label">Điểm theo khía cạnh</p>
+                  <div class="aspects__list" id="aspects-list"></div>
                 </div>
               </div>
             </div>
@@ -338,9 +343,10 @@
             </div>
 
             <p class="note">
-              Điểm số phản ánh mức khớp giữa kết quả nhận dạng và câu mục tiêu, chưa
-              phải đánh giá ngữ âm thật sự (trọng âm, ngữ điệu). Tiếng ồn hoặc tốc độ
-              đọc bất thường cũng có thể làm giảm điểm.
+              Vòng tròn là điểm tổng (phát âm, độ trôi chảy, nhịp, ngữ điệu).
+              Phát âm vẫn là mức khớp kana với câu mục tiêu — không phải GOP
+              kiểu SpeechAce. Ngữ điệu để trống khi bản ghi không có cao độ
+              có thể đo. Không dùng checkpoint GOPT tiếng Anh.
             </p>
           </div>
         </section>

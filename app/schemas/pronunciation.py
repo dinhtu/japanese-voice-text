@@ -35,7 +35,35 @@ class EvaluateResponse(BaseModel):
     target_hiragana: str = Field(description="Target normalized to a hiragana reading")
     recognized_text: str = Field(description="Raw kana from the ASR model")
     recognized_hiragana: str = Field(description="ASR output normalized the same way")
-    score: int = Field(ge=0, le=100)
+    score: int = Field(ge=0, le=100, description="CER read-aloud match, 0-100")
+    overall_score: float = Field(
+        ge=0, le=100,
+        description="Weighted mix of the four aspect scores (GOPT-style)",
+    )
+    pronunciation_score: float = Field(
+        ge=0, le=100, description="Same as score: kana CER match",
+    )
+    fluency_score: float = Field(
+        ge=0, le=100, description="Mora/sec vs a careful-reading pace band",
+    )
+    rhythm_score: float = Field(
+        ge=0, le=100,
+        description="Mora-duration evenness plus sokuon/chouon and beat edits",
+    )
+    intonation_score: float | None = Field(
+        default=None,
+        description="F0 direction vs the H/L pattern. Null when no voiced pitch.",
+    )
+    rhythm_measured: bool = Field(
+        default=False, description="True when per-mora CTC windows were used",
+    )
+    intonation_measured: bool = Field(
+        default=False, description="True when voiced F0 points were available",
+    )
+    aspect_method: str = Field(
+        default="local-aspect",
+        description="local-aspect = deterministic Japanese signals, not MIT GOPT",
+    )
     cer: float = Field(description="Character error rate against the target reading")
     distance: int = Field(description="Levenshtein distance in characters")
     audio_duration: float = Field(description="Audio length in seconds")
@@ -65,12 +93,21 @@ class EvaluateResponse(BaseModel):
         recognized_moras: list[MoraPitch] | None = None,
     ) -> "EvaluateResponse":
         score = result.score
+        aspects = result.aspects
         return cls(
             target_text=result.target_text,
             target_hiragana=result.target_hiragana,
             recognized_text=result.recognized_text,
             recognized_hiragana=result.recognized_hiragana,
             score=score.score,
+            overall_score=aspects.overall_score,
+            pronunciation_score=aspects.pronunciation_score,
+            fluency_score=aspects.fluency_score,
+            rhythm_score=aspects.rhythm_score,
+            intonation_score=aspects.intonation_score,
+            rhythm_measured=aspects.rhythm_measured,
+            intonation_measured=aspects.intonation_measured,
+            aspect_method=aspects.method,
             cer=score.cer,
             distance=score.distance,
             audio_duration=result.audio_duration,

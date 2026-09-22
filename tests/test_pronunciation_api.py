@@ -22,7 +22,7 @@ class StubASRService:
 
     is_loaded = True
 
-    def recognize(self, audio_path):
+    def recognize(self, audio_path, with_timing=False):
         return RecognitionResult(kana=self.kana, duration=6.34, inference_time=1.1)
 
 
@@ -64,8 +64,16 @@ def test_evaluate_returns_full_result(client):
     assert body["target_hiragana"] == "げんきょーもいちにちがんばりましょー"
     assert body["recognized_text"] == "げんきょーもいちにちがんばりましょー"
     assert body["score"] == 100
+    assert body["pronunciation_score"] == 100.0
     assert body["cer"] == 0.0
     assert body["feedback"]["level"] == "excellent"
+    assert 0 <= body["overall_score"] <= 100
+    assert 0 <= body["fluency_score"] <= 100
+    assert 0 <= body["rhythm_score"] <= 100
+    assert body["intonation_score"] is None or 0 <= body["intonation_score"] <= 100
+    assert body["aspect_method"] == "local-aspect"
+    assert body["rhythm_measured"] is False
+    assert body["intonation_measured"] is False
 
 
 def test_evaluate_returns_recognized_pitch_pattern(client):
