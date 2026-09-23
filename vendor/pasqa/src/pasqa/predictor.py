@@ -260,7 +260,15 @@ class PasqaPredictor:
         max_samples = TARGET_SR * 10  # 10 seconds at 16 kHz (same constant as sheet)
 
         if wav_path is not None:
-            waveform, sr = torchaudio.load(str(wav_path), channels_first=False)  # (T, C)
+            # torchaudio>=2.9 routes load() through torchcodec, which is
+            # not installed. soundfile is already a project dependency.
+            try:
+                import soundfile as sf
+
+                data, sr = sf.read(str(wav_path), always_2d=True)
+                waveform = torch.from_numpy(np.asarray(data, dtype=np.float32))
+            except Exception:
+                waveform, sr = torchaudio.load(str(wav_path), channels_first=False)
             if sr != TARGET_SR:
                 resampler = torchaudio.transforms.Resample(sr, TARGET_SR, dtype=waveform.dtype)
                 waveform = resampler(waveform)  # acts on last dim (C), not T — matches sheet
