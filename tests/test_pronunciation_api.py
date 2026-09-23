@@ -87,6 +87,9 @@ def test_evaluate_returns_full_result(client):
     assert 0 <= body["rhythm_score"] <= 100
     assert body["intonation_score"] is None or 0 <= body["intonation_score"] <= 100
     assert body["aspect_method"].startswith("cer")
+    assert body["vad_method"] in (None, "silero", "energy")
+    assert isinstance(body["pause_count"], int)
+    assert body["speech_ratio"] is None or 0 <= body["speech_ratio"] <= 1
     assert body["rhythm_measured"] is False
     assert body["intonation_measured"] is False
     assert isinstance(body["measured_pitch"], list)

@@ -52,6 +52,9 @@ class AspectScores:
     rhythm_measured: bool
     intonation_measured: bool
     method: str = "local-aspect"
+    vad_method: str | None = None
+    pause_count: int = 0
+    speech_ratio: float | None = None
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -80,7 +83,8 @@ def score_fluency(
 
     Completeness is folded in: a short clip that happens to sit at a
     native mora/sec because half the sentence was skipped is not fluent.
-    `pause_count` / `speech_ratio` come from Silero (or energy) VAD.
+    `pause_count` comes from Silero (or energy) VAD after short gaps
+    are merged. `speech_ratio` is accepted for callers but not scored.
     """
     if n_morae <= 0 or duration_s <= 0:
         return 0.0
@@ -93,12 +97,14 @@ def score_fluency(
     else:
         pace = _lerp(rate, _FLUENCY_HI, _FLUENCY_TOO_FAST, 100.0, 20.0)
 
+    # Only hesitation-length pauses (VAD already merged <300ms gaps).
     if pause_count > 2:
-        pace -= min(20.0, (pause_count - 2) * 6.0)
-    if speech_ratio is not None and speech_ratio < 0.35:
-        pace *= 0.4 + 0.6 * (speech_ratio / 0.35)
+        pace -= min(15.0, (pause_count - 2) * 5.0)
+    # speech_ratio is file-level (leading/trailing silence) — diagnostic
+    # only. Do not score it; web recordings always have dead air.
 
-    completeness = 0.4 + 0.6 * (pronunciation / 100.0)
+    # Mild completeness: fluency is not a second pronunciation score.
+    completeness = 0.75 + 0.25 * (pronunciation / 100.0)
     return _round_score(pace * completeness)
 
 
@@ -240,6 +246,14 @@ def score_aspects(
     """Build the five utterance scores from already-measured facts."""
     pronunciation = mix_pronunciation(float(pronunciation_cer_score), gop_score)
     pace_duration = speech_duration if speech_duration and speech_duration > 0 else audio_duration
+    # A VAD blip (e.g. 0.05s) makes mora/s explode and clamps fluency to 0.
+    if (
+        n_morae > 0
+        and pace_duration > 0
+        and audio_duration > pace_duration
+        and (n_morae / pace_duration) > _FLUENCY_TOO_FAST
+    ):
+        pace_duration = audio_duration
     fluency = score_fluency(
         pace_duration,
         n_morae,
@@ -260,6 +274,9 @@ def score_aspects(
         intonation_score=intonation,
         rhythm_measured=rhythm_measured,
         intonation_measured=intonation_measured,
+        vad_method=vad_method,
+        pause_count=pause_count,
+        speech_ratio=speech_ratio,
         method=_method_tag(
             used_gop=gop_score is not None,
             used_vad=bool(vad_method),

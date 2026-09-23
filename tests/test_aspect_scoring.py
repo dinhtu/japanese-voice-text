@@ -33,6 +33,15 @@ def test_fluency_penalizes_incomplete_reading():
     full = score_fluency(3.2, 16, pronunciation=100.0)
     skipped = score_fluency(3.2, 16, pronunciation=40.0)
     assert skipped < full
+    # Completeness is mild: a 40 pronunciation reading is not floored.
+    assert skipped >= 80.0
+
+
+def test_fluency_ignores_file_level_speech_ratio():
+    """Leading/trailing silence must not look like disfluency."""
+    dense = score_fluency(3.2, 16, pronunciation=100.0, speech_ratio=0.9)
+    padded = score_fluency(3.2, 16, pronunciation=100.0, speech_ratio=0.08)
+    assert dense == padded == 100.0
 
 
 def test_fluency_penalizes_many_pauses():
@@ -120,6 +129,38 @@ def test_score_aspects_perfect_bundle():
     assert result.overall_score == 100.0
     assert result.rhythm_measured is True
     assert result.intonation_measured is True
+
+
+def test_fluency_ignores_vad_blip_shorter_than_a_real_utterance():
+    """0.05s of 'speech' for 16 morae used to clamp fluency to 0."""
+    result = score_aspects(
+        pronunciation_cer_score=100,
+        n_morae=16,
+        audio_duration=3.2,
+        speech_duration=0.05,
+        vad_method="silero",
+        pause_count=0,
+        speech_ratio=0.02,
+    )
+    assert result.fluency_score > 0
+    assert result.vad_method == "silero"
+    assert "vad" in result.method
+
+
+def test_score_aspects_tags_silero_in_method():
+    result = score_aspects(
+        pronunciation_cer_score=100,
+        n_morae=16,
+        audio_duration=3.2,
+        speech_duration=3.2,
+        vad_method="silero",
+        pause_count=1,
+        speech_ratio=0.8,
+    )
+    assert result.method == "cer+vad"
+    assert result.vad_method == "silero"
+    assert result.pause_count == 1
+    assert result.speech_ratio == 0.8
 
 
 def test_score_aspects_leaves_intonation_null_when_unvoiced():

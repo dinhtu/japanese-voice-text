@@ -2,6 +2,10 @@
 
 Prefers Silero VAD (tiny ONNX, CPU, free) when `silero-vad` is installed.
 Falls back to an energy gate so /evaluate never depends on a download.
+
+Japanese voiceless mora (っ, /s/, /k/) look like silence to a default
+100ms VAD, so segments closer than MERGE_GAP_S are fused before we count
+pauses. Leading / trailing file silence is ignored for pause_count.
 """
 
 from __future__ import annotations
@@ -16,13 +20,44 @@ logger = logging.getLogger(__name__)
 _silero_model = None
 _silero_failed = False
 
+# Gaps shorter than this are unvoiced consonants, not hesitation.
+MERGE_GAP_S = 0.30
+
 
 @dataclass(frozen=True)
 class VadResult:
-    speech_duration: float
+    speech_duration: float  # first speech → last speech (pace denominator)
     pause_count: int
-    speech_ratio: float
+    speech_ratio: float  # voiced seconds / file length (diagnostic only)
     method: str  # "silero" | "energy"
+
+
+def _merge_segments(
+    segments: list[tuple[float, float]], gap_s: float = MERGE_GAP_S
+) -> list[tuple[float, float]]:
+    if not segments:
+        return []
+    ordered = sorted(segments, key=lambda s: s[0])
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        prev_start, prev_end = merged[-1]
+        if start - prev_end <= gap_s:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _from_segments(
+    segments: list[tuple[float, float]], file_duration: float, method: str
+) -> VadResult:
+    merged = _merge_segments(segments)
+    if not merged:
+        return VadResult(0.0, 0, 0.0, method)
+    voiced = sum(max(0.0, end - start) for start, end in merged)
+    span = merged[-1][1] - merged[0][0]
+    ratio = min(1.0, voiced / file_duration) if file_duration > 0 else 0.0
+    return VadResult(max(0.0, span), max(0, len(merged) - 1), ratio, method)
 
 
 def _try_silero(samples: np.ndarray, sample_rate: int) -> VadResult | None:
@@ -47,22 +82,33 @@ def _try_silero(samples: np.ndarray, sample_rate: int) -> VadResult | None:
 
     wav = torch.from_numpy(np.asarray(samples, dtype=np.float32))
     try:
-        stamps = get_speech_timestamps(wav, _silero_model, sampling_rate=sample_rate)
+        stamps = get_speech_timestamps(
+            wav,
+            _silero_model,
+            sampling_rate=sample_rate,
+            min_silence_duration_ms=int(MERGE_GAP_S * 1000),
+            min_speech_duration_ms=80,
+            speech_pad_ms=80,
+        )
+    except TypeError:
+        # Older silero-vad without the extra kwargs.
+        try:
+            stamps = get_speech_timestamps(wav, _silero_model, sampling_rate=sample_rate)
+        except Exception:  # noqa: BLE001
+            logger.warning("Silero VAD inference failed; fluency uses energy VAD", exc_info=True)
+            return None
     except Exception:  # noqa: BLE001
         logger.warning("Silero VAD inference failed; fluency uses energy VAD", exc_info=True)
         return None
 
-    if not stamps:
-        return VadResult(0.0, 0, 0.0, "silero")
-
-    speech = 0.0
-    for seg in stamps:
+    duration = len(samples) / sample_rate if sample_rate else 0.0
+    segments: list[tuple[float, float]] = []
+    for seg in stamps or []:
         start = seg["start"] / sample_rate if isinstance(seg, dict) else seg.start / sample_rate
         end = seg["end"] / sample_rate if isinstance(seg, dict) else seg.end / sample_rate
-        speech += max(0.0, end - start)
-    duration = len(samples) / sample_rate if sample_rate else 0.0
-    ratio = min(1.0, speech / duration) if duration > 0 else 0.0
-    return VadResult(speech, max(0, len(stamps) - 1), ratio, "silero")
+        if end > start:
+            segments.append((start, end))
+    return _from_segments(segments, duration, "silero")
 
 
 def _energy_vad(samples: np.ndarray, sample_rate: int) -> VadResult:
@@ -77,18 +123,23 @@ def _energy_vad(samples: np.ndarray, sample_rate: int) -> VadResult:
     rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-12)
     thresh = max(float(np.median(rms)) * 1.8, float(np.max(rms)) * 0.08)
     voiced = rms > thresh
+    duration = len(samples) / sample_rate
     if not voiced.any():
         return VadResult(0.0, 0, 0.0, "energy")
 
-    speech_frames = int(voiced.sum())
-    speech = speech_frames * frame / sample_rate
-    duration = len(samples) / sample_rate
-    # Rising edges = new speech islands after a pause.
-    padded = np.concatenate([[False], voiced])
-    pause_count = int(np.sum((~padded[:-1]) & padded[1:])) - 1
-    pause_count = max(0, pause_count)
-    ratio = min(1.0, speech / duration) if duration > 0 else 0.0
-    return VadResult(speech, pause_count, ratio, "energy")
+    segments: list[tuple[float, float]] = []
+    in_run = False
+    run_start = 0
+    for i, flag in enumerate(voiced):
+        if flag and not in_run:
+            in_run = True
+            run_start = i
+        elif not flag and in_run:
+            segments.append((run_start * frame / sample_rate, i * frame / sample_rate))
+            in_run = False
+    if in_run:
+        segments.append((run_start * frame / sample_rate, len(voiced) * frame / sample_rate))
+    return _from_segments(segments, duration, "energy")
 
 
 def analyze_vad(samples: np.ndarray, sample_rate: int) -> VadResult:

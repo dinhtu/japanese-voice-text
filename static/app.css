@@ -836,6 +836,12 @@ button:disabled {
   margin-top: 0.5rem;
 }
 
+.aspects__method {
+  margin: 0.45rem 0 0;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
 .aspect {
   display: grid;
   grid-template-columns: 6.25rem minmax(0, 1fr) 2.75rem;

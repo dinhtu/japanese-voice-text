@@ -65,6 +65,7 @@ const el = {
   mDuration: $("m-duration"),
   aspects: $("aspects"),
   aspectsList: $("aspects-list"),
+  aspectsMethod: $("aspects-method"),
   rTarget: $("r-target"),
   rHeard: $("r-heard"),
   syll: $("syll"),
@@ -462,9 +463,26 @@ function aspectTone(value) {
   return "poor";
 }
 
+function fluencyMethodHint(result) {
+  const parts = [];
+  if (result.vad_method === "silero") parts.push("VAD: Silero");
+  else if (result.vad_method === "energy") parts.push("VAD: energy (chưa có Silero)");
+  else parts.push("VAD: không chạy");
+  if (result.pause_count != null) parts.push(`${result.pause_count} ngắt`);
+  if (result.speech_ratio != null) {
+    parts.push(`${Math.round(Number(result.speech_ratio) * 100)}% tiếng`);
+  }
+  if (result.aspect_method) parts.push(result.aspect_method);
+  return parts.join(" · ");
+}
+
 function renderAspects(result) {
   if (el.aspects && result.aspect_method) {
     el.aspects.dataset.method = result.aspect_method;
+  }
+  if (el.aspectsMethod) {
+    el.aspectsMethod.hidden = false;
+    el.aspectsMethod.textContent = fluencyMethodHint(result);
   }
   const rows = [
     ["Phát âm", result.pronunciation_score, true],

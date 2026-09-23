@@ -72,7 +72,18 @@ class EvaluateResponse(BaseModel):
     )
     aspect_method: str = Field(
         default="local-aspect",
-        description="Which free heads ran, e.g. gop+vad+f0 or cer+f0",
+        description="Which free heads ran, e.g. gop+vad+pasqa or cer+f0",
+    )
+    vad_method: str | None = Field(
+        default=None,
+        description='"silero" if Silero VAD ran, "energy" if the RMS fallback ran, '
+        "null if fluency had no VAD at all",
+    )
+    pause_count: int = Field(
+        default=0, description="In-utterance pauses from VAD (speech islands minus 1)"
+    )
+    speech_ratio: float | None = Field(
+        default=None, description="Voiced/speech seconds divided by file length, 0-1"
     )
     cer: float = Field(description="Character error rate against the target reading")
     distance: int = Field(description="Levenshtein distance in characters")
@@ -119,6 +130,9 @@ class EvaluateResponse(BaseModel):
             rhythm_measured=aspects.rhythm_measured,
             intonation_measured=aspects.intonation_measured,
             aspect_method=aspects.method,
+            vad_method=aspects.vad_method,
+            pause_count=aspects.pause_count,
+            speech_ratio=aspects.speech_ratio,
             cer=score.cer,
             distance=score.distance,
             audio_duration=result.audio_duration,
