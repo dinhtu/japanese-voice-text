@@ -51,8 +51,9 @@ silero-vad>=5.1.0
 
 # PASQA intonation (vendor/pasqa + models/pasqa weights).
 # s3prl pulls a wav2vec2-base SSL the first time PASQA loads (~360MB).
+# 0.4.10 crashes on Python 3.11 (mutable dataclass default). 0.4.18 is OK.
 pyyaml>=6.0
-s3prl==0.4.10
+s3prl==0.4.18
 
 # Training / dataset tooling for scripts/ — NOT needed to serve the API.
 # Uncomment the ones you need before training or running the realtime demos.
