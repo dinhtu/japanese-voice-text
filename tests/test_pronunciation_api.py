@@ -26,16 +26,31 @@ class StubASRService:
         return RecognitionResult(kana=self.kana, duration=6.34, inference_time=1.1)
 
 
+def _wav_header(n_bytes: int, sample_rate: int = 16_000) -> bytes:
+    return struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF", 36 + n_bytes, b"WAVE", b"fmt ", 16, 1, 1,
+        sample_rate, sample_rate * 2, 2, 16, b"data", n_bytes,
+    )
+
+
 def make_wav(seconds: float = 0.1, sample_rate: int = 16_000) -> bytes:
     """Minimal silent 16-bit mono WAV."""
     n = int(seconds * sample_rate)
     data = b"\x00\x00" * n
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", 36 + len(data), b"WAVE", b"fmt ", 16, 1, 1,
-        sample_rate, sample_rate * 2, 2, 16, b"data", len(data),
-    )
-    return header + data
+    return _wav_header(len(data), sample_rate) + data
+
+
+def make_tone_wav(freq_hz: float = 220.0, seconds: float = 1.0, sample_rate: int = 16_000) -> bytes:
+    """16-bit mono sine — enough voiced energy for F0 extraction."""
+    import math
+
+    n = int(seconds * sample_rate)
+    frames = bytearray()
+    for i in range(n):
+        sample = int(16000 * math.sin(2 * math.pi * freq_hz * i / sample_rate))
+        frames += struct.pack("<h", sample)
+    return _wav_header(len(frames), sample_rate) + bytes(frames)
 
 
 @pytest.fixture
@@ -71,9 +86,28 @@ def test_evaluate_returns_full_result(client):
     assert 0 <= body["fluency_score"] <= 100
     assert 0 <= body["rhythm_score"] <= 100
     assert body["intonation_score"] is None or 0 <= body["intonation_score"] <= 100
-    assert body["aspect_method"] == "local-aspect"
+    assert body["aspect_method"].startswith("cer")
     assert body["rhythm_measured"] is False
     assert body["intonation_measured"] is False
+    assert isinstance(body["measured_pitch"], list)
+    for item in body["measured_pitch"]:
+        assert {"mora", "semitone", "voiced", "expected"} <= set(item)
+        assert item["expected"] in ("H", "L")
+
+
+def test_evaluate_measured_pitch_is_f0_from_audio(client):
+    """Learner curve must come from WAV F0, not dictionary H/L of ASR text."""
+    response = post(client, content=make_tone_wav())
+    assert response.status_code == 200
+    pitch = response.json()["measured_pitch"]
+    if not pitch:
+        pytest.skip("pitch-accent / F0 path unavailable in this environment")
+    for item in pitch:
+        assert {"mora", "semitone", "voiced", "expected"} <= set(item)
+        assert item["expected"] in ("H", "L")
+        assert isinstance(item["mora"], str) and item["mora"]
+    voiced = [p for p in pitch if p["voiced"] and p["semitone"] is not None]
+    assert voiced, "a 220Hz tone should yield at least one voiced F0 point"
 
 
 def test_evaluate_returns_recognized_pitch_pattern(client):
@@ -101,7 +135,9 @@ def test_evaluate_recognized_pitch_pattern_is_empty_when_recognition_is_empty():
         with TestClient(app) as c:
             response = post(c)
             assert response.status_code == 200
-            assert response.json()["recognized_pitch_pattern"] == []
+            body = response.json()
+            assert body["recognized_pitch_pattern"] == []
+            assert isinstance(body["measured_pitch"], list)
     finally:
         app.dependency_overrides.clear()
 

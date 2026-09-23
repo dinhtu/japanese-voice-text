@@ -22,6 +22,9 @@ models/*
 !models/checkpoints/
 models/checkpoints/*
 !models/checkpoints/.gitkeep
+!models/pasqa/
+models/pasqa/*
+!models/pasqa/.gitkeep
 
 *.onnx
 *.mlmodel

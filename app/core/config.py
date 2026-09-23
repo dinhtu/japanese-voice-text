@@ -14,6 +14,7 @@ TEMPLATES_DIR = ROOT_DIR / "templates"
 load_dotenv(ROOT_DIR / ".env", override=False)
 
 DEFAULT_CHECKPOINT = ROOT_DIR / "models" / "checkpoints" / "best-medium-ep5-inference.pt"
+DEFAULT_PASQA_CHECKPOINT = ROOT_DIR / "models" / "pasqa" / "checkpoint-100000steps.pkl"
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
@@ -45,6 +46,9 @@ class Settings:
         OLLAMA_TIMEOUT_S   Request timeout in seconds (default 30).
         OLLAMA_TEMPERATURE Sampling temperature for /coach's generated text
                            (default 0.4 -- fairly grounded, not too random).
+        PASQA_CHECKPOINT   PASQA .pkl. Empty = use models/pasqa/checkpoint-100000steps.pkl
+                           when that file exists, else skip PASQA.
+        PASQA_DEVICE       cpu (default) or cuda -- keep cpu on a 12GB box.
     """
 
     def __init__(self) -> None:
@@ -81,6 +85,16 @@ class Settings:
         self.ollama_model = os.getenv("OLLAMA_MODEL", "qwen3:8b").strip()
         self.ollama_timeout_s = float(os.getenv("OLLAMA_TIMEOUT_S", "30"))
         self.ollama_temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.4"))
+
+        # PASQA: empty env uses the downloaded default if present.
+        pasqa = os.getenv("PASQA_CHECKPOINT", "").strip()
+        if pasqa:
+            self.pasqa_checkpoint = Path(pasqa)
+        elif DEFAULT_PASQA_CHECKPOINT.is_file():
+            self.pasqa_checkpoint = DEFAULT_PASQA_CHECKPOINT
+        else:
+            self.pasqa_checkpoint = None
+        self.pasqa_device = os.getenv("PASQA_DEVICE", "cpu").strip() or "cpu"
 
     def asset_url(self, path: str) -> str:
         """URL for a file in /static.

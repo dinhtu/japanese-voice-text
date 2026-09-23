@@ -24,6 +24,15 @@ class MoraStatusItem(BaseModel):
     ok: bool = Field(description="True = matched the target, False = mispronounced")
 
 
+class MeasuredPitchItem(BaseModel):
+    """F0 measured from the recording, one point per target mora."""
+
+    mora: str
+    semitone: float | None = None
+    voiced: bool = False
+    expected: str = Field(description='"H" | "L" from the reference accent pattern')
+
+
 class Feedback(BaseModel):
     level: str = Field(description="excellent | good | fair | poor | mismatch")
     message: str
@@ -41,10 +50,10 @@ class EvaluateResponse(BaseModel):
         description="Weighted mix of the four aspect scores (GOPT-style)",
     )
     pronunciation_score: float = Field(
-        ge=0, le=100, description="Same as score: kana CER match",
+        ge=0, le=100, description="Kana CER mixed with phoneme GOP when available",
     )
     fluency_score: float = Field(
-        ge=0, le=100, description="Mora/sec vs a careful-reading pace band",
+        ge=0, le=100, description="Mora/sec plus Silero/energy VAD pauses",
     )
     rhythm_score: float = Field(
         ge=0, le=100,
@@ -52,7 +61,8 @@ class EvaluateResponse(BaseModel):
     )
     intonation_score: float | None = Field(
         default=None,
-        description="F0 direction vs the H/L pattern. Null when no voiced pitch.",
+        description="F0 vs H/L, blended with PASQA MOS when configured. "
+        "Null when neither signal is available.",
     )
     rhythm_measured: bool = Field(
         default=False, description="True when per-mora CTC windows were used",
@@ -62,7 +72,7 @@ class EvaluateResponse(BaseModel):
     )
     aspect_method: str = Field(
         default="local-aspect",
-        description="local-aspect = deterministic Japanese signals, not MIT GOPT",
+        description="Which free heads ran, e.g. gop+vad+f0 or cer+f0",
     )
     cer: float = Field(description="Character error rate against the target reading")
     distance: int = Field(description="Levenshtein distance in characters")
@@ -76,14 +86,15 @@ class EvaluateResponse(BaseModel):
     )
     recognized_pitch_pattern: list[MoraPitchItem] = Field(
         default_factory=list,
-        description="Same H/L-per-mora pitch pattern shape as /pitch-accent's "
-        "`pattern`, but computed from the ASR-recognized text instead of the "
-        "target text -- i.e. the dictionary accent pattern for whatever the "
-        "model actually heard, not a measurement of the recording's audio. "
-        "This lets the frontend draw the learner's pitch with the exact same "
-        "chart as the reference pattern instead of a different-shaped, "
-        "audio-measured curve. Empty when the recognized text had no "
-        "pronounceable content.",
+        description="Dictionary H/L of the ASR-recognized text (same shape as "
+        "/pitch-accent). Kept for the coach/API; the practice chart draws "
+        "`measured_pitch` instead.",
+    )
+    measured_pitch: list[MeasuredPitchItem] = Field(
+        default_factory=list,
+        description="F0 measured from the WAV, one point per target mora "
+        "(same order as /pitch-accent). This is the learner curve the "
+        "practice page should draw -- not recognized_pitch_pattern.",
     )
 
     @classmethod
@@ -121,5 +132,14 @@ class EvaluateResponse(BaseModel):
             recognized_pitch_pattern=[
                 MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase)
                 for m in (recognized_moras or [])
+            ],
+            measured_pitch=[
+                MeasuredPitchItem(
+                    mora=str(p.get("mora", "")),
+                    semitone=p.get("semitone"),
+                    voiced=bool(p.get("voiced")),
+                    expected=str(p.get("expected", "L")),
+                )
+                for p in (result.measured_pitch or [])
             ],
         )

@@ -107,9 +107,9 @@
           <div class="card__head">
             <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
             <div class="card__actions">
-              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu của câu này" aria-expanded="false">
+              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu (H/L) và F0 đo từ bản ghi" aria-expanded="false">
                 <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
-                Cao độ mẫu
+                Cao độ
               </button>
               <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
                 <svg class="icon icon--sm"><use href="#i-volume" /></svg>
@@ -343,10 +343,9 @@
             </div>
 
             <p class="note">
-              Vòng tròn là điểm tổng (phát âm, độ trôi chảy, nhịp, ngữ điệu).
-              Phát âm vẫn là mức khớp kana với câu mục tiêu — không phải GOP
-              kiểu SpeechAce. Ngữ điệu để trống khi bản ghi không có cao độ
-              có thể đo. Không dùng checkpoint GOPT tiếng Anh.
+              Tổng = phát âm (CER + GOP) + trôi chảy (VAD) + nhịp (mora)
+              + ngữ điệu (F0 + PASQA khi đã tải weights). Proxy free, không
+              phải giáo viên / Azure.
             </p>
           </div>
         </section>

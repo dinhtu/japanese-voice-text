@@ -1,24 +1,20 @@
-"""GOPT-style utterance scores from this app's own Japanese signals.
+"""GOPT-style utterance scores from free Japanese signals / models.
 
-The MIT GOPT checkpoint (SpeechOcean762 + Librispeech GOP) is English-only
-and would invent Japanese scores, so it is not loaded. This module predicts
-the same five utterance aspects GOPT does -- accuracy, fluency, rhythm,
-intonation, overall -- from measurements the repo already makes:
+The MIT GOPT checkpoint is English-only and is not loaded. Heads:
 
-* pronunciation  -- CER score (app.services.scoring)
-* fluency        -- mora/sec vs a careful-reading band
-* rhythm         -- mora-duration evenness + sokuon/chouon shortfalls
-* intonation     -- F0 direction vs the OpenJTalk H/L pattern
-* overall        -- weighted mix of whichever aspects were actually measured
-
-No extra neural net, no extra VRAM. Numbers are deterministic and testable.
-Unmeasured intonation (no voiced F0) stays None rather than a guessed value.
+* pronunciation  -- kana CER mixed with GOP from the Dual CTC phoneme head
+* fluency        -- mora/sec + Silero (or energy) VAD pauses
+* rhythm         -- mora-duration evenness + sokuon/chouon + beat edits
+* intonation     -- F0 vs H/L, blended with PASQA MOS when configured
+* overall        -- weighted mix of whichever aspects were measured
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
+
+from app.services.gop_scoring import mix_pronunciation
 
 if TYPE_CHECKING:
     from app.services.pitch_accent import MoraPitch
@@ -74,12 +70,17 @@ def _lerp(x: float, x0: float, x1: float, y0: float, y1: float) -> float:
 
 
 def score_fluency(
-    duration_s: float, n_morae: int, pronunciation: float
+    duration_s: float,
+    n_morae: int,
+    pronunciation: float,
+    pause_count: int = 0,
+    speech_ratio: float | None = None,
 ) -> float:
     """Pace of the recording vs a careful Japanese reading band.
 
     Completeness is folded in: a short clip that happens to sit at a
     native mora/sec because half the sentence was skipped is not fluent.
+    `pause_count` / `speech_ratio` come from Silero (or energy) VAD.
     """
     if n_morae <= 0 or duration_s <= 0:
         return 0.0
@@ -91,6 +92,11 @@ def score_fluency(
         pace = _lerp(rate, _FLUENCY_TOO_SLOW, _FLUENCY_LO, 25.0, 100.0)
     else:
         pace = _lerp(rate, _FLUENCY_HI, _FLUENCY_TOO_FAST, 100.0, 20.0)
+
+    if pause_count > 2:
+        pace -= min(20.0, (pause_count - 2) * 6.0)
+    if speech_ratio is not None and speech_ratio < 0.35:
+        pace *= 0.4 + 0.6 * (speech_ratio / 0.35)
 
     completeness = 0.4 + 0.6 * (pronunciation / 100.0)
     return _round_score(pace * completeness)
@@ -155,18 +161,26 @@ def score_rhythm(
 
 
 def score_intonation(
-    pitch_matched: int | None, pitch_total: int | None
+    pitch_matched: int | None,
+    pitch_total: int | None,
+    pasqa_score: float | None = None,
 ) -> tuple[float | None, bool]:
-    """Share of voiced morae whose F0 sat on the expected H/L side.
+    """F0 H/L direction, blended with PASQA MOS when that model ran.
 
     Floor of 20 when something was voiced but every mora went the wrong
-    way -- they did produce pitch, it just did not match. None when there
-    is no voiced F0 at all (do not invent a number).
+    way. None when there is no voiced F0 and no PASQA result.
     """
-    if not pitch_total:
-        return None, False
-    ratio = (pitch_matched or 0) / pitch_total
-    return _round_score(20.0 + 80.0 * ratio), True
+    f0_score = None
+    if pitch_total:
+        ratio = (pitch_matched or 0) / pitch_total
+        f0_score = _round_score(20.0 + 80.0 * ratio)
+    if pasqa_score is not None and f0_score is not None:
+        return _round_score(0.45 * f0_score + 0.55 * pasqa_score), True
+    if pasqa_score is not None:
+        return _round_score(pasqa_score), True
+    if f0_score is not None:
+        return f0_score, True
+    return None, False
 
 
 def combine_overall(
@@ -188,6 +202,23 @@ def combine_overall(
     return _round_score(sum(s * w for s, w in parts) / total_w)
 
 
+def _method_tag(
+    *,
+    used_gop: bool,
+    used_vad: bool,
+    used_pasqa: bool,
+    used_f0: bool,
+) -> str:
+    tags = ["gop" if used_gop else "cer"]
+    if used_vad:
+        tags.append("vad")
+    if used_pasqa:
+        tags.append("pasqa")
+    elif used_f0:
+        tags.append("f0")
+    return "+".join(tags)
+
+
 def score_aspects(
     *,
     pronunciation_cer_score: int,
@@ -200,13 +231,26 @@ def score_aspects(
     errors: Sequence["PronunciationError"] = (),
     pitch_matched: int | None = None,
     pitch_total: int | None = None,
+    gop_score: float | None = None,
+    pause_count: int = 0,
+    speech_ratio: float | None = None,
+    vad_method: str | None = None,
+    pasqa_score: float | None = None,
 ) -> AspectScores:
     """Build the five utterance scores from already-measured facts."""
-    pronunciation = _round_score(float(pronunciation_cer_score))
+    pronunciation = mix_pronunciation(float(pronunciation_cer_score), gop_score)
     pace_duration = speech_duration if speech_duration and speech_duration > 0 else audio_duration
-    fluency = score_fluency(pace_duration, n_morae, pronunciation)
+    fluency = score_fluency(
+        pace_duration,
+        n_morae,
+        pronunciation,
+        pause_count=pause_count,
+        speech_ratio=speech_ratio,
+    )
     rhythm, rhythm_measured = score_rhythm(windows, moras, duration_issues, errors)
-    intonation, intonation_measured = score_intonation(pitch_matched, pitch_total)
+    intonation, intonation_measured = score_intonation(
+        pitch_matched, pitch_total, pasqa_score=pasqa_score
+    )
     overall = combine_overall(pronunciation, fluency, rhythm, intonation)
     return AspectScores(
         overall_score=overall,
@@ -216,4 +260,10 @@ def score_aspects(
         intonation_score=intonation,
         rhythm_measured=rhythm_measured,
         intonation_measured=intonation_measured,
+        method=_method_tag(
+            used_gop=gop_score is not None,
+            used_vad=bool(vad_method),
+            used_pasqa=pasqa_score is not None,
+            used_f0=bool(pitch_total),
+        ),
     )

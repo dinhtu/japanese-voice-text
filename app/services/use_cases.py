@@ -38,6 +38,7 @@ class EvaluationResult:
     aspects: AspectScores
     audio_duration: float
     inference_ms: float
+    measured_pitch: list[dict] | None = None
 
 
 def _speech_span(windows: list[tuple[float, float]]) -> float | None:
@@ -54,7 +55,7 @@ def _measure_aspects(
     score: ScoreResult,
     recognition,
     audio_path: str | Path,
-) -> AspectScores:
+) -> tuple[AspectScores, list[dict]]:
     """Best-effort extras around the CER score. Never raises to the caller."""
     n_morae = len(split_mora_spans(target_hiragana))
     windows = None
@@ -62,6 +63,7 @@ def _measure_aspects(
     duration_issues: list = []
     pitch_matched = pitch_total = None
     speech_duration = None
+    measured_pitch: list[dict] = []
 
     try:
         from app.services.pitch_accent import pitch_accent_pattern
@@ -85,29 +87,99 @@ def _measure_aspects(
             logger.warning("Aspect mora windows failed", exc_info=True)
             windows = None
 
+    samples = None
+    sample_rate = None
+    try:
+        from src.asr.inference import load_audio
+
+        samples, sample_rate = load_audio(audio_path)
+    except Exception:  # noqa: BLE001
+        logger.warning("Aspect audio reload failed", exc_info=True)
+
     if windows is not None and moras is not None and len(windows) == len(moras):
         try:
             from app.services.prosody_issues import detect_duration_issues
-            from src.asr.inference import load_audio
-            from app.services.pitch_extraction import extract_pitch_for_windows
 
             duration_issues = detect_duration_issues(moras, windows)
-            samples, sample_rate = load_audio(audio_path)
-            points = extract_pitch_for_windows(
-                samples,
-                sample_rate,
-                windows,
-                phrases=[m.phrase for m in moras],
-                pitch_labels=[m.pitch for m in moras],
+        except Exception:  # noqa: BLE001
+            logger.warning("Aspect duration issues failed", exc_info=True)
+
+    if moras and samples is not None and sample_rate:
+        try:
+            from app.services.pitch_extraction import (
+                extract_pitch_for_windows,
+                extract_pitch_per_mora,
             )
+
+            if windows is not None and len(windows) == len(moras):
+                points = extract_pitch_for_windows(
+                    samples,
+                    sample_rate,
+                    windows,
+                    phrases=[m.phrase for m in moras],
+                    pitch_labels=[m.pitch for m in moras],
+                )
+            else:
+                points = extract_pitch_per_mora(samples, sample_rate, len(moras))
             pitch_matched, pitch_total = pitch_direction_match(moras, points)
+            measured_pitch = [
+                {
+                    "mora": mora.mora,
+                    "semitone": point.get("semitone"),
+                    "voiced": bool(point.get("voiced")),
+                    "expected": mora.pitch,
+                }
+                for mora, point in zip(moras, points)
+            ]
         except Exception:  # noqa: BLE001
             logger.warning(
-                "Aspect duration/pitch measurement failed; those heads degrade",
+                "Measured F0 extraction failed; learner pitch chart will be empty",
                 exc_info=True,
             )
 
-    return score_aspects(
+    gop_score = None
+    try:
+        from app.services.gop_scoring import score_gop
+        from src.asr.phoneme_converter import JapanesePhonemeConverter
+
+        phones = JapanesePhonemeConverter().text_to_phonemes(target_text).split()
+        gop_score = score_gop(getattr(recognition, "phoneme_probs", None), phones)
+    except Exception:  # noqa: BLE001
+        logger.warning("GOP scoring failed; pronunciation stays CER-only", exc_info=True)
+
+    pause_count = 0
+    speech_ratio = None
+    vad_method = None
+    if samples is not None and sample_rate:
+        try:
+            from app.services.vad_fluency import analyze_vad
+
+            vad = analyze_vad(samples, sample_rate)
+            vad_method = vad.method
+            pause_count = vad.pause_count
+            speech_ratio = vad.speech_ratio
+            if vad.speech_duration > 0:
+                speech_duration = vad.speech_duration
+        except Exception:  # noqa: BLE001
+            logger.warning("VAD fluency failed", exc_info=True)
+
+    pasqa_score = None
+    if moras:
+        try:
+            from app.core.config import get_settings
+            from app.services.pasqa_intonation import score_pasqa
+
+            settings = get_settings()
+            pasqa_score = score_pasqa(
+                audio_path,
+                [m.mora for m in moras],
+                getattr(settings, "pasqa_checkpoint", None),
+                getattr(settings, "pasqa_device", "cpu"),
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("PASQA scoring failed", exc_info=True)
+
+    aspects = score_aspects(
         pronunciation_cer_score=score.score,
         n_morae=n_morae,
         audio_duration=recognition.duration,
@@ -118,7 +190,13 @@ def _measure_aspects(
         errors=score.errors,
         pitch_matched=pitch_matched,
         pitch_total=pitch_total,
+        gop_score=gop_score,
+        pause_count=pause_count,
+        speech_ratio=speech_ratio,
+        vad_method=vad_method,
+        pasqa_score=pasqa_score,
     )
+    return aspects, measured_pitch
 
 
 class EvaluatePronunciationUseCase:
@@ -147,8 +225,9 @@ class EvaluatePronunciationUseCase:
         )
 
         score = score_pronunciation(target_hiragana, recognized_hiragana)
+        measured_pitch: list[dict] = []
         try:
-            aspects = _measure_aspects(
+            aspects, measured_pitch = _measure_aspects(
                 target_text,
                 target_hiragana,
                 score,
@@ -173,4 +252,5 @@ class EvaluatePronunciationUseCase:
             aspects=aspects,
             audio_duration=round(recognition.duration, 2),
             inference_ms=round(recognition.inference_time * 1000, 1),
+            measured_pitch=measured_pitch,
         )

@@ -35,6 +35,12 @@ def test_fluency_penalizes_incomplete_reading():
     assert skipped < full
 
 
+def test_fluency_penalizes_many_pauses():
+    smooth = score_fluency(3.2, 16, pronunciation=100.0, pause_count=0)
+    choppy = score_fluency(3.2, 16, pronunciation=100.0, pause_count=6)
+    assert choppy < smooth
+
+
 def test_rhythm_uses_edit_ops_when_windows_missing():
     errors = [
         PronunciationError(type="del", target="っ", recognized="", position=1),
@@ -106,7 +112,7 @@ def test_score_aspects_perfect_bundle():
         pitch_matched=4,
         pitch_total=4,
     )
-    assert result.method == "local-aspect"
+    assert result.method == "cer+f0"
     assert result.pronunciation_score == 100.0
     assert result.fluency_score == 100.0
     assert result.rhythm_score == 100.0

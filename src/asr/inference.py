@@ -196,6 +196,10 @@ class RecognitionResult:
     own frame timing. Only populated when transcribe(with_timing=True) was
     used; see _char_spans_from_pred_ids for how it's derived and when it
     falls back to None instead."""
+    phoneme_probs: np.ndarray | None = None
+    """(T, phoneme_V) softmax over the InterCTC phoneme head. Populated
+    when with_timing or with_phonemes is set -- used for GOP scoring.
+    Blank is index 0, same as PhonemeVocab."""
 
     @property
     def rtf(self) -> float:
@@ -269,9 +273,12 @@ class KanaRecognizer:
         inference_time = time.perf_counter() - t0
 
         phonemes = None
-        if with_phonemes:
-            phoneme_pred_ids = outputs["phoneme_logits"].squeeze(0).argmax(dim=-1)
-            phonemes = self.phoneme_vocab.decode(phoneme_pred_ids.tolist())
+        phoneme_probs = None
+        if with_phonemes or with_timing:
+            phoneme_logits = outputs["phoneme_logits"].squeeze(0).float().cpu()
+            phoneme_probs = torch.softmax(phoneme_logits, dim=-1).numpy()
+            if with_phonemes:
+                phonemes = self.phoneme_vocab.decode(phoneme_logits.argmax(dim=-1).tolist())
 
         kana_ids_list = kana_pred_ids.tolist()
         kana = self.kana_vocab.decode(kana_ids_list)
@@ -288,4 +295,5 @@ class KanaRecognizer:
             inference_time=inference_time,
             phonemes=phonemes,
             char_spans=char_spans,
+            phoneme_probs=phoneme_probs,
         )

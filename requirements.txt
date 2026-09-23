@@ -46,6 +46,14 @@ httpx>=0.27.0
 #      you picked a different model.
 ollama>=0.4.0
 
+# Fluency VAD (tiny, CPU). Optional -- energy-gate fallback if missing.
+silero-vad>=5.1.0
+
+# PASQA intonation (vendor/pasqa + models/pasqa weights).
+# s3prl pulls a wav2vec2-base SSL the first time PASQA loads (~360MB).
+pyyaml>=6.0
+s3prl==0.4.10
+
 # Training / dataset tooling for scripts/ — NOT needed to serve the API.
 # Uncomment the ones you need before training or running the realtime demos.
 # datasets>=3.0.0,<4.0.0
