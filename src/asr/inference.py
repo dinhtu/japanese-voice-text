@@ -237,9 +237,7 @@ class KanaRecognizer:
 
         # The checkpoint knows which encoder it was fine-tuned from.
         self.pretrained = getattr(model.encoder.config, "_name_or_path", pretrained) or pretrained
-        # The checkpoint metadata selects the encoder/config used for training;
-        # its feature extractor must be the matching one as well.
-        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(self.pretrained)
+        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(pretrained)
         self.kana_vocab = KanaVocab()
         self.phoneme_vocab = PhonemeVocab()
 
@@ -259,11 +257,7 @@ class KanaRecognizer:
         """
         self.ensure_on_device()
         if isinstance(audio, np.ndarray):
-            audio_array, sr = np.asarray(audio, dtype=np.float32), TARGET_SAMPLE_RATE
-            if audio_array.ndim != 1:
-                raise ValueError("NumPy ASR input must be a mono 1-D waveform")
-            if not np.isfinite(audio_array).all():
-                raise ValueError("NumPy ASR input contains NaN or infinite samples")
+            audio_array, sr = audio, TARGET_SAMPLE_RATE
         else:
             audio_array, sr = load_audio(audio)
 

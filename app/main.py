@@ -15,10 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from app.api import english_routes, pages, routes
+from app.api import chinese_routes, english_routes, pages, routes
 from app.core.config import STATIC_DIR, get_settings
 from app.services.asr_service import ASRService
 from app.services.english_asr import get_english_asr_service
+from app.services.chinese_asr import get_chinese_asr_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -75,6 +76,9 @@ app.include_router(routes.router, prefix="/api/pronunciation", tags=["pronunciat
 app.include_router(
     english_routes.router, prefix="/api/pronunciation-en", tags=["pronunciation-en"]
 )
+app.include_router(
+    chinese_routes.router, prefix="/api/pronunciation-zh", tags=["pronunciation-zh"]
+)
 app.include_router(pages.router, tags=["web"])
 
 
@@ -86,6 +90,8 @@ def health() -> dict:
         "checkpoint": str(settings.checkpoint),
         "en_model_loaded": get_english_asr_service().is_loaded,
         "en_asr_model": settings.en_asr_model,
+        "zh_model_loaded": get_chinese_asr_service().is_loaded,
+        "zh_asr_model": settings.zh_asr_model,
         "gopt_loaded": _gopt_loaded(),
         "gopt_checkpoint": str(settings.gopt_checkpoint),
     }

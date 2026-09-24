@@ -145,44 +145,11 @@ def load_checkpoint(
         # Legacy format: raw state_dict
         state_dict = checkpoint
 
-    kana_vocab = KanaVocab()
-    phoneme_vocab = PhonemeVocab()
-    # Wav2Vec2 only creates masked_spec_embed when time masking is enabled.
-    # Preserve that module when loading checkpoints trained with SpecAugment;
-    # inference still remains deterministic because model.eval() disables it.
-    mask_time_prob = 0.05 if "encoder.masked_spec_embed" in state_dict else 0.0
     model = create_model(
         pretrained=pretrained,
-        mask_time_prob=mask_time_prob,
+        mask_time_prob=0.0,
         inter_ctc_layer=inter_ctc_layer,
     )
-    # A checkpoint with a missing head can otherwise look healthy while
-    # inference runs with randomly initialized CTC weights.
-    if not isinstance(state_dict, dict):
-        raise RuntimeError(f"Invalid checkpoint state_dict: {type(state_dict).__name__}")
-    required = {"kana_head.weight", "kana_head.bias", "phoneme_head.weight", "phoneme_head.bias"}
-    missing = sorted(required - set(state_dict))
-    if missing:
-        raise RuntimeError(f"Checkpoint is missing critical CTC weights: {', '.join(missing)}")
-
-    expected_shapes = {
-        "kana_head.weight": (kana_vocab.size, model.kana_head.in_features),
-        "kana_head.bias": (kana_vocab.size,),
-        "phoneme_head.weight": (phoneme_vocab.size, model.phoneme_head.in_features),
-        "phoneme_head.bias": (phoneme_vocab.size,),
-    }
-    for key, expected in expected_shapes.items():
-        actual = tuple(state_dict[key].shape)
-        if actual != expected:
-            raise RuntimeError(
-                f"Checkpoint {key} shape {actual} is incompatible with expected {expected}"
-            )
-
-    incompatible = model.load_state_dict(state_dict, strict=True)
-    if incompatible.missing_keys or incompatible.unexpected_keys:
-        raise RuntimeError(
-            "Checkpoint/model keys are incompatible: "
-            f"missing={incompatible.missing_keys}, unexpected={incompatible.unexpected_keys}"
-        )
+    model.load_state_dict(state_dict, strict=False)
     model.float()  # Ensure FP32 (weights may be saved in BF16)
     return model

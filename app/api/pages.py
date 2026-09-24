@@ -9,6 +9,10 @@ from app.constants.english_texts import (
     PRACTICE_TEXTS as EN_TEXTS,
 )
 from app.constants.practice_texts import DEFAULT_PRACTICE_TEXT, PRACTICE_TEXTS
+from app.constants.chinese_texts import (
+    DEFAULT_PRACTICE_TEXT as ZH_DEFAULT,
+    PRACTICE_TEXTS as ZH_TEXTS,
+)
 from app.core.config import TEMPLATES_DIR, get_settings
 
 router = APIRouter()
@@ -43,6 +47,19 @@ def english_practice_page(request: Request) -> HTMLResponse:
         {
             "texts": EN_TEXTS,
             "default_text": EN_DEFAULT,
+            "api_base_url": settings.api_base_url,
+        },
+    )
+
+
+@router.get("/zh", response_class=HTMLResponse, include_in_schema=False)
+def chinese_practice_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "zh.html",
+        {
+            "texts": ZH_TEXTS,
+            "default_text": ZH_DEFAULT,
             "api_base_url": settings.api_base_url,
         },
     )

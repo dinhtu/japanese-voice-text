@@ -39,6 +39,8 @@ class EvaluationResult:
     audio_duration: float
     inference_ms: float
     measured_pitch: list[dict] | None = None
+    target_reading: str | None = None
+    recognized_reading: str | None = None
 
 
 def _speech_span(windows: list[tuple[float, float]]) -> float | None:

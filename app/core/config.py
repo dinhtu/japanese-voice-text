@@ -105,6 +105,10 @@ class Settings:
             "EN_ASR_MODEL", "facebook/wav2vec2-base-960h"
         ).strip() or "facebook/wav2vec2-base-960h"
         self.en_asr_device = os.getenv("EN_ASR_DEVICE") or None
+        self.zh_asr_model = os.getenv(
+            "ZH_ASR_MODEL", "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
+        ).strip() or "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
+        self.zh_asr_device = os.getenv("ZH_ASR_DEVICE") or None
 
         self.gopt_checkpoint = Path(
             os.getenv("GOPT_CHECKPOINT", "").strip()

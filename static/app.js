@@ -244,6 +244,17 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
   clearOutput();
   clearPlayback();
   resetPitch();
+  if (document.body.dataset.readingUrl && !reading) {
+    fetch(`${document.body.dataset.readingUrl}?text=${encodeURIComponent(text)}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (target.text === text && data?.reading) {
+          el.targetReading.textContent = data.reading;
+          el.targetReading.hidden = false;
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 function showError(message) {
@@ -452,7 +463,8 @@ async function evaluate(wav) {
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
     learnerPitch = result.measured_pitch ?? [];
-    if (referencePattern) renderPitchChart();
+    if (document.body.dataset.targetLang === "zh") renderChinesePitch();
+    else if (referencePattern) renderPitchChart();
   } catch (error) {
     showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
   } finally {
@@ -489,7 +501,7 @@ function renderAspects(result) {
     el.aspectsMethod.textContent = fluencyMethodHint(result);
   }
   const rows = [
-    ["Phát âm", result.pronunciation_score, true],
+    [document.body.dataset.targetLang === "zh" ? "Khớp âm tiết" : "Phát âm", result.pronunciation_score, true],
     ["Trôi chảy", result.fluency_score, true],
     ["Nhịp", result.rhythm_score, result.rhythm_measured !== false],
     ["Ngữ điệu", result.intonation_score, result.intonation_measured],
@@ -507,7 +519,7 @@ function renderAspects(result) {
       fill.className = "aspect__fill";
       const num = document.createElement("span");
       num.className = "aspect__num";
-      if (value == null || (label === "Ngữ điệu" && !measured)) {
+      if (value == null || !measured) {
         fill.style.width = "0%";
         num.textContent = "—";
         num.classList.add("aspect__num--na");
@@ -549,7 +561,7 @@ function renderResult(result) {
 
   el.feedback.textContent = result.feedback.message;
   el.mCer.textContent = result.cer.toFixed(3);
-  el.mDistance.textContent = `${result.distance} ký tự`;
+  el.mDistance.textContent = `${result.distance} ${document.body.dataset.targetLang === "zh" ? "âm tiết" : "ký tự"}`;
   el.mDuration.textContent = `${result.audio_duration.toFixed(2)}s`;
   renderAspects(result);
 
@@ -557,14 +569,18 @@ function renderResult(result) {
   const wrong = new Set(
     result.errors.filter((error) => error.type !== "ins").map((error) => error.position),
   );
+  const targetUnits = document.body.dataset.targetLang === "zh" && result.target_reading
+    ? result.target_reading.split(" ") : [...result.target_hiragana];
   el.rTarget.replaceChildren(
-    ...[...result.target_hiragana].map((char, index) => {
+    ...targetUnits.map((char, index) => {
       const node = document.createElement(wrong.has(index) ? "mark" : "span");
-      node.textContent = char;
+      node.textContent = document.body.dataset.targetLang === "zh" ? `${char} ` : char;
       return node;
     }),
   );
-  el.rHeard.textContent = result.recognized_hiragana || "—";
+  el.rHeard.textContent = document.body.dataset.targetLang === "zh"
+    ? `${result.recognized_hiragana || "—"} (${result.recognized_reading || "—"})`
+    : result.recognized_hiragana || "—";
 
   // Per-mora "dung/sai" grid - real character-level edit-distance data
   // (see app/services/mora_diff.py) regrouped onto the target's morae, not
@@ -918,6 +934,10 @@ async function loadPitchAccent(text) {
 function comparePitch() {
   el.pitch.hidden = false;
   el.pitchBtn.setAttribute("aria-expanded", "true");
+  if (document.body.dataset.targetLang === "zh") {
+    renderChinesePitch();
+    return Promise.resolve();
+  }
   if (pitchLoadedFor !== target.text) return loadPitchAccent(target.text);
   return Promise.resolve();
 }
@@ -928,8 +948,37 @@ el.pitchBtn.addEventListener("click", () => {
   const opening = el.pitch.hidden;
   el.pitch.hidden = !opening;
   el.pitchBtn.setAttribute("aria-expanded", String(opening));
-  if (opening && pitchLoadedFor !== target.text) loadPitchAccent(target.text);
+  if (opening && document.body.dataset.targetLang === "zh") renderChinesePitch();
+  else if (opening && pitchLoadedFor !== target.text) loadPitchAccent(target.text);
 });
+
+function renderChinesePitch() {
+  const points = (learnerPitch || []).filter((p) => p.voiced && p.semitone != null);
+  if (!points.length) {
+    setPitchStatus("Chưa có F0 từ bản ghi. Hãy ghi âm để xem đường cao độ.");
+    return;
+  }
+  const all = learnerPitch || [];
+  const values = points.map((p) => p.semitone);
+  const low = Math.min(...values) - 1;
+  const high = Math.max(...values) + 1;
+  const width = Math.max(320, all.length * 48);
+  const coords = all.map((p, i) => p.voiced && p.semitone != null
+    ? `${((i + 0.5) * width / all.length).toFixed(1)},${(70 - 48 * (p.semitone - low) / (high - low)).toFixed(1)}`
+    : null);
+  const segments = [];
+  let current = [];
+  for (const point of coords) {
+    if (point) current.push(point);
+    else if (current.length) { segments.push(current); current = []; }
+  }
+  if (current.length) segments.push(current);
+  el.pitchTitle.textContent = "Cao độ F0 của bạn";
+  el.pitchLegend.textContent = "Đường F0 đo từ bản ghi";
+  el.pitchChart.innerHTML = `<div class="pitch__scroll"><div class="pitch__plot" style="width:max(100%,${width}px)"><svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">${segments.map((s) => `<polyline class="pitch__line pitch__line--you" points="${s.join(" ")}" />`).join("")}</svg><div class="pitch__labels" style="grid-template-columns:repeat(${all.length},1fr)">${all.map((p) => `<span class="pitch__label">${p.mora}</span>`).join("")}</div></div></div><p class="pitch__hint">F0 chỉ để quan sát, chưa đối chiếu thanh điệu.</p>`;
+  el.pitchChart.hidden = false;
+  el.pitchStatus.hidden = true;
+}
 
 /* --------------------------------------------------------------- Wiring */
 
@@ -1027,6 +1076,7 @@ el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
   learnerPitch = null;
+  if (document.body.dataset.targetLang === "zh") renderChinesePitch();
   if (referencePattern) renderPitchChart();
 });
 

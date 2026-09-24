@@ -137,6 +137,39 @@ Audio (16kHz) → CNN Feature Extractor (frozen) → Transformer Encoder (24 lay
 A FastAPI service that scores a spoken recording against a target Japanese text.
 One process serves both the JSON API and the practice web page.
 
+### Mandarin practice (`/zh`)
+
+On Windows, use the small Mandarin dependency set to avoid building the
+Japanese-only Marine package:
+
+```cmd
+uv pip install --python .venv\Scripts\python.exe -r requirements-zh.txt
+set ASR_EAGER_LOAD=0
+.venv\Scripts\python.exe run.py
+```
+
+Open <http://127.0.0.1:8000/zh>. The missing Japanese checkpoint warning is
+expected when only Mandarin is configured.
+
+`/zh` serves Mandarin read-aloud practice. The first evaluation downloads the
+[Chinese XLSR-53 CTC checkpoint](https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn)
+(about 1.28 GB of PyTorch weights); `ZH_ASR_MODEL` overrides it. CUDA inference
+uses FP16 and moves the model back to CPU when the request finishes. Recordings
+are limited to 30 seconds to keep inference practical on an RTX 3060 with roughly
+10 GB of VRAM.
+
+`POST /api/pronunciation-zh/evaluate` accepts the same `text` and WAV `audio`
+fields as the Japanese endpoint. It compares Mandarin pinyin syllables without
+tones, so homophonous Hanzi are not penalized just for their spelling. The
+response includes `target_reading` and `recognized_reading` (toneless pinyin),
+while `recognized_text` keeps the ASR Hanzi. `GET /api/pronunciation-zh/reading`
+provides tone-marked pinyin for the practice page. `POST /api/pronunciation-zh/coach`
+uses Ollama if configured.
+
+The score measures agreement with the ASR transcript, not independently verified
+pronunciation. The F0 chart uses CTC-aligned character windows when available;
+it does not score Mandarin tones. Rhythm and intonation remain unmeasured (`null`).
+
 ```
 WAV --> wav2vec2 Dual CTC --> recognized kana --\
                                                  >-- normalize (pyopenjtalk) --> CER --> score 0-100

@@ -29,6 +29,8 @@ python-dotenv>=1.0.0
 torch>=2.6.0
 torchaudio>=2.6.0
 transformers>=4.47.0
+# Mandarin syllable matching and pinyin display (ASR itself uses transformers).
+pypinyin>=0.53.0
 numpy>=1.26.0
 soundfile>=0.12.0
 pyopenjtalk>=0.4.1

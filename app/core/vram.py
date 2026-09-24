@@ -63,6 +63,12 @@ def _offload_models() -> None:
     except Exception:  # noqa: BLE001
         logger.debug("English ASR offload skipped", exc_info=True)
     try:
+        from app.services.chinese_asr import get_chinese_asr_service
+
+        get_chinese_asr_service().offload()
+    except Exception:  # noqa: BLE001
+        logger.debug("Chinese ASR offload skipped", exc_info=True)
+    try:
         from app.services.pasqa_intonation import offload_pasqa
 
         offload_pasqa()

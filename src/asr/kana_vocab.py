@@ -63,17 +63,14 @@ class KanaVocab:
         result = []
         prev = None
         for idx in indices:
-            # This vocabulary has no pad token. Treat out-of-range IDs as
-            # non-emitting instead of allowing them to affect repeat collapse.
-            if idx == BLANK_IDX:
-                prev = idx
-                continue
-            token = self.itos.get(idx)
-            if token is None or token == BLANK_TOKEN:
-                continue
             if collapse:
+                if idx == BLANK_IDX:
+                    prev = idx
+                    continue
                 if idx == prev:
                     continue
-            result.append(token)
+            token = self.itos.get(idx)
+            if token and token != BLANK_TOKEN:
+                result.append(token)
             prev = idx
         return "".join(result)

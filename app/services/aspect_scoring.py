@@ -47,7 +47,7 @@ class AspectScores:
     overall_score: float
     pronunciation_score: float
     fluency_score: float
-    rhythm_score: float
+    rhythm_score: float | None
     intonation_score: float | None
     rhythm_measured: bool
     intonation_measured: bool

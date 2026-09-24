@@ -188,6 +188,23 @@ EXAMPLE:
 
 SUPPORTED_LANGUAGES: tuple[str, ...] = tuple(SYSTEM_PROMPTS)
 
+CHINESE_TARGET_PROMPTS = {
+    "vi": (
+        "Bạn là giáo viên phát âm tiếng Trung phổ thông cho người Việt. "
+        "Chỉ nhận xét dữ liệu đã đo: độ khớp âm tiết pinyin không dấu thanh qua ASR. "
+        "Không khẳng định lỗi thanh điệu, âm vị hay ngữ điệu vì chưa có phép đo này. "
+        "Trả về đúng JSON gồm assessment và suggestion bằng tiếng Việt, mỗi mục 1-2 câu; "
+        "suggestion có thể là chuỗi rỗng. Không dùng bullet hay nhắc số liệu thô."
+    ),
+    "en": (
+        "You teach Mandarin pronunciation to Vietnamese learners. "
+        "Only describe measured toneless pinyin syllable matches from ASR. Tone and intonation "
+        "errors have not been measured, so do not claim them. Return JSON with "
+        "assessment and suggestion in English, 1-2 sentences each; suggestion may "
+        "be empty. No bullet points or raw numbers."
+    ),
+}
+
 # JSON schema passed to Ollama's `format` parameter (see generate_comment)
 # so the model is constrained to emit exactly this shape instead of free
 # text -- this is what makes the assessment/suggestion split in the UI
@@ -214,7 +231,7 @@ def resolve_system_prompt(lang: str, target_lang: str = "ja") -> str:
     Raises:
         ValueError: `lang` isn't one of SUPPORTED_LANGUAGES.
     """
-    table = ENGLISH_TARGET_PROMPTS if target_lang == "en" else SYSTEM_PROMPTS
+    table = CHINESE_TARGET_PROMPTS if target_lang == "zh" else (ENGLISH_TARGET_PROMPTS if target_lang == "en" else SYSTEM_PROMPTS)
     try:
         return table[lang]
     except KeyError:
@@ -340,7 +357,7 @@ def build_facts(
 
 
 def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
-    unit = "từ" if target_lang == "en" else "mora"
+    unit = "từ" if target_lang == "en" else ("âm tiết" if target_lang == "zh" else "mora")
     lines = [
         f"Câu mục tiêu: {facts.text}",
         f"Điểm tổng: {facts.score}/100 (mức: {facts.level})",
@@ -350,6 +367,8 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
         lines.append(
             "Đây là câu tiếng Anh. Đơn vị là từ (không phải mora tiếng Nhật)."
         )
+    elif target_lang == "zh":
+        lines.append("Đây là câu tiếng Trung; chỉ đo độ khớp âm tiết pinyin không dấu thanh từ ASR, chưa đo thanh điệu hay chất lượng âm vị.")
 
     if facts.wrong_morae:
         lines.append(
@@ -373,6 +392,8 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
                 f"trong chính bản ghi này ({issue.measured_seconds:.2f}s so với "
                 f"{issue.expected_seconds:.2f}s) - bị đọc rút ngắn rõ rệt."
             )
+    elif target_lang == "zh":
+        lines.append("Chưa đo thời lượng từng âm tiết hoặc thanh điệu.")
     else:
         lines.append("Không phát hiện vấn đề về thời lượng ngắt/kéo dài.")
 

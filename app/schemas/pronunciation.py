@@ -44,6 +44,8 @@ class EvaluateResponse(BaseModel):
     target_hiragana: str = Field(description="Target normalized to a hiragana reading")
     recognized_text: str = Field(description="Raw kana from the ASR model")
     recognized_hiragana: str = Field(description="ASR output normalized the same way")
+    target_reading: str | None = Field(default=None, description="Optional target pinyin syllables")
+    recognized_reading: str | None = Field(default=None, description="Optional ASR pinyin syllables")
     score: int = Field(ge=0, le=100, description="CER read-aloud match, 0-100")
     overall_score: float = Field(
         ge=0, le=100,
@@ -55,9 +57,9 @@ class EvaluateResponse(BaseModel):
     fluency_score: float = Field(
         ge=0, le=100, description="Mora/sec plus Silero/energy VAD pauses",
     )
-    rhythm_score: float = Field(
-        ge=0, le=100,
-        description="Mora-duration evenness plus sokuon/chouon and beat edits",
+    rhythm_score: float | None = Field(
+        default=None, ge=0, le=100,
+        description="Rhythm score when measured; null for unmeasured languages",
     )
     intonation_score: float | None = Field(
         default=None,
@@ -121,6 +123,8 @@ class EvaluateResponse(BaseModel):
             target_hiragana=result.target_hiragana,
             recognized_text=result.recognized_text,
             recognized_hiragana=result.recognized_hiragana,
+            target_reading=result.target_reading,
+            recognized_reading=result.recognized_reading,
             score=score.score,
             overall_score=float(score.score),
             pronunciation_score=aspects.pronunciation_score,

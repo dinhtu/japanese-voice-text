@@ -1,21 +1,28 @@
 <!doctype html>
-<html lang="ja">
+<html lang="zh">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#2563eb" />
     <meta
       name="description"
-      content="Đọc to câu tiếng Nhật và nhận điểm phát âm từ mô hình ASR hiragana."
+      content="Đọc câu tiếng Trung và nhận điểm âm tiết pinyin từ ASR."
     />
-    <title>発音チェック | Luyện phát âm tiếng Nhật</title>
+    <title>Pronunciation check | Luyện phát âm tiếng Trung</title>
     <link rel="stylesheet" href="{{ asset_url('app.css') }}" />
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎤</text></svg>"
     />
   </head>
-  <body data-api-base="{{ api_base_url }}">
+  <body
+    data-api-base="{{ api_base_url }}"
+    data-evaluate-url="{{ api_base_url }}/api/pronunciation-zh/evaluate"
+        data-coach-url="{{ api_base_url }}/api/pronunciation-zh/coach"
+    data-tts-lang="zh-CN"
+    data-target-lang="zh"
+    data-reading-url="{{ api_base_url }}/api/pronunciation-zh/reading"
+  >
     <!-- Icon sprite: only the glyphs this page uses, so no icon library. -->
     <svg hidden xmlns="http://www.w3.org/2000/svg">
       <symbol id="i-languages" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -92,18 +99,15 @@
       <header class="page__header">
         <span class="badge">
           <svg class="icon icon--sm"><use href="#i-languages" /></svg>
-          hiragana ASR · 5 khía cạnh
+          wav2vec2 Mandarin · chấm phát âm
         </span>
         <nav class="lang-switch" aria-label="Ngôn ngữ luyện">
-          <a href="/" aria-current="page">Tiếng Nhật</a>
+          <a href="/">Tiếng Nhật</a>
           <a href="/en">English</a>
-          <a href="/zh">Tiếng Trung</a>
+          <a href="/zh" aria-current="page">Tiếng Trung</a>
         </nav>
-        <h1>Luyện phát âm tiếng Nhật</h1>
-        <p class="lead">
-          Đọc to câu bên dưới, hệ thống sẽ nhận dạng giọng nói và chấm điểm mức
-          khớp với câu mục tiêu.
-        </p>
+        <h1>Luyện phát âm tiếng Trung</h1>
+        <p class="lead">Đọc câu tiếng Trung bên dưới. ASR so khớp âm tiết pinyin, VAD đo tốc độ đọc và F0 hiển thị cao độ ghi âm.</p>
       </header>
 
       <div class="stack">
@@ -112,7 +116,7 @@
           <div class="card__head">
             <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
             <div class="card__actions">
-              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu (H/L) và F0 đo từ bản ghi" aria-expanded="false">
+              <button type="button" class="link-btn" id="pitch-btn" title="Xem F0 đo từ bản ghi" aria-expanded="false">
                 <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
                 Cao độ
               </button>
@@ -155,7 +159,7 @@
                   data-meaning="{{ item.meaning }}"
                 >
                   <svg class="icon icon--xs chip__check"><use href="#i-check" /></svg>
-                  <span class="jp">{{ item.text }}</span>
+                  <span>{{ item.text }}</span>
                 </button>
                 {% endfor %}
               </div>
@@ -168,11 +172,11 @@
               </p>
               <form class="compose" id="custom-form">
                 <textarea
-                  class="compose__input jp"
+                  class="compose__input"
                   id="custom-input"
                   rows="2"
                   maxlength="200"
-                  placeholder="Ví dụ: きょうはいいてんきですね"
+                  placeholder="例如：你今天好吗？"
                   aria-label="Câu tự nhập"
                 ></textarea>
                 <button type="submit" class="solid-btn" id="custom-apply">
@@ -271,7 +275,7 @@
                 <p class="muted" id="feedback"></p>
                 <div class="metrics">
                   <div class="metric">
-                    <p class="label"><svg class="icon icon--xs"><use href="#i-gauge" /></svg> CER</p>
+                    <p class="label"><svg class="icon icon--xs"><use href="#i-gauge" /></svg> Lỗi âm tiết</p>
                     <p class="metric__value" id="m-cer"></p>
                   </div>
                   <div class="metric">
@@ -294,17 +298,17 @@
 
             <div class="readings">
               <div>
-                <p class="label">Mục tiêu (cách đọc)</p>
-                <p class="jp reading" id="r-target"></p>
+                <p class="label">Mục tiêu (pinyin không dấu thanh)</p>
+                <p class="reading" id="r-target"></p>
               </div>
               <div>
                 <p class="label">Bạn đã đọc</p>
-                <p class="jp reading reading--heard" id="r-heard"></p>
+                <p class="reading reading--heard" id="r-heard"></p>
               </div>
             </div>
 
             <div class="syll" id="syll" hidden>
-              <p class="label" id="syll-label">Từng âm tiết</p>
+              <p class="label" id="syll-label">Từng chữ Hán</p>
               <div class="syll__grid" id="syll-grid"></div>
               <div class="syll__legend">
                 <span class="syll__legend-item">
@@ -349,9 +353,7 @@
             </div>
 
             <p class="note">
-              Vòng tròn là điểm khớp CER với câu mục tiêu (như trước khi
-              tách 5 khía cạnh). Các thanh phát âm / trôi chảy / nhịp /
-              ngữ điệu chấm riêng, không gộp lại vào tổng.
+              Điểm tổng là độ khớp âm tiết pinyin không dấu thanh từ ASR; chữ Hán đồng âm không bị trừ điểm. Tốc độ đọc dựa trên âm tiết/giây và VAD. F0 chỉ để quan sát, chưa chấm thanh điệu hoặc chất lượng âm vị. Nhịp và ngữ điệu hiển thị — khi chưa đo được.
             </p>
           </div>
         </section>
