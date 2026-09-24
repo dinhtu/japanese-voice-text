@@ -31,7 +31,13 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     if settings.eager_load:
         try:
-            ASRService(settings).load()
+            asr = ASRService(settings)
+            asr.load()
+            asr.offload()
+            from app.core.vram import empty_cuda
+
+            empty_cuda()
+            logger.info("Japanese ASR ready on CPU (VRAM free until the next /evaluate)")
         except Exception as e:  # noqa: BLE001 — keep serving /health for diagnosis
             logger.error("ASR model failed to load at startup: %s", e)
     yield

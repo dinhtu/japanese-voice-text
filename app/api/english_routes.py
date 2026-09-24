@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.api.routes import RIFF_MAGIC, _validate_upload
 from app.core.config import Settings, get_settings
+from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse
 from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
@@ -66,12 +67,13 @@ async def evaluate_english(
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
-        result = use_case.execute(text.strip(), tmp_path)
-        recognized_words = word_pitch_pattern(result.recognized_hiragana)
-        response = EvaluateResponse.from_result(result, recognized_words)
-        return response.model_copy(
-            update={"mora_status": _word_status(result.target_text, result.recognized_hiragana)}
-        )
+        with gpu_session():
+            result = use_case.execute(text.strip(), tmp_path)
+            recognized_words = word_pitch_pattern(result.recognized_hiragana)
+            response = EvaluateResponse.from_result(result, recognized_words)
+            return response.model_copy(
+                update={"mora_status": _word_status(result.target_text, result.recognized_hiragana)}
+            )
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
@@ -120,7 +122,8 @@ async def coach_english(
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
-        result = EvaluateEnglishUseCase(asr).execute(text, tmp_path)
+        with gpu_session():
+            result = EvaluateEnglishUseCase(asr).execute(text, tmp_path)
         pitch_points = [
             {"semitone": p.get("semitone"), "voiced": p.get("voiced")}
             for p in (result.measured_pitch or [])

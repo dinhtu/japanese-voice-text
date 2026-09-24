@@ -37,22 +37,26 @@ class EnglishASRService:
         return self._model is not None
 
     def load(self) -> None:
-        if self._model is not None:
-            return
-        import torch
         from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
-        model_id = getattr(self.settings, "en_asr_model", "facebook/wav2vec2-base-960h")
-        self._device = resolve_device(getattr(self.settings, "en_asr_device", None))
-        logger.info("Loading English ASR %s on %s", model_id, self._device)
-        self._processor = Wav2Vec2Processor.from_pretrained(model_id)
-        self._model = Wav2Vec2ForCTC.from_pretrained(model_id)
+        if self._model is None:
+            model_id = getattr(self.settings, "en_asr_model", "facebook/wav2vec2-base-960h")
+            self._device = resolve_device(getattr(self.settings, "en_asr_device", None))
+            logger.info("Loading English ASR %s on %s", model_id, self._device)
+            self._processor = Wav2Vec2Processor.from_pretrained(model_id)
+            self._model = Wav2Vec2ForCTC.from_pretrained(model_id)
+            self._model.eval()
         self._model.to(self._device)
+
+    def offload(self) -> None:
+        if self._model is None or self._device is None:
+            return
+        if self._device.type != "cuda":
+            return
+        from app.core.vram import module_to_cpu
+
+        module_to_cpu(self._model)
         self._model.eval()
-        if self._device.type == "cuda":
-            dummy = torch.zeros(1, 16000, device=self._device)
-            with torch.inference_mode():
-                self._model(dummy)
 
     def recognize(self, audio_path: str | Path) -> EnglishRecognition:
         import torch
@@ -78,6 +82,7 @@ class EnglishASRService:
             self._processor.tokenizer.convert_ids_to_tokens(i)
             for i in range(logits.shape[-1])
         ]
+        del logits, input_values
         return EnglishRecognition(
             text=text.strip(),
             duration=duration,

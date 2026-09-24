@@ -227,6 +227,7 @@ class KanaRecognizer:
         model.to(self.device)
         model.eval()
         self.model = model
+        self._compute_device = self.device
 
         # The checkpoint knows which encoder it was fine-tuned from.
         self.pretrained = getattr(model.encoder.config, "_name_or_path", pretrained) or pretrained
@@ -243,6 +244,7 @@ class KanaRecognizer:
         with_timing: bool = False,
     ) -> RecognitionResult:
         """Transcribe an audio file (or a pre-loaded 16kHz mono array) to kana."""
+        self.ensure_on_device()
         if isinstance(audio, np.ndarray):
             audio_array, sr = audio, TARGET_SAMPLE_RATE
         else:
@@ -289,6 +291,7 @@ class KanaRecognizer:
                 kana_ids_list, kana, kana_logits.shape[1], duration
             )
 
+        del outputs, kana_logits, kana_pred_ids, input_values, attention_mask
         return RecognitionResult(
             kana=kana,
             duration=duration,
@@ -297,3 +300,17 @@ class KanaRecognizer:
             char_spans=char_spans,
             phoneme_probs=phoneme_probs,
         )
+
+    def ensure_on_device(self) -> None:
+        self.model.to(self._compute_device)
+        self.device = self._compute_device
+
+    def offload(self) -> None:
+        target = self._compute_device
+        kind = getattr(target, "type", None) or str(target).split(":")[0]
+        if kind != "cuda":
+            return
+        from app.core.vram import module_to_cpu
+
+        module_to_cpu(self.model)
+        self.model.eval()

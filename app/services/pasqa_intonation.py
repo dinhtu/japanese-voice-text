@@ -33,13 +33,32 @@ def morae_to_katakana(morae: list[str]) -> list[str]:
     return [m.translate(_HIRA_TO_KATA) for m in morae if m]
 
 
+_loaded_predictor = None
+
+
 @lru_cache(maxsize=1)
 def _predictor(checkpoint: str, device: str):
+    global _loaded_predictor
     _ensure_vendor_on_path()
     from pasqa import PasqaPredictor
 
     logger.info("Loading PASQA from %s on %s", checkpoint, device)
-    return PasqaPredictor(checkpoint=checkpoint, device=device)
+    _loaded_predictor = PasqaPredictor(checkpoint=checkpoint, device=device)
+    return _loaded_predictor
+
+
+def offload_pasqa() -> None:
+    """Move PASQA + s3prl SSL off CUDA if a predictor was loaded."""
+    if _loaded_predictor is None:
+        return
+    from app.core.vram import module_to_cpu
+
+    model = getattr(_loaded_predictor, "model", None)
+    if model is not None:
+        module_to_cpu(model)
+    ssl = getattr(model, "ssl_model", None) or getattr(model, "upstream", None)
+    if ssl is not None:
+        module_to_cpu(ssl)
 
 
 def score_pasqa(

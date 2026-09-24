@@ -26,6 +26,7 @@ from app.services.use_cases import (
     EvaluatePronunciationUseCase,
 )
 from app.core.config import Settings, get_settings
+from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse
 from app.schemas.pronunciation import EvaluateResponse
 from app.schemas.pitch_accent import PitchAccentResponse
@@ -95,23 +96,24 @@ async def evaluate_pronunciation(
         with os.fdopen(fd, "wb") as f:
             f.write(content)
 
-        result = use_case.execute(text.strip(), tmp_path)
+        with gpu_session():
+            result = use_case.execute(text.strip(), tmp_path)
 
-        # Dictionary H/L of the recognized kana (API/coach). The practice
-        # page plots measured_pitch (WAV F0) from EvaluationResult.
-        try:
-            recognized_moras = pitch_accent_pattern(result.recognized_hiragana)
-        except ValueError:
-            recognized_moras = []
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Recognized-text pitch pattern failed; "
-                "recognized_pitch_pattern will be empty",
-                exc_info=True,
-            )
-            recognized_moras = []
+            # Dictionary H/L of the recognized kana (API/coach). The practice
+            # page plots measured_pitch (WAV F0) from EvaluationResult.
+            try:
+                recognized_moras = pitch_accent_pattern(result.recognized_hiragana)
+            except ValueError:
+                recognized_moras = []
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Recognized-text pitch pattern failed; "
+                    "recognized_pitch_pattern will be empty",
+                    exc_info=True,
+                )
+                recognized_moras = []
 
-        return EvaluateResponse.from_result(result, recognized_moras)
+            return EvaluateResponse.from_result(result, recognized_moras)
 
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -203,37 +205,38 @@ async def get_pitch_contour(
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
-        samples, sample_rate = load_audio(tmp_path)
-        duration = round(len(samples) / sample_rate, 2)
+        with gpu_session():
+            samples, sample_rate = load_audio(tmp_path)
+            duration = round(len(samples) / sample_rate, 2)
 
-        # Prefer real per-mora timing from the ASR model's own CTC decode
-        # (app.services.mora_timing) over the equal-time/pause-snap
-        # fallback -- but never let that path's failure break this
-        # endpoint: recognition can fail for reasons unrelated to pitch
-        # (missing model, garbled audio), and a worse-but-working pitch
-        # chart beats none at all.
-        windows = None
-        if target_hiragana:
-            try:
-                recognition = asr_service.recognize(tmp_path, with_timing=True)
-                if recognition.char_spans is not None:
-                    windows = mora_time_windows(
-                        target_hiragana, recognition.kana, recognition.char_spans, duration,
+            # Prefer real per-mora timing from the ASR model's own CTC decode
+            # (app.services.mora_timing) over the equal-time/pause-snap
+            # fallback -- but never let that path's failure break this
+            # endpoint: recognition can fail for reasons unrelated to pitch
+            # (missing model, garbled audio), and a worse-but-working pitch
+            # chart beats none at all.
+            windows = None
+            if target_hiragana:
+                try:
+                    recognition = asr_service.recognize(tmp_path, with_timing=True)
+                    if recognition.char_spans is not None:
+                        windows = mora_time_windows(
+                            target_hiragana, recognition.kana, recognition.char_spans, duration,
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "ASR-based pitch alignment failed; falling back to "
+                        "equal-time buckets",
+                        exc_info=True,
                     )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "ASR-based pitch alignment failed; falling back to "
-                    "equal-time buckets",
-                    exc_info=True,
-                )
-                windows = None
+                    windows = None
 
-        if windows is not None and len(windows) == num_morae:
-            points = extract_pitch_for_windows(
-                samples, sample_rate, windows, phrases=phrase_indices, pitch_labels=pitch_labels,
-            )
-        else:
-            points = extract_pitch_per_mora(samples, sample_rate, num_morae)
+            if windows is not None and len(windows) == num_morae:
+                points = extract_pitch_for_windows(
+                    samples, sample_rate, windows, phrases=phrase_indices, pitch_labels=pitch_labels,
+                )
+            else:
+                points = extract_pitch_per_mora(samples, sample_rate, num_morae)
     except RuntimeError as e:
         logger.warning("Audio decode failed: %s", e)
         raise HTTPException(status_code=422, detail=f"Could not read the audio: {e}") from e
@@ -313,9 +316,10 @@ async def coach_pronunciation(
         with os.fdopen(fd, "wb") as f:
             f.write(content)
 
-        recognition = asr_service.recognize(tmp_path, with_timing=True)
-        recognized_hiragana = to_hiragana(recognition.kana)
-        score = score_pronunciation(target_hiragana, recognized_hiragana)
+        with gpu_session():
+            recognition = asr_service.recognize(tmp_path, with_timing=True)
+            recognized_hiragana = to_hiragana(recognition.kana)
+            score = score_pronunciation(target_hiragana, recognized_hiragana)
 
         # Sokuon/chouon duration and pitch-direction facts both need real
         # per-mora timing (app.services.mora_timing) -- optional, same

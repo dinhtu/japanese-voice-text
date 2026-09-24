@@ -46,6 +46,12 @@ class ASRService:
     def is_loaded(self) -> bool:
         return _recognizer is not None
 
+    def offload(self) -> None:
+        """Move the JP ASR off CUDA. Safe no-op if it was never loaded."""
+        with _lock:
+            if _recognizer is not None:
+                _recognizer.offload()
+
     def recognize(
         self, audio_path: str | Path, with_timing: bool = False
     ) -> RecognitionResult:
