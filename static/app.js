@@ -815,7 +815,8 @@ function renderPitchChart() {
   const hasLearner = learnerReady && voicedCount > 0;
   el.pitchTitle.textContent = hasLearner ? "Cao độ: mẫu và F0 của bạn" : "Cao độ mẫu";
   el.pitchLegend.innerHTML = `
-    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>Mẫu (OJAD)</span>
+    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--step"></i>Mẫu bậc</span>
+    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>Mẫu (H/L)</span>
     ${hasLearner ? '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>Bạn (F0 đo)</span>' : ""}
   `;
 
@@ -859,11 +860,11 @@ function renderPitchChart() {
       })
       .join("");
     learnerSvg = `${lines}${dots}`;
-    hint = `<p class="pitch__hint">Nét liền bậc là mẫu OJAD (H/L từng mora, ngắt theo cụm nhấn). Nét đứt là F0 đo từ bản ghi. Chấm xanh = đúng hướng trong cụm, đỏ = ngược. Mora không thanh bị bỏ trống.</p>`;
+    hint = `<p class="pitch__hint">Nét xanh bậc vuông là mẫu H/L (OpenJTalk). Nét liền chấm là cùng mẫu nối mora. Nét đứt là F0 đo từ bản ghi.</p>`;
   } else if (learnerReady) {
     hint = `<p class="pitch__hint">Không đo được F0 có thanh trong bản ghi này.</p>`;
   } else {
-    hint = `<p class="pitch__hint">Mẫu OJAD: cao/thấp từng mora theo OpenJTalk + Marine, vẽ bậc ngang (không nối chéo).</p>`;
+    hint = `<p class="pitch__hint">Nét xanh bậc vuông là cao độ mẫu (H ngang, L ngang, xuống/lên 90° khi đổi accent).</p>`;
   }
 
   el.pitchChart.innerHTML = `
@@ -872,7 +873,8 @@ function renderPitchChart() {
         <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
           <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
           <line class="pitch__guide" x1="0" y1="${yMid}" x2="${width}" y2="${yMid}" />
-          <path class="pitch__line" d="${patternStepPath(referencePattern, width, yHigh, yLow)}" />
+          <path class="pitch__line pitch__line--step" d="${patternStepPath(referencePattern, width, yHigh, yLow)}" />
+          <polyline class="pitch__line" points="${patternPolyline(refPoints)}" />
           ${refDots}
           ${learnerSvg}
         </svg>

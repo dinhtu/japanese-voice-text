@@ -26,6 +26,7 @@
      recording gets a distinct warm color so it never reads as "correct"
      or "wrong" the way reusing a score color would. */
   --pitch-you: #ea580c;
+  --pitch-step: #2ca02c;
 
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Hiragino Kaku Gothic ProN",
     "Noto Sans JP", "Yu Gothic", sans-serif;
@@ -395,7 +396,7 @@ html[lang="en"] .pitch__label {
 .pitch__svg {
   display: block;
   width: 100%;
-  height: 5rem;
+  height: 6.5rem;
   overflow: visible;
 }
 
@@ -410,6 +411,16 @@ html[lang="en"] .pitch__label {
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.pitch__line--step {
+  stroke: var(--pitch-step);
+  stroke-width: 14;
+  stroke-opacity: 0.28;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  stroke-miterlimit: 8;
+  vector-effect: non-scaling-stroke;
 }
 
 .pitch__line--you {
@@ -486,6 +497,12 @@ html[lang="en"] .pitch__label {
   height: 2px;
   border-radius: 1px;
   background: var(--ink);
+}
+
+.pitch__swatch--step {
+  height: 8px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--pitch-step) 40%, transparent);
 }
 
 .pitch__swatch--you {
