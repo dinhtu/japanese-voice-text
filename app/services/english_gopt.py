@@ -6,7 +6,8 @@ English wav2vec2-base-960h CTC softmax already used for /en ASR.
 
 Utterance heads (SpeechOcean762 0-10, GOPT stores them /5):
     accuracy, completeness, fluency, prosodic, total
-mapped onto the page as pronunciation / rhythm / fluency / intonation / overall.
+Accuracy / fluency / prosodic overlay the page bars when the head
+actually fired. Completeness is not rhythm (Nhịp stays local timing).
 """
 
 from __future__ import annotations
@@ -45,10 +46,11 @@ _PHONE_FEAT = 41
 @dataclass(frozen=True)
 class GoptScores:
     overall: float
-    pronunciation: float
+    pronunciation: float  # accuracy 0-100
+    completeness: float
     fluency: float
-    rhythm: float
-    intonation: float
+    intonation: float  # prosodic
+    rhythm: float = 0.0  # unused; GOPT has no rhythm head
 
 
 def download_gopt_weights(dest: Path = DEFAULT_CHECKPOINT) -> Path:
@@ -76,22 +78,27 @@ def _letter_index(vocab: list[str], letter: str) -> int | None:
     return None
 
 
+def _mean_letter_lpp(log_probs: np.ndarray, vocab: list[str]) -> np.ndarray:
+    """41-d LPP: mean log-posterior of each Kaldi phone's wav2vec2 letter."""
+    frame_mean = np.mean(log_probs, axis=0)
+    lpp = np.full(_PHONE_FEAT, -20.0, dtype=np.float64)
+    for i, name in enumerate(PHONES):
+        idx = _letter_index(vocab, PHONE_TO_LETTER.get(name, "A"))
+        if idx is not None and 0 <= idx < frame_mean.shape[0]:
+            lpp[i] = float(frame_mean[idx])
+    return lpp
+
+
 def _lpp_lpr(log_probs: np.ndarray, phone: str, vocab: list[str]) -> np.ndarray:
     """84-d Kaldi-style vector: [phone_id, LPP…, LPR…]."""
     phone_id = next((i for i, name in enumerate(PHONES) if name == phone), 3)
-    lpp = np.mean(log_probs, axis=0)
-    n_vocab = lpp.shape[0]
-    lpp_pad = np.full(_PHONE_FEAT, -10.0, dtype=np.float64)
-    lpp_pad[: min(n_vocab, _PHONE_FEAT)] = lpp[: min(n_vocab, _PHONE_FEAT)]
-
-    canon = _letter_index(vocab, PHONE_TO_LETTER.get(phone, "A"))
-    canon_lpp = float(lpp[canon]) if canon is not None else float(lpp.max())
-    lpr = np.full(_PHONE_FEAT, 0.0, dtype=np.float64)
-    width = min(n_vocab, _PHONE_FEAT)
-    lpr[:width] = canon_lpp - lpp[:width]
+    lpp = _mean_letter_lpp(log_probs, vocab)
+    canon = next((i for i, name in enumerate(PHONES) if name == phone), 3)
+    canon_lpp = float(lpp[canon])
+    lpr = canon_lpp - lpp
 
     feat = np.zeros(GOPT_FEAT_DIM, dtype=np.float64)
-    packed = np.concatenate(([float(phone_id + 1)], lpp_pad, lpr))
+    packed = np.concatenate(([float(phone_id + 1)], lpp, lpr))
     feat[: min(GOPT_FEAT_DIM, packed.size)] = packed[:GOPT_FEAT_DIM]
     return feat
 
@@ -120,14 +127,16 @@ def build_gopt_features(
         vec = _lpp_lpr(window, phone, vocab)
         feat[i] = (vec - LIBRISPEECH_FEAT_MEAN) / LIBRISPEECH_FEAT_STD
         phn[i] = min(pid, 38)
-    if not np.any(feat[:, 0] != 0):
+    if not np.any(phn >= 0):
         return None
     return feat[np.newaxis], phn[np.newaxis]
 
 
 def _to_100(value: float) -> float:
-    # GOPT utterance labels were divided by 5 (0-10 → 0-2).
-    return round(max(0.0, min(100.0, float(value) * 50.0)), 2)
+    """SpeechOcean labels are 0-10; GOPT trains on label/5 so raw ~0-2."""
+    raw = float(value)
+    scaled = raw * 50.0 if abs(raw) <= 2.5 else raw * 10.0
+    return round(max(0.0, min(100.0, scaled)), 2)
 
 
 class EnglishGoptService:
@@ -188,12 +197,23 @@ class EnglishGoptService:
                 torch.from_numpy(feat).float().to(device),
                 torch.from_numpy(phn).to(device),
             )
+        acc, comp, flu, pro, tot = (
+            u1.reshape(-1)[0].item(),
+            u2.reshape(-1)[0].item(),
+            u3.reshape(-1)[0].item(),
+            u4.reshape(-1)[0].item(),
+            u5.reshape(-1)[0].item(),
+        )
+        logger.info(
+            "GOPT raw acc=%.3f comp=%.3f flu=%.3f pro=%.3f tot=%.3f",
+            acc, comp, flu, pro, tot,
+        )
         return GoptScores(
-            pronunciation=_to_100(u1.reshape(-1)[0].item()),
-            rhythm=_to_100(u2.reshape(-1)[0].item()),
-            fluency=_to_100(u3.reshape(-1)[0].item()),
-            intonation=_to_100(u4.reshape(-1)[0].item()),
-            overall=_to_100(u5.reshape(-1)[0].item()),
+            pronunciation=_to_100(acc),
+            completeness=_to_100(comp),
+            fluency=_to_100(flu),
+            intonation=_to_100(pro),
+            overall=_to_100(tot),
         )
 
 

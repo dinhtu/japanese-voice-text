@@ -105,15 +105,41 @@ def _measure(
                 target, recognition.log_probs, recognition.vocab
             )
             if gopt is not None:
+                # GOPT heads: accuracy, completeness, fluency, prosodic.
+                # Completeness is NOT rhythm — keep local mora/word timing
+                # for Nhịp. Ignore collapsed heads (~0 from OOD GOP features)
+                # so they do not wipe CER / VAD / F0 scores.
+                used = []
+                pronunciation = aspects.pronunciation_score
+                if gopt.pronunciation >= 8:
+                    pronunciation = round(
+                        0.5 * float(score.score) + 0.5 * gopt.pronunciation, 2
+                    )
+                    used.append("acc")
+                fluency = aspects.fluency_score
+                if gopt.fluency >= 8:
+                    fluency = gopt.fluency
+                    used.append("flu")
+                elif gopt.completeness >= 8:
+                    fluency = round(
+                        0.7 * float(aspects.fluency_score)
+                        + 0.3 * gopt.completeness,
+                        2,
+                    )
+                    used.append("comp")
+                intonation = aspects.intonation_score
+                intonation_measured = aspects.intonation_measured
+                if gopt.intonation >= 8:
+                    intonation = gopt.intonation
+                    intonation_measured = True
+                    used.append("pro")
                 aspects = replace(
                     aspects,
-                    pronunciation_score=gopt.pronunciation,
-                    fluency_score=gopt.fluency,
-                    rhythm_score=gopt.rhythm,
-                    intonation_score=gopt.intonation,
-                    rhythm_measured=True,
-                    intonation_measured=True,
-                    method="gopt+wav2vec2",
+                    pronunciation_score=pronunciation,
+                    fluency_score=fluency,
+                    intonation_score=intonation,
+                    intonation_measured=intonation_measured,
+                    method="gopt+wav2vec2" if used else aspects.method,
                 )
         except Exception:  # noqa: BLE001
             logger.warning("English GOPT failed; keeping wav2vec2+VAD+F0", exc_info=True)
