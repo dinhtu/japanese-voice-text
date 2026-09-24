@@ -147,9 +147,13 @@ def load_checkpoint(
 
     kana_vocab = KanaVocab()
     phoneme_vocab = PhonemeVocab()
+    # Wav2Vec2 only creates masked_spec_embed when time masking is enabled.
+    # Preserve that module when loading checkpoints trained with SpecAugment;
+    # inference still remains deterministic because model.eval() disables it.
+    mask_time_prob = 0.05 if "encoder.masked_spec_embed" in state_dict else 0.0
     model = create_model(
         pretrained=pretrained,
-        mask_time_prob=0.0,
+        mask_time_prob=mask_time_prob,
         inter_ctc_layer=inter_ctc_layer,
     )
     # A checkpoint with a missing head can otherwise look healthy while
