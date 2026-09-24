@@ -263,12 +263,14 @@ class PreprocessedASRDataset(Dataset):
         if self.noise_prob > 0 and random.random() < self.noise_prob:
             waveform_np = add_noise(torch.from_numpy(waveform_np)).numpy()
 
-        # Normalize (same as Wav2Vec2FeatureExtractor but without Python overhead)
-        mean = waveform_np.mean()
-        std = waveform_np.std()
-        if std > 0:
-            waveform_np = (waveform_np - mean) / std
-        input_values = torch.from_numpy(waveform_np)
+        # Use the same extractor/config as ordinary training and inference.
+        # In particular, do not duplicate its normalization math here.
+        inputs = self.feature_extractor(
+            waveform_np,
+            sampling_rate=self.target_sr,
+            return_tensors="pt",
+        )
+        input_values = inputs.input_values.squeeze(0)
 
         kana_labels = torch.from_numpy(item["kana_labels"].astype(np.int64))
         phoneme_labels = torch.from_numpy(item["phoneme_labels"].astype(np.int64))
