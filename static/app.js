@@ -526,7 +526,7 @@ function renderAspects(result) {
 
 function renderResult(result) {
   const badge = LEVEL_BADGE[result.feedback.level] ?? LEVEL_BADGE.mismatch;
-  const ringScore = Number(result.overall_score ?? result.score);
+  const ringScore = Number(result.score);
   const color = RING_COLOR[aspectTone(ringScore)] ?? RING_COLOR.mismatch;
 
   const circumference = 2 * Math.PI * 52;

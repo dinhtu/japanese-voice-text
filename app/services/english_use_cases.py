@@ -107,7 +107,6 @@ def _measure(
             if gopt is not None:
                 aspects = replace(
                     aspects,
-                    overall_score=gopt.overall,
                     pronunciation_score=gopt.pronunciation,
                     fluency_score=gopt.fluency,
                     rhythm_score=gopt.rhythm,

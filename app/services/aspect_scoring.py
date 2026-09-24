@@ -265,7 +265,9 @@ def score_aspects(
     intonation, intonation_measured = score_intonation(
         pitch_matched, pitch_total, pasqa_score=pasqa_score
     )
-    overall = combine_overall(pronunciation, fluency, rhythm, intonation)
+    # Ring / điểm tổng stays the original CER match (pre-82a3f34). The four
+    # aspect bars are independent and are not folded back into this number.
+    overall = float(pronunciation_cer_score)
     return AspectScores(
         overall_score=overall,
         pronunciation_score=pronunciation,

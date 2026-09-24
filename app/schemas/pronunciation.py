@@ -47,7 +47,7 @@ class EvaluateResponse(BaseModel):
     score: int = Field(ge=0, le=100, description="CER read-aloud match, 0-100")
     overall_score: float = Field(
         ge=0, le=100,
-        description="Weighted mix of the four aspect scores (GOPT-style)",
+        description="Same as score: CER read-aloud match, 0-100",
     )
     pronunciation_score: float = Field(
         ge=0, le=100, description="Kana CER mixed with phoneme GOP when available",
@@ -122,7 +122,7 @@ class EvaluateResponse(BaseModel):
             recognized_text=result.recognized_text,
             recognized_hiragana=result.recognized_hiragana,
             score=score.score,
-            overall_score=aspects.overall_score,
+            overall_score=float(score.score),
             pronunciation_score=aspects.pronunciation_score,
             fluency_score=aspects.fluency_score,
             rhythm_score=aspects.rhythm_score,
