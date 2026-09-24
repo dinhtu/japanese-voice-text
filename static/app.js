@@ -9,9 +9,13 @@
 
 /** Origin the API lives on. Empty data-api-base (the default) = same origin. */
 const API_BASE = (document.body.dataset.apiBase || "").replace(/\/$/, "");
-const API_URL = `${API_BASE}/api/pronunciation/evaluate`;
-const PITCH_API_URL = `${API_BASE}/api/pronunciation/pitch-accent`;
-const COACH_API_URL = `${API_BASE}/api/pronunciation/coach`;
+const API_URL = document.body.dataset.evaluateUrl
+  || `${API_BASE}/api/pronunciation/evaluate`;
+const PITCH_API_URL = document.body.dataset.pitchUrl
+  || `${API_BASE}/api/pronunciation/pitch-accent`;
+const COACH_API_URL = document.body.dataset.coachUrl
+  || `${API_BASE}/api/pronunciation/coach`;
+const TTS_LANG = document.body.dataset.ttsLang || "ja-JP";
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
@@ -909,11 +913,23 @@ el.customInput.addEventListener("keydown", (event) => {
   }
 });
 
+function pickTtsVoice(lang) {
+  const voices = window.speechSynthesis.getVoices();
+  const prefix = lang.slice(0, 2).toLowerCase();
+  return (
+    voices.find((v) => v.lang === lang) ||
+    voices.find((v) => v.lang.toLowerCase().startsWith(prefix)) ||
+    null
+  );
+}
+
 el.speak.addEventListener("click", () => {
   if (!window.speechSynthesis) return;
   const utterance = new SpeechSynthesisUtterance(target.text);
-  utterance.lang = "ja-JP";
-  utterance.rate = 0.85;
+  utterance.lang = TTS_LANG;
+  utterance.rate = TTS_LANG.startsWith("en") ? 0.95 : 0.85;
+  const voice = pickTtsVoice(TTS_LANG);
+  if (voice) utterance.voice = voice;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
 });

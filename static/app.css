@@ -178,6 +178,46 @@ button:disabled {
   color: var(--brand-700);
 }
 
+.lang-switch {
+  display: inline-flex;
+  margin-top: 0.85rem;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  background: var(--surface);
+  gap: 0.15rem;
+}
+
+.lang-switch a {
+  padding: 0.3rem 0.9rem;
+  border-radius: 9999px;
+  color: var(--ink-muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lang-switch a:hover:not([aria-current="page"]) {
+  color: var(--brand-700);
+}
+
+.lang-switch a[aria-current="page"] {
+  background: var(--brand-600);
+  color: #fff;
+}
+
+html[lang="en"] .target,
+html[lang="en"] .syll__cell,
+html[lang="en"] .chip span,
+html[lang="en"] .pitch__label {
+  font-family: var(--font-sans);
+}
+
+html[lang="en"] .pitch__label {
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Card ---------- */
 
 .card {
@@ -927,6 +967,7 @@ button:disabled {
 
 .syll__cell {
   min-width: 2.75rem;
+  max-width: 9rem;
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: 0.5rem;
@@ -936,6 +977,7 @@ button:disabled {
   font-weight: 600;
   text-align: center;
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 /* Mora the ASR heard as a substitution or a drop - real edit-distance data

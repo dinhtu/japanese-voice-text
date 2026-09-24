@@ -137,6 +137,55 @@ out sounding like 'choto' instead of 'chotto'."}\
 """,
 }
 
+# Same output languages, but the sentence being practised is English.
+ENGLISH_TARGET_PROMPTS: dict[str, str] = {
+    "vi": """\
+Bạn là một giáo viên dạy phát âm tiếng Anh cho người Việt, đang nhận xét một \
+lượt học viên đọc to một câu tiếng Anh. Bạn sẽ nhận được một khối dữ liệu mô \
+tả CHÍNH XÁC những gì đã đo được từ lượt đọc đó.
+
+QUY TẮC BẮT BUỘC:
+- Chỉ nhận xét đúng những gì có trong dữ liệu được cung cấp. Tuyệt đối không \
+suy đoán hay bịa thêm lỗi không có trong dữ liệu.
+- Không nhắc tới mora, âm ngắt 「っ」, âm kéo dài 「ー」 hay tiếng Nhật — \
+đơn vị ở đây là từ tiếng Anh và trọng âm từ (H = từ nội dung, L = từ chức năng).
+- Trả lời DUY NHẤT một object JSON hợp lệ, không kèm lời giải thích, không \
+kèm markdown, đúng 2 khóa: "assessment" và "suggestion".
+- "assessment": nhận xét tổng quan 1-2 câu. Nếu không có vấn đề đáng kể, \
+khen ngắn gọn và thành thật.
+- "suggestion": gợi ý luyện tập CỤ THỂ 1-2 câu về từ đọc sai hoặc trọng âm. \
+Nếu không có lỗi đáng kể, để "suggestion" là chuỗi rỗng "".
+- Cả hai trường viết bằng tiếng Việt tự nhiên, giọng khích lệ, không bullet, \
+không nhắc số liệu thô.
+
+VÍ DỤ:
+{"assessment": "Câu nghe khá rõ, hầu hết các từ khớp với mẫu.", \
+"suggestion": "Từ 'beautiful' bị nuốt âm giữa. Đọc đủ ba âm bea-u-ti-ful, \
+nhấn nhẹ âm đầu."}\
+""",
+    "en": """\
+You are an English pronunciation teacher giving feedback to a \
+Vietnamese-speaking learner on one attempt at reading an English sentence \
+aloud. You will be given a block of data describing EXACTLY what was \
+measured from that attempt.
+
+MANDATORY RULES:
+- Only comment on what is actually in the data provided. Never invent issues.
+- Do not mention morae, Japanese っ/ー, or Japanese pitch accent. Units here \
+are English words and lexical stress (H = content word, L = function word).
+- Reply with ONLY a single valid JSON object, no markdown, keys \
+"assessment" and "suggestion".
+- "assessment": 1-2 sentences overall. Praise briefly if nothing is wrong.
+- "suggestion": 1-2 concrete sentences on the worst word or stress issue, \
+or "" if nothing is worth suggesting.
+- Write both fields in natural encouraging English. No bullets, no raw numbers.
+
+EXAMPLE:
+{"assessment": "The sentence is mostly clear and most words match the target.", \
+"suggestion": "Slow down on 'beautiful' and keep all three syllables."}\
+""",
+}
+
 SUPPORTED_LANGUAGES: tuple[str, ...] = tuple(SYSTEM_PROMPTS)
 
 # JSON schema passed to Ollama's `format` parameter (see generate_comment)
@@ -155,16 +204,19 @@ COMMENT_JSON_SCHEMA: dict[str, Any] = {
 }
 
 
-def resolve_system_prompt(lang: str) -> str:
+def resolve_system_prompt(lang: str, target_lang: str = "ja") -> str:
     """System prompt for `lang` (e.g. "vi", "en") -- this, not
     _format_facts, is what actually controls the generated comment's
     language; see the module docstring.
 
+    `target_lang` is the language of the practised sentence (ja | en).
+
     Raises:
         ValueError: `lang` isn't one of SUPPORTED_LANGUAGES.
     """
+    table = ENGLISH_TARGET_PROMPTS if target_lang == "en" else SYSTEM_PROMPTS
     try:
-        return SYSTEM_PROMPTS[lang]
+        return table[lang]
     except KeyError:
         raise ValueError(
             f"Unsupported lang '{lang}'. Supported: {', '.join(SUPPORTED_LANGUAGES)}"
@@ -269,19 +321,27 @@ def build_facts(
     )
 
 
-def _format_facts(facts: PronunciationFacts) -> str:
+def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
+    unit = "từ" if target_lang == "en" else "mora"
     lines = [
         f"Câu mục tiêu: {facts.text}",
         f"Điểm tổng: {facts.score}/100 (mức: {facts.level})",
-        f"Số mora trong câu: {facts.total_morae}",
+        f"Số {unit} trong câu: {facts.total_morae}",
     ]
+    if target_lang == "en":
+        lines.append(
+            "Đây là câu tiếng Anh. Đơn vị là từ (không phải mora tiếng Nhật)."
+        )
 
     if facts.wrong_morae:
         lines.append(
-            "Mora đọc sai (mục tiêu→nghe được): " + ", ".join(facts.wrong_morae)
+            f"{unit.capitalize()} đọc sai (mục tiêu→nghe được): "
+            + ", ".join(facts.wrong_morae)
         )
     else:
-        lines.append("Không có mora nào đọc sai (khớp 100% với văn bản mục tiêu).")
+        lines.append(
+            f"Không có {unit} nào đọc sai (khớp 100% với văn bản mục tiêu)."
+        )
 
     if facts.duration_issues:
         for issue in facts.duration_issues:
@@ -300,7 +360,7 @@ def _format_facts(facts: PronunciationFacts) -> str:
 
     if facts.pitch_total:
         lines.append(
-            f"Cao độ: {facts.pitch_matched}/{facts.pitch_total} mora có audio "
+            f"Cao độ: {facts.pitch_matched}/{facts.pitch_total} {unit} có audio "
             f"khớp đúng hướng cao/thấp so với mẫu."
         )
     else:
@@ -334,7 +394,10 @@ def _parse_comment(content: str) -> CoachingComment:
 
 
 async def generate_comment(
-    facts: PronunciationFacts, settings: "Settings", lang: str = DEFAULT_LANG
+    facts: PronunciationFacts,
+    settings: "Settings",
+    lang: str = DEFAULT_LANG,
+    target_lang: str = "ja",
 ) -> CoachingComment:
     """Call the local Ollama model to phrase `facts` as a natural, two-part
     coaching comment (see CoachingComment), written in `lang` (see
@@ -351,7 +414,7 @@ async def generate_comment(
             named in settings.ollama_model hasn't been pulled, or the
             model returned nothing usable.
     """
-    system_prompt = resolve_system_prompt(lang)
+    system_prompt = resolve_system_prompt(lang, target_lang=target_lang)
 
     try:
         from ollama import AsyncClient, ResponseError
@@ -366,7 +429,7 @@ async def generate_comment(
             model=settings.ollama_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": _format_facts(facts)},
+                {"role": "user", "content": _format_facts(facts, target_lang=target_lang)},
             ],
             think=False,
             stream=False,

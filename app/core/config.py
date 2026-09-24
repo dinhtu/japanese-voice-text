@@ -49,6 +49,12 @@ class Settings:
         PASQA_CHECKPOINT   PASQA .pkl. Empty = use models/pasqa/checkpoint-100000steps.pkl
                            when that file exists, else skip PASQA.
         PASQA_DEVICE       cpu (default) or cuda -- keep cpu on a 12GB box.
+        EN_ASR_MODEL       HuggingFace id for /en (default facebook/wav2vec2-base-960h).
+        EN_ASR_DEVICE      cuda | mps | cpu (default: same auto-detect as ASR).
+        GOPT_CHECKPOINT    Official MIT GOPT .pth for /en. Empty = models/gopt/best_audio_model.pth
+                           (auto-downloaded on first English evaluate, ~121KB).
+        GOPT_DEVICE        cpu (default) — tiny transformer, keep off the 3060.
+        GOPT_ENABLED       1 to run GOPT on /en (default), 0 to skip.
     """
 
     def __init__(self) -> None:
@@ -95,6 +101,17 @@ class Settings:
         else:
             self.pasqa_checkpoint = None
         self.pasqa_device = os.getenv("PASQA_DEVICE", "cpu").strip() or "cpu"
+        self.en_asr_model = os.getenv(
+            "EN_ASR_MODEL", "facebook/wav2vec2-base-960h"
+        ).strip() or "facebook/wav2vec2-base-960h"
+        self.en_asr_device = os.getenv("EN_ASR_DEVICE") or None
+
+        self.gopt_checkpoint = Path(
+            os.getenv("GOPT_CHECKPOINT", "").strip()
+            or (ROOT_DIR / "models" / "gopt" / "best_audio_model.pth")
+        )
+        self.gopt_device = os.getenv("GOPT_DEVICE", "cpu").strip() or "cpu"
+        self.gopt_enabled = os.getenv("GOPT_ENABLED", "1") == "1"
 
     def asset_url(self, path: str) -> str:
         """URL for a file in /static.

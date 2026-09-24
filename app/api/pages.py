@@ -4,6 +4,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from app.constants.english_texts import (
+    DEFAULT_PRACTICE_TEXT as EN_DEFAULT,
+    PRACTICE_TEXTS as EN_TEXTS,
+)
 from app.constants.practice_texts import DEFAULT_PRACTICE_TEXT, PRACTICE_TEXTS
 from app.core.config import TEMPLATES_DIR, get_settings
 
@@ -26,6 +30,19 @@ def practice_page(request: Request) -> HTMLResponse:
         {
             "texts": PRACTICE_TEXTS,
             "default_text": DEFAULT_PRACTICE_TEXT,
+            "api_base_url": settings.api_base_url,
+        },
+    )
+
+
+@router.get("/en", response_class=HTMLResponse, include_in_schema=False)
+def english_practice_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "en.html",
+        {
+            "texts": EN_TEXTS,
+            "default_text": EN_DEFAULT,
             "api_base_url": settings.api_base_url,
         },
     )
