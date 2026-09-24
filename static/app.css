@@ -384,6 +384,14 @@ html[lang="en"] .pitch__label {
   margin-top: 0.5rem;
 }
 
+.pitch__scroll {
+  overflow-x: auto;
+}
+
+.pitch__plot {
+  min-width: 100%;
+}
+
 .pitch__svg {
   display: block;
   width: 100%;

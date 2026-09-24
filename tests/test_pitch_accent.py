@@ -27,6 +27,8 @@ def test_practice_sentence_mora_count_and_reading():
     ]
     # Every mora gets a pitch, and only H/L values are ever produced.
     assert {m.pitch for m in moras} <= {"H", "L"}
+    # ちょっと is atamadaka (HLL) in the standard dictionary / Marine.
+    assert [m.pitch for m in moras[:3]] == ["H", "L", "L"]
 
 
 def test_empty_text_raises():

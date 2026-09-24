@@ -696,16 +696,40 @@ function setPitchStatus(message, isError = false) {
   el.pitchChart.hidden = true;
 }
 
-/** Turn one accent pattern into evenly-spaced {x, y} points across a
- *  shared chart `width` -- x is the mora's *fractional* position in its
- *  own pattern (index+0.5)/length, not a fixed per-mora column, so a
- *  pattern with a different mora count still spans the full width and
- *  overlays sensibly with the other curve (see renderPitchChart()). */
+/** Mora-center dots for the OJAD step (H top rail, L bottom rail). */
 function patternPoints(pattern, width, yHigh, yLow) {
   return pattern.map((mora, index) => ({
     x: ((index + 0.5) / pattern.length) * width,
     y: mora.pitch === "H" ? yHigh : yLow,
   }));
+}
+
+/** OJAD-style step: flat on each mora, vertical only when H/L changes,
+ *  gap at accent-phrase boundaries (jp-pitch-accent-analyzer `ax.step`). */
+function patternStepPath(pattern, width, yHigh, yLow) {
+  const n = pattern.length;
+  if (!n) return "";
+  const col = width / n;
+  let d = "";
+  let prevY = null;
+  let prevPhrase = null;
+  for (let i = 0; i < n; i += 1) {
+    const y = pattern[i].pitch === "H" ? yHigh : yLow;
+    const left = i * col;
+    const right = (i + 1) * col;
+    const phrase = pattern[i].phrase;
+    const newPhrase = prevPhrase !== null && phrase !== prevPhrase;
+    if (prevY === null || newPhrase) {
+      d += `${d ? " " : ""}M ${left.toFixed(1)},${y.toFixed(1)} H ${right.toFixed(1)}`;
+    } else if (y === prevY) {
+      d += ` H ${right.toFixed(1)}`;
+    } else {
+      d += ` H ${left.toFixed(1)} V ${y.toFixed(1)} H ${right.toFixed(1)}`;
+    }
+    prevY = y;
+    prevPhrase = phrase;
+  }
+  return d;
 }
 
 function patternPolyline(points) {
@@ -791,7 +815,7 @@ function renderPitchChart() {
   const hasLearner = learnerReady && voicedCount > 0;
   el.pitchTitle.textContent = hasLearner ? "Cao độ: mẫu và F0 của bạn" : "Cao độ mẫu";
   el.pitchLegend.innerHTML = `
-    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>Mẫu (H/L)</span>
+    <span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--ref"></i>Mẫu (OJAD)</span>
     ${hasLearner ? '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>Bạn (F0 đo)</span>' : ""}
   `;
 
@@ -835,20 +859,26 @@ function renderPitchChart() {
       })
       .join("");
     learnerSvg = `${lines}${dots}`;
-    hint = `<p class="pitch__hint">Nét đứt là F0 đo từ bản ghi, canh từng mora (force-align câu mục tiêu, semitone so với F0 trung bình của bạn). Chấm xanh = đúng hướng H/L trong cụm nhấn, đỏ = ngược hướng. Mora không thanh bị bỏ trống.</p>`;
+    hint = `<p class="pitch__hint">Nét liền bậc là mẫu OJAD (H/L từng mora, ngắt theo cụm nhấn). Nét đứt là F0 đo từ bản ghi. Chấm xanh = đúng hướng trong cụm, đỏ = ngược. Mora không thanh bị bỏ trống.</p>`;
   } else if (learnerReady) {
     hint = `<p class="pitch__hint">Không đo được F0 có thanh trong bản ghi này.</p>`;
+  } else {
+    hint = `<p class="pitch__hint">Mẫu OJAD: cao/thấp từng mora theo OpenJTalk + Marine, vẽ bậc ngang (không nối chéo).</p>`;
   }
 
   el.pitchChart.innerHTML = `
-    <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
-      <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
-      <line class="pitch__guide" x1="0" y1="${yMid}" x2="${width}" y2="${yMid}" />
-      <polyline class="pitch__line" points="${patternPolyline(refPoints)}" />
-      ${refDots}
-      ${learnerSvg}
-    </svg>
-    ${patternLabels(referencePattern, "ref")}
+    <div class="pitch__scroll">
+      <div class="pitch__plot" style="width: max(100%, ${width}px)">
+        <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
+          <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
+          <line class="pitch__guide" x1="0" y1="${yMid}" x2="${width}" y2="${yMid}" />
+          <path class="pitch__line" d="${patternStepPath(referencePattern, width, yHigh, yLow)}" />
+          ${refDots}
+          ${learnerSvg}
+        </svg>
+        ${patternLabels(referencePattern, "ref")}
+      </div>
+    </div>
     ${hint}
   `;
   el.pitchChart.hidden = false;

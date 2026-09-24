@@ -1,44 +1,22 @@
 """Reference pitch-accent ("cao do mau") pattern for Japanese text.
 
-Given a sentence, returns the expected High/Low pitch for each mora - the
-same rise-and-fall shape a native speaker produces, and the same signal
-Japanese TTS engines are driven by. Used to show a learner the intonation
-they should aim for *before* they record themselves reading it.
+Same theoretical H/L as jp-pitch-accent-analyzer
+(https://github.com/deeplearningcafe/jp-pitch-accent-analyzer):
 
-## Where the signal comes from
+  1. `pyopenjtalk.extract_fullcontext(..., run_marine=True)` when the
+     Marine estimator is installed -- corpus-trained accent, better on
+     compounds than the raw NAIST dictionary.
+  2. One H/L per mora from the HTS `/A:p1+p2+p3/` fields, using that
+     repo's rule (not a 2-rail guess):
 
-`pyopenjtalk.extract_fullcontext()` returns one HTS full-context label per
-*phoneme*. Three numeric fields recur on every label and are all we need:
+        p1 > 0              -> Low   (already past the nucleus)
+        p1 < 0 and p2 == 1  -> Low   (first mora, still before nucleus)
+        otherwise           -> High  (at the nucleus, or rising toward it)
 
-    a1  distance from this mora to the accent nucleus of its accent
-        phrase - exactly 0 at the nucleus mora, never 0 in a phrase with
-        no nucleus (heiban / flat accent).
-    a2  position of this mora within its accent phrase, counting from 1.
-    a3  position of this mora counting backward from the end of its
-        accent phrase (1 at the phrase's last mora).
+     which is heiban LHHHH, atamadaka HLLL, naka/odaka LHH..HLL.
 
-All phones belonging to one mora (e.g. the "ch" and "o" of "cho" in
-"chotto") carry the *same* a1/a2/a3, so grouping consecutive phones by
-those three numbers recovers the mora and accent-phrase boundaries
-without needing a separate word segmenter. From there, standard Japanese
-pitch-accent rules give a mechanical High/Low pattern per accent phrase:
-
-    nucleus at mora 1  (atamadaka):  H L L L ...
-    no nucleus         (heiban):     L H H H ...
-    nucleus at mora k  (naka/odaka): L H ... H(k) L L ...
-
-This is the same a1/a2/a3 signal open-source Japanese TTS front-ends
-encode as prosody symbols for a neural model (see ESPnet's
-`pyopenjtalk_g2p_prosody`); here it is turned into an explicit H/L value
-per mora instead, for display, rather than fed to a synthesizer.
-
-## Limitation
-
-This is OpenJTalk's *dictionary* accent for each word, phrase-joined by
-its own built-in rules - not a model fit to a labelled accent corpus. It
-is usually right, but compound nouns and unusual proper nouns can shift
-accent in ways only a native speaker (or a corpus-trained accent
-estimator, e.g. the "marine" package) would catch.
+The frontend draws this as an OJAD-style step (horizontal per mora,
+vertical only when H/L changes, gap at accent-phrase boundaries).
 """
 
 from __future__ import annotations
@@ -51,29 +29,12 @@ import pyopenjtalk
 
 logger = logging.getLogger(__name__)
 
-# Phones that always end a mora: vowels, the moraic nasal, the geminate
-# ("small tsu"). Everything else (consonants) starts a mora and waits for
-# one of these to close it.
-_MORA_FINAL = set("aiueoAIUEO") | {"N", "cl"}
-
-# Small kana that fuse with the *previous* character into one mora
-# (kya, fa, ...) rather than counting as a mora of their own.
 _SMALL_YOON = set("ゃゅょぁぃぅぇぉャュョァィゥェォ")
 
 _P3_RE = re.compile(r"-(.*?)\+")
-_A1_RE = re.compile(r"/A:([0-9\-]+)\+")
-_A2_RE = re.compile(r"\+(\d+)\+")
-_A3_RE = re.compile(r"\+(\d+)/")
+_A_RE = re.compile(r"/A:([0-9\-]+)\+([0-9]+)\+([0-9]+)")
 
-
-def _feature(regex: "re.Pattern[str]", label: str) -> int | None:
-    match = regex.search(label)
-    return int(match.group(1)) if match else None
-
-
-def _phone(label: str) -> str:
-    match = _P3_RE.search(label)
-    return match.group(1) if match else ""
+_marine_unavailable = False
 
 
 @dataclass
@@ -85,37 +46,85 @@ class MoraPitch:
     phrase: int  # 0-based accent phrase index
 
 
-def _group_accent_phrases(labels: list[str]) -> list[list[tuple[int, int, int]]]:
-    """Group full-context labels into accent phrases of (a1, a2, a3) morae."""
-    phrases: list[list[tuple[int, int, int]]] = [[]]
-    phrase_ended = False
+def _phone(label: str) -> str:
+    match = _P3_RE.search(label)
+    return match.group(1) if match else ""
+
+
+def _extract_fullcontext(text: str) -> list[str]:
+    """Prefer Marine (same as jp-pitch-accent-analyzer); fall back to dictionary."""
+    global _marine_unavailable
+    if not _marine_unavailable:
+        try:
+            return pyopenjtalk.extract_fullcontext(text, run_marine=True)
+        except TypeError:
+            return pyopenjtalk.extract_fullcontext(text)
+        except Exception as exc:  # noqa: BLE001 — marine missing / model load
+            _marine_unavailable = True
+            logger.info(
+                "Marine accent unavailable (%s); using OpenJTalk dictionary", exc
+            )
+    return pyopenjtalk.extract_fullcontext(text)
+
+
+def _hl_from_a(p1: int, p2: int) -> bool:
+    """True = High. Same three-way rule as jp-pitch-accent-analyzer."""
+    if p1 > 0:
+        return False
+    if p1 < 0 and p2 == 1:
+        return False
+    return True
+
+
+def _mora_hl_from_labels(labels: list[str]) -> list[tuple[bool, int]]:
+    """(is_high, phrase_index) per mora, jp-pitch-accent-analyzer rules."""
+    raw: list[tuple[int, int, int]] = []  # (p1, p2, phrase)
+    phrase_idx = 0
+    last_p2: int | None = None
 
     for label in labels:
-        p3 = _phone(label)
-        if p3 == "sil":
+        ph = _phone(label)
+        if ph == "sil":
             continue
-        if p3 == "pau":
-            if phrases[-1]:
-                phrases.append([])
-                phrase_ended = False
-            continue
-        if p3 not in _MORA_FINAL:
-            continue  # leading consonant of a mora - wait for what closes it
-
-        a1 = _feature(_A1_RE, label)
-        a2 = _feature(_A2_RE, label)
-        a3 = _feature(_A3_RE, label)
-        if a1 is None or a2 is None or a3 is None:
+        if ph == "pau":
+            if last_p2 is not None:
+                phrase_idx += 1
+                last_p2 = None
             continue
 
-        if phrase_ended:
-            phrases.append([])
-            phrase_ended = False
-        phrases[-1].append((a1, a2, a3))
-        if a3 == 1:
-            phrase_ended = True
+        a_match = _A_RE.search(label)
+        if not a_match:
+            continue
+        p1 = int(a_match.group(1))
+        p2 = int(a_match.group(2))
 
-    return [phrase for phrase in phrases if phrase]
+        if p2 == last_p2:
+            continue
+        if last_p2 is not None and p2 < last_p2:
+            phrase_idx += 1
+
+        raw.append((p1, p2, phrase_idx))
+        last_p2 = p2
+
+    # Some OpenJTalk builds mark heiban as all-positive p1 (no nucleus).
+    # The repo rule would then paint every mora Low; force LHHHH instead.
+    by_phrase: dict[int, list[int]] = {}
+    for i, (p1, _p2, phrase) in enumerate(raw):
+        by_phrase.setdefault(phrase, []).append(i)
+    heiban_phrases = {
+        phrase
+        for phrase, idxs in by_phrase.items()
+        if idxs and all(raw[i][0] > 0 for i in idxs)
+    }
+
+    out: list[tuple[bool, int]] = []
+    for p1, p2, phrase in raw:
+        if phrase in heiban_phrases:
+            is_high = p2 != 1
+        else:
+            is_high = _hl_from_a(p1, p2)
+        out.append((is_high, phrase))
+    return out
 
 
 def _split_kana_morae(kana: str) -> list[str]:
@@ -149,36 +158,27 @@ def pitch_accent_pattern(text: str) -> list[MoraPitch]:
     if not text or not text.strip():
         raise ValueError("Text is empty; nothing to analyze.")
 
-    labels = pyopenjtalk.extract_fullcontext(text)
-    phrases = _group_accent_phrases(labels)
-    if not phrases:
+    labels = _extract_fullcontext(text)
+    hl = _mora_hl_from_labels(labels)
+    if not hl:
         raise ValueError("No pronounceable Japanese content found.")
 
     katakana = pyopenjtalk.g2p(text, kana=True) or ""
     kana = "".join(ch for ch in _kata_to_hira(katakana) if _is_kana(ch))
     kana_morae = _split_kana_morae(kana)
 
-    result: list[MoraPitch] = []
-    for phrase_idx, phrase in enumerate(phrases):
-        nucleus = next((a2 for a1, a2, _a3 in phrase if a1 == 0), None)
-        for a1, a2, _a3 in phrase:
-            if nucleus is None:
-                pitch = "L" if a2 == 1 else "H"  # heiban: low, then high forever
-            elif nucleus == 1:
-                pitch = "H" if a2 == 1 else "L"  # atamadaka: high, then low forever
-            else:
-                pitch = "L" if (a2 == 1 or a2 > nucleus) else "H"  # naka/odaka
-            result.append(MoraPitch(mora="", pitch=pitch, phrase=phrase_idx))
-
-    # Both mora lists come from OpenJTalk's analysis of the same text, so
-    # counts normally match; fall back to a placeholder instead of failing
-    # the whole request over a rare digraph/loanword mismatch.
-    if len(kana_morae) != len(result):
+    if len(kana_morae) != len(hl):
         logger.warning(
             "pitch/kana mora count mismatch (%d vs %d) for %r",
-            len(result), len(kana_morae), text,
+            len(hl),
+            len(kana_morae),
+            text,
         )
-    for i, mp in enumerate(result):
-        mp.mora = kana_morae[i] if i < len(kana_morae) else "?"
 
+    result: list[MoraPitch] = []
+    n = max(len(hl), len(kana_morae))
+    for i in range(n):
+        is_high, phrase = hl[i] if i < len(hl) else (False, hl[-1][1] if hl else 0)
+        mora = kana_morae[i] if i < len(kana_morae) else "?"
+        result.append(MoraPitch(mora=mora, pitch="H" if is_high else "L", phrase=phrase))
     return result
