@@ -19,7 +19,6 @@ from app.api import english_routes, pages, routes
 from app.core.config import STATIC_DIR, get_settings
 from app.services.asr_service import ASRService
 from app.services.english_asr import get_english_asr_service
-from app.services.english_gopt import get_english_gopt_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -87,6 +86,15 @@ def health() -> dict:
         "checkpoint": str(settings.checkpoint),
         "en_model_loaded": get_english_asr_service().is_loaded,
         "en_asr_model": settings.en_asr_model,
-        "gopt_loaded": get_english_gopt_service().is_loaded,
+        "gopt_loaded": _gopt_loaded(),
         "gopt_checkpoint": str(settings.gopt_checkpoint),
     }
+
+
+def _gopt_loaded() -> bool:
+    try:
+        from app.services.english_gopt import get_english_gopt_service
+
+        return get_english_gopt_service().is_loaded
+    except Exception:  # noqa: BLE001
+        return False
