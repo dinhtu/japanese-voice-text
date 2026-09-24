@@ -196,6 +196,12 @@ class RecognitionResult:
     own frame timing. Only populated when transcribe(with_timing=True) was
     used; see _char_spans_from_pred_ids for how it's derived and when it
     falls back to None instead."""
+    aligned_char_spans: list[tuple[float, float]] | None = None
+    """(start_sec, end_sec) per character of the *target* hiragana passed
+    to transcribe(align_to=...), from CTC forced alignment of that string
+    onto the kana head. Preferred over char_spans for mora pitch windows
+    because it timestamps the sentence the learner was asked to read, not
+    whatever greedy decode emitted."""
     phoneme_probs: np.ndarray | None = None
     """(T, phoneme_V) softmax over the InterCTC phoneme head. Populated
     when with_timing or with_phonemes is set -- used for GOP scoring.
@@ -242,8 +248,13 @@ class KanaRecognizer:
         swd_window: int = 1,
         with_phonemes: bool = False,
         with_timing: bool = False,
+        align_to: str | None = None,
     ) -> RecognitionResult:
-        """Transcribe an audio file (or a pre-loaded 16kHz mono array) to kana."""
+        """Transcribe an audio file (or a pre-loaded 16kHz mono array) to kana.
+
+        `align_to` is the target hiragana to force-align on the same forward
+        pass (see RecognitionResult.aligned_char_spans).
+        """
         self.ensure_on_device()
         if isinstance(audio, np.ndarray):
             audio_array, sr = audio, TARGET_SAMPLE_RATE
@@ -291,6 +302,14 @@ class KanaRecognizer:
                 kana_ids_list, kana, kana_logits.shape[1], duration
             )
 
+        aligned_char_spans = None
+        if align_to:
+            from src.asr.force_align import align_kana
+
+            aligned_char_spans = align_kana(
+                kana_logits, self.kana_vocab, align_to, duration
+            )
+
         del outputs, kana_logits, kana_pred_ids, input_values, attention_mask
         return RecognitionResult(
             kana=kana,
@@ -298,6 +317,7 @@ class KanaRecognizer:
             inference_time=inference_time,
             phonemes=phonemes,
             char_spans=char_spans,
+            aligned_char_spans=aligned_char_spans,
             phoneme_probs=phoneme_probs,
         )
 

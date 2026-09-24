@@ -22,7 +22,7 @@ class StubASRService:
 
     is_loaded = True
 
-    def recognize(self, audio_path, with_timing=False):
+    def recognize(self, audio_path, with_timing=False, align_to=None):
         return RecognitionResult(kana=self.kana, duration=6.34, inference_time=1.1)
 
 

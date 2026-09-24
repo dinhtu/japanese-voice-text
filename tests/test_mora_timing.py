@@ -4,7 +4,12 @@ shape KanaRecognizer.transcribe(with_timing=True) produces)."""
 
 import math
 
-from app.services.mora_timing import _full_alignment, mora_time_windows
+from app.services.mora_timing import (
+    _full_alignment,
+    mora_time_windows,
+    mora_windows_from_char_spans,
+    resolve_mora_windows,
+)
 
 TARGET = "ちょっとまってください"  # 10 morae: ちょ っ と ま っ て く だ さ い
 
@@ -69,3 +74,18 @@ def test_fully_garbled_recognition_still_returns_one_window_per_mora():
 
 def test_empty_target_returns_empty_list():
     assert mora_time_windows("", "abc", [], 1.0) == []
+
+
+def test_mora_windows_from_char_spans_merges_small_yoon():
+    windows = mora_windows_from_char_spans("ちょっと", [(0.0, 0.1), (0.1, 0.2), (0.2, 0.3), (0.3, 0.4)])
+    assert windows == [(0.0, 0.2), (0.2, 0.3), (0.3, 0.4)]
+
+
+def test_resolve_mora_windows_prefers_forced_alignment():
+    recognized = "ぜんぜんちがう"
+    char_spans = _uniform_spans(recognized)
+    aligned = [(0.0, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5)]
+    windows = resolve_mora_windows(
+        "ちょっと", recognized, char_spans, 1.0, aligned_char_spans=aligned
+    )
+    assert windows == [(0.0, 0.3), (0.3, 0.4), (0.4, 0.5)]

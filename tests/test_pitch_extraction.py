@@ -154,58 +154,24 @@ def test_extract_pitch_for_windows_no_audio_returns_placeholders():
     assert points == [{"semitone": None, "voiced": False}] * 3
 
 
-def test_extract_pitch_for_windows_phrase_normalization_survives_declination():
-    """Two accent phrases at different absolute pitch (like natural
-    declination across a sentence) should each still read High=positive,
-    Low=negative *within their own phrase* when phrase/label info is given
-    -- not have the second, lower phrase read as uniformly "low" against
-    the whole clip's median."""
-    # Phrase 0: High ~330Hz, Low ~260Hz. Phrase 1 (later, lower overall
-    # from declination): High ~240Hz, Low ~190Hz -- note phrase 1's High
-    # is *below* phrase 0's Low in absolute Hz.
+def test_extract_pitch_for_windows_uses_speaker_mean_so_declination_is_visible():
+    """Later, lower tones sit below earlier ones vs the clip mean -- the
+    real contour is kept (jp-pitch-accent-analyzer style), not remapped
+    so every phrase's High looks positive."""
     audio = np.concatenate([_tone(330, 0.2), _tone(260, 0.2), _tone(240, 0.2), _tone(190, 0.2)])
     windows = [(0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8)]
-    phrases = [0, 0, 1, 1]
-    pitch_labels = ["H", "L", "H", "L"]
 
-    points = extract_pitch_for_windows(
-        audio, SAMPLE_RATE, windows, phrases=phrases, pitch_labels=pitch_labels
-    )
+    points = extract_pitch_for_windows(audio, SAMPLE_RATE, windows)
     assert len(points) == 4
     assert all(p["voiced"] for p in points)
-    assert points[0]["semitone"] > 0  # phrase 0 High
-    assert points[1]["semitone"] < 0  # phrase 0 Low
-    assert points[2]["semitone"] > 0  # phrase 1 High -- positive despite being
-    #                                    quieter in absolute Hz than phrase 0's Low
-    assert points[3]["semitone"] < 0  # phrase 1 Low
+    assert points[0]["semitone"] > points[1]["semitone"]
+    assert points[1]["semitone"] > points[2]["semitone"]
+    assert points[2]["semitone"] > points[3]["semitone"]
 
 
-def test_extract_pitch_for_windows_without_phrase_info_uses_global_median():
-    """Omitting phrases/pitch_labels should behave exactly like the
-    original whole-clip-median normalization (no regression for callers
-    that don't have accent-phrase data)."""
+def test_extract_pitch_for_windows_without_phrase_info_uses_global_mean():
     audio = np.concatenate([_tone(300, 0.3), _tone(500, 0.3)])
     windows = [(0.0, 0.3), (0.3, 0.6)]
     with_phrases = extract_pitch_for_windows(audio, SAMPLE_RATE, windows)
     assert with_phrases[0]["voiced"] and with_phrases[1]["voiced"]
     assert (with_phrases[1]["semitone"] - with_phrases[0]["semitone"]) > 6
-
-
-def test_extract_pitch_for_windows_single_label_phrase_falls_back_gracefully():
-    """A phrase with only one H/L label present (e.g. a lone-mora phrase)
-    can't compute an H/L midpoint -- should fall back to that phrase's own
-    median rather than crashing or raising."""
-    audio = np.concatenate([_tone(350, 0.3), _tone(300, 0.3), _tone(250, 0.3)])
-    windows = [(0.0, 0.3), (0.3, 0.6), (0.6, 0.9)]
-    phrases = [0, 1, 1]
-    pitch_labels = ["H", "H", "L"]  # phrase 0 has only "H", no "L" counterpart
-
-    points = extract_pitch_for_windows(
-        audio, SAMPLE_RATE, windows, phrases=phrases, pitch_labels=pitch_labels
-    )
-    assert len(points) == 3
-    assert all(p["voiced"] for p in points)
-    # phrase 0's only mora is judged against its own value -> near zero
-    assert abs(points[0]["semitone"]) < 1.0
-    # phrase 1 still gets a clean High/Low split
-    assert points[1]["semitone"] > points[2]["semitone"]

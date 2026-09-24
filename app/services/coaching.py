@@ -257,20 +257,33 @@ class CoachingComment:
 def pitch_direction_match(
     moras: list["MoraPitch"], points: list[dict[str, Any]]
 ) -> tuple[int, int]:
-    """How many voiced learner pitch points landed on the expected side of
-    zero for their mora's reference H/L label (semitone > 0 for "H", < 0
-    for "L") -- both already relative to each accent phrase's own H/L
-    midpoint, see app.services.pitch_extraction. A tie (exactly 0.0)
-    counts as a miss: genuinely ambiguous, not a match.
+    """How many voiced learner points sit on the expected side of their
+    own accent-phrase mean (H above that mean, L below).
 
-    `moras` and `points` must be the same length and positionally aligned
-    (app.services.pitch_accent.pitch_accent_pattern's output, and
-    app.services.pitch_extraction.extract_pitch_for_windows's output, for
-    the same target text). Returns (0, 0) if nothing lines up or nothing
-    is voiced.
+    Semitones from pitch_extraction are relative to the *clip* mean, so
+    a later High after natural declination can be negative in absolute
+    terms and still be the high mora of its phrase. Comparing to the
+    phrase-local mean (not to 0) keeps that from looking like a miss.
+    A tie with the phrase mean counts as a miss.
+
+    `moras` and `points` must be the same length and positionally aligned.
+    Returns (0, 0) if nothing lines up or nothing is voiced.
     """
     if len(moras) != len(points):
         return (0, 0)
+
+    phrase_values: dict[int, list[float]] = {}
+    for mora, point in zip(moras, points):
+        semitone = point.get("semitone")
+        if not point.get("voiced") or semitone is None:
+            continue
+        phrase_values.setdefault(int(getattr(mora, "phrase", 0)), []).append(float(semitone))
+    phrase_mean = {
+        p: (sum(vals) / len(vals) if len(vals) >= 2 else 0.0)
+        for p, vals in phrase_values.items()
+        if vals
+    }
+
     matched = 0
     total = 0
     for mora, point in zip(moras, points):
@@ -278,7 +291,12 @@ def pitch_direction_match(
         if not point.get("voiced") or semitone is None:
             continue
         total += 1
-        if (mora.pitch == "H" and semitone > 0) or (mora.pitch == "L" and semitone < 0):
+        mean = phrase_mean.get(int(getattr(mora, "phrase", 0)))
+        if mean is None:
+            continue
+        if (mora.pitch == "H" and float(semitone) > mean) or (
+            mora.pitch == "L" and float(semitone) < mean
+        ):
             matched += 1
     return matched, total
 

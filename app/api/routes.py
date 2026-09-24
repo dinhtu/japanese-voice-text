@@ -15,7 +15,7 @@ from app.services.coaching import (
     build_facts,
     generate_comment,
 )
-from app.services.mora_timing import mora_time_windows
+from app.services.mora_timing import resolve_mora_windows
 from app.services.normalization import to_hiragana
 from app.services.pitch_accent import pitch_accent_pattern
 from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
@@ -196,8 +196,6 @@ async def get_pitch_contour(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     num_morae = len(moras)
-    phrase_indices = [m.phrase for m in moras]
-    pitch_labels = [m.pitch for m in moras]
 
     target_hiragana = to_hiragana(text)
 
@@ -209,20 +207,21 @@ async def get_pitch_contour(
             samples, sample_rate = load_audio(tmp_path)
             duration = round(len(samples) / sample_rate, 2)
 
-            # Prefer real per-mora timing from the ASR model's own CTC decode
-            # (app.services.mora_timing) over the equal-time/pause-snap
-            # fallback -- but never let that path's failure break this
-            # endpoint: recognition can fail for reasons unrelated to pitch
-            # (missing model, garbled audio), and a worse-but-working pitch
-            # chart beats none at all.
+            # Force-align the *target* kana (jp-pitch-accent-analyzer style),
+            # then fall back to decode+Levenshtein, then equal-time buckets.
             windows = None
             if target_hiragana:
                 try:
-                    recognition = asr_service.recognize(tmp_path, with_timing=True)
-                    if recognition.char_spans is not None:
-                        windows = mora_time_windows(
-                            target_hiragana, recognition.kana, recognition.char_spans, duration,
-                        )
+                    recognition = asr_service.recognize(
+                        tmp_path, with_timing=True, align_to=target_hiragana
+                    )
+                    windows = resolve_mora_windows(
+                        target_hiragana,
+                        recognition.kana,
+                        recognition.char_spans,
+                        duration,
+                        aligned_char_spans=recognition.aligned_char_spans,
+                    ) or None
                 except Exception:  # noqa: BLE001
                     logger.warning(
                         "ASR-based pitch alignment failed; falling back to "
@@ -232,9 +231,7 @@ async def get_pitch_contour(
                     windows = None
 
             if windows is not None and len(windows) == num_morae:
-                points = extract_pitch_for_windows(
-                    samples, sample_rate, windows, phrases=phrase_indices, pitch_labels=pitch_labels,
-                )
+                points = extract_pitch_for_windows(samples, sample_rate, windows)
             else:
                 points = extract_pitch_per_mora(samples, sample_rate, num_morae)
     except RuntimeError as e:
@@ -317,7 +314,9 @@ async def coach_pronunciation(
             f.write(content)
 
         with gpu_session():
-            recognition = asr_service.recognize(tmp_path, with_timing=True)
+            recognition = asr_service.recognize(
+                tmp_path, with_timing=True, align_to=target_hiragana
+            )
             recognized_hiragana = to_hiragana(recognition.kana)
             score = score_pronunciation(target_hiragana, recognized_hiragana)
 
@@ -328,22 +327,20 @@ async def coach_pronunciation(
         # just without those two fact categories.
         duration_issues: list = []
         pitch_points = None
-        if recognition.char_spans is not None:
+        if recognition.char_spans is not None or recognition.aligned_char_spans:
             try:
                 samples, sample_rate = load_audio(tmp_path)
                 duration = len(samples) / sample_rate
-                windows = mora_time_windows(
-                    target_hiragana, recognition.kana, recognition.char_spans, duration,
+                windows = resolve_mora_windows(
+                    target_hiragana,
+                    recognition.kana,
+                    recognition.char_spans,
+                    duration,
+                    aligned_char_spans=recognition.aligned_char_spans,
                 )
                 if len(windows) == len(moras):
                     duration_issues = detect_duration_issues(moras, windows)
-                    pitch_points = extract_pitch_for_windows(
-                        samples,
-                        sample_rate,
-                        windows,
-                        phrases=[m.phrase for m in moras],
-                        pitch_labels=[m.pitch for m in moras],
-                    )
+                    pitch_points = extract_pitch_for_windows(samples, sample_rate, windows)
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Timing-dependent coaching facts (duration/pitch) failed; "

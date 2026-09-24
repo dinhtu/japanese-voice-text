@@ -1,7 +1,12 @@
-"""Real per-mora audio time windows for the learner's recording, derived
-from the ASR model's own frame-level CTC decode instead of guessed from
-equal time division (see app/services/pitch_extraction.py's
-`extract_pitch_per_mora` for that simpler, ASR-free fallback).
+"""Real per-mora audio time windows for the learner's recording.
+
+Preferred path: CTC forced alignment of the *target* hiragana
+(`RecognitionResult.aligned_char_spans` from src/asr/force_align.py),
+then small-yoon mora grouping -- the same mora-sync idea as
+jp-pitch-accent-analyzer.
+
+Fallback: Levenshtein map from greedy-decode `char_spans` onto the
+target (the older path), then equal-time buckets in pitch_extraction.
 
 ## How it works
 
@@ -124,6 +129,42 @@ def _clean_windows(
         cleaned.append((start, end))
         prev_end = end
     return cleaned
+
+
+def mora_windows_from_char_spans(
+    target_hiragana: str,
+    char_spans: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Group 1:1 character windows into mora windows (small-yoon merge).
+
+    Same mora grouping as jp-pitch-accent-analyzer's `group_into_moras`.
+    `char_spans` must be one window per character of `target_hiragana`.
+    """
+    spans = split_mora_spans(target_hiragana)
+    if not spans or len(char_spans) != len(target_hiragana):
+        return []
+    windows: list[tuple[float, float]] = []
+    for _text, start_char, end_char in spans:
+        chunk = char_spans[start_char:end_char]
+        windows.append((min(s for s, _e in chunk), max(e for _s, e in chunk)))
+    return windows
+
+
+def resolve_mora_windows(
+    target_hiragana: str,
+    recognized_kana: str,
+    char_spans: list[tuple[float, float]] | None,
+    duration: float,
+    aligned_char_spans: list[tuple[float, float]] | None = None,
+) -> list[tuple[float, float]]:
+    """Prefer target forced-alignment windows; fall back to decode+Levenshtein."""
+    if aligned_char_spans and len(aligned_char_spans) == len(target_hiragana):
+        windows = mora_windows_from_char_spans(target_hiragana, aligned_char_spans)
+        if windows:
+            return windows
+    if char_spans is not None and target_hiragana:
+        return mora_time_windows(target_hiragana, recognized_kana, char_spans, duration)
+    return []
 
 
 def mora_time_windows(

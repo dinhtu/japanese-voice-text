@@ -752,10 +752,30 @@ function f0Segments(points) {
   return segments;
 }
 
-function directionOk(point) {
+function phraseMeans(learner, reference) {
+  const sums = {};
+  const counts = {};
+  for (let i = 0; i < learner.length; i += 1) {
+    const point = learner[i];
+    if (!point || !point.voiced || point.semitone == null) continue;
+    const phrase = (reference[i] && reference[i].phrase) || 0;
+    sums[phrase] = (sums[phrase] || 0) + Number(point.semitone);
+    counts[phrase] = (counts[phrase] || 0) + 1;
+  }
+  const means = {};
+  Object.keys(sums).forEach((phrase) => {
+    means[phrase] = counts[phrase] >= 2 ? sums[phrase] / counts[phrase] : 0;
+  });
+  return means;
+}
+
+function directionOk(point, index, reference, means) {
   if (!point || !point.voiced || point.semitone == null) return null;
-  if (point.expected === "H") return point.semitone > 0;
-  if (point.expected === "L") return point.semitone < 0;
+  const phrase = (reference[index] && reference[index].phrase) || 0;
+  const mean = means[phrase];
+  if (mean == null) return null;
+  if (point.expected === "H") return point.semitone > mean;
+  if (point.expected === "L") return point.semitone < mean;
   return null;
 }
 
@@ -788,13 +808,14 @@ function renderPitchChart() {
   let learnerSvg = "";
   let hint = "";
   if (hasLearner) {
+    const localMeans = phraseMeans(learnerPitch, referencePattern);
     const f0Points = referencePattern.map((mora, index) => {
       const measured = learnerPitch[index];
       if (!measured || !measured.voiced || measured.semitone == null) return null;
       return {
         x: ((index + 0.5) / n) * width,
         y: semitoneToY(measured.semitone, yHigh, yLow),
-        ok: directionOk(measured),
+        ok: directionOk(measured, index, referencePattern, localMeans),
         mora: mora.mora,
       };
     });
@@ -814,7 +835,7 @@ function renderPitchChart() {
       })
       .join("");
     learnerSvg = `${lines}${dots}`;
-    hint = `<p class="pitch__hint">Nét đứt là F0 đo từ bản ghi, canh từng mora câu mục tiêu. Chấm xanh = đúng hướng H/L mẫu, đỏ = ngược hướng. Mora không thanh (unvoiced) bị bỏ trống.</p>`;
+    hint = `<p class="pitch__hint">Nét đứt là F0 đo từ bản ghi, canh từng mora (force-align câu mục tiêu, semitone so với F0 trung bình của bạn). Chấm xanh = đúng hướng H/L trong cụm nhấn, đỏ = ngược hướng. Mora không thanh bị bỏ trống.</p>`;
   } else if (learnerReady) {
     hint = `<p class="pitch__hint">Không đo được F0 có thanh trong bản ghi này.</p>`;
   }

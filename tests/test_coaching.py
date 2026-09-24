@@ -33,11 +33,25 @@ def _point(semitone: float | None, voiced: bool = True) -> dict:
 
 def test_pitch_direction_match_counts_only_direction_agreement():
     moras = _moras(["H", "L", "H", "L"])
-    points = [_point(2.0), _point(-1.0), _point(-0.5), _point(-3.0)]
-    # mora0 H vs +2.0 -> match; mora1 L vs -1.0 -> match;
-    # mora2 H vs -0.5 -> mismatch; mora3 L vs -3.0 -> match
+    # Phrase mean of 3, 1, -1, -3 is 0. H must sit above that mean.
+    points = [_point(3.0), _point(1.0), _point(-1.0), _point(-3.0)]
+    # mora0 H vs +3 match; mora1 L vs +1 miss; mora2 H vs -1 miss; mora3 L vs -3 match
     matched, total = pitch_direction_match(moras, points)
-    assert (matched, total) == (3, 4)
+    assert (matched, total) == (2, 4)
+
+
+def test_pitch_direction_match_uses_phrase_local_mean():
+    """A later High can be negative vs the clip mean and still match if it
+    is the high mora of its own accent phrase."""
+    moras = [
+        MoraPitch(mora="x", pitch="H", phrase=0),
+        MoraPitch(mora="x", pitch="L", phrase=0),
+        MoraPitch(mora="x", pitch="H", phrase=1),
+        MoraPitch(mora="x", pitch="L", phrase=1),
+    ]
+    points = [_point(3.0), _point(1.0), _point(-1.0), _point(-3.0)]
+    matched, total = pitch_direction_match(moras, points)
+    assert (matched, total) == (4, 4)
 
 
 def test_pitch_direction_match_ignores_unvoiced_or_missing_semitone():

@@ -17,7 +17,7 @@ from app.services.aspect_scoring import AspectScores, score_aspects
 from app.services.asr_service import ASRService
 from app.services.coaching import pitch_direction_match
 from app.services.mora_diff import split_mora_spans
-from app.services.mora_timing import mora_time_windows
+from app.services.mora_timing import resolve_mora_windows
 from app.services.normalization import to_hiragana
 from app.services.scoring import ScoreResult, score_pronunciation
 
@@ -74,15 +74,16 @@ def _measure_aspects(
         logger.warning("Aspect pitch-accent pattern failed; mora count falls back", exc_info=True)
         moras = None
 
-    if recognition.char_spans is not None and target_hiragana:
+    if target_hiragana:
         try:
-            windows = mora_time_windows(
+            windows = resolve_mora_windows(
                 target_hiragana,
                 recognition.kana,
                 recognition.char_spans,
                 recognition.duration,
-            )
-            speech_duration = _speech_span(windows)
+                aligned_char_spans=recognition.aligned_char_spans,
+            ) or None
+            speech_duration = _speech_span(windows) if windows else None
         except Exception:  # noqa: BLE001
             logger.warning("Aspect mora windows failed", exc_info=True)
             windows = None
@@ -112,13 +113,7 @@ def _measure_aspects(
             )
 
             if windows is not None and len(windows) == len(moras):
-                points = extract_pitch_for_windows(
-                    samples,
-                    sample_rate,
-                    windows,
-                    phrases=[m.phrase for m in moras],
-                    pitch_labels=[m.pitch for m in moras],
-                )
+                points = extract_pitch_for_windows(samples, sample_rate, windows)
             else:
                 points = extract_pitch_per_mora(samples, sample_rate, len(moras))
             pitch_matched, pitch_total = pitch_direction_match(moras, points)
@@ -216,7 +211,9 @@ class EvaluatePronunciationUseCase:
                 "Target text contains no pronounceable Japanese content."
             )
 
-        recognition = self.asr_service.recognize(audio_path, with_timing=True)
+        recognition = self.asr_service.recognize(
+            audio_path, with_timing=True, align_to=target_hiragana
+        )
         recognized_hiragana = to_hiragana(recognition.kana)
 
         logger.info(

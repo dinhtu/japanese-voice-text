@@ -53,18 +53,22 @@ class ASRService:
                 _recognizer.offload()
 
     def recognize(
-        self, audio_path: str | Path, with_timing: bool = False
+        self,
+        audio_path: str | Path,
+        with_timing: bool = False,
+        align_to: str | None = None,
     ) -> RecognitionResult:
         """Transcribe an audio file to kana.
 
         `with_timing=True` also computes per-character CTC onset timing
-        (see RecognitionResult.char_spans) -- used by /pitch-contour to
-        align the learner's real pitch curve to the target's morae instead
-        of guessing with equal time division.
+        (see RecognitionResult.char_spans). `align_to` force-aligns that
+        target hiragana onto the same kana logits (aligned_char_spans).
         """
         recognizer = self.load()
         with _lock:
-            return recognizer.transcribe(audio_path, with_timing=with_timing)
+            return recognizer.transcribe(
+                audio_path, with_timing=with_timing, align_to=align_to
+            )
 
 
 def get_asr_service() -> ASRService:

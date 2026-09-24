@@ -7,9 +7,9 @@ class PitchContourPoint(BaseModel):
     semitone: float | None = Field(
         default=None,
         description=(
-            "Pitch in semitones relative to this recording's own median "
-            "voiced pitch; null where this mora's time slice had no voiced "
-            "speech."
+            "Pitch in semitones relative to this recording's own mean "
+            "voiced F0 (12 * log2(f / mean_f)); null where this mora's "
+            "time slice had no voiced speech."
         ),
     )
     voiced: bool
