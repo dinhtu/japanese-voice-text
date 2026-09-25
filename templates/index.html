@@ -112,6 +112,10 @@
           <div class="card__head">
             <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
             <div class="card__actions">
+              <button type="button" class="link-btn" id="guide-btn" title="Hướng dẫn đọc từng cụm từ từ AI" aria-expanded="false">
+                <svg class="icon icon--sm"><use href="#i-chat" /></svg>
+                Hướng dẫn đọc AI
+              </button>
               <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu (H/L) và F0 đo từ bản ghi" aria-expanded="false">
                 <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
                 Cao độ
@@ -126,6 +130,26 @@
             <p class="target" id="target-text">{{ default_text.text }}</p>
             <p class="muted" id="target-reading">{{ default_text.reading }}</p>
             <p class="muted muted--soft" id="target-meaning">{{ default_text.meaning }}</p>
+
+            <div class="pitch" id="guide-panel" hidden>
+              <div class="pitch__head">
+                <span class="pitch__title">Hướng dẫn đọc từ AI</span>
+                <label class="coach__lang" for="guide-lang" style="margin-left: auto;">
+                  Ngôn ngữ
+                  <select id="guide-lang">
+                    <option value="vi" selected>Tiếng Việt</option>
+                    <option value="en">English</option>
+                    <option value="jp">日本語</option>
+                    <option value="ko">한국어</option>
+                    <option value="tw">繁體中文</option>
+                  </select>
+                </label>
+              </div>
+              <div class="pitch__body">
+                <p class="pitch__status" id="guide-status" hidden></p>
+                <div class="coach__block-text" id="guide-content" hidden style="white-space: pre-wrap; font-size: 0.95rem; line-height: 1.6; color: var(--ink); margin-top: 0.5rem;"></div>
+              </div>
+            </div>
 
             <div class="pitch" id="pitch" hidden>
               <div class="pitch__head">

@@ -15,6 +15,7 @@ from app.services.coaching import (
     build_facts,
     generate_category_guide,
     generate_comment,
+    generate_text_reading_guide,
 )
 from app.services.mora_timing import resolve_mora_windows
 from app.services.normalization import to_hiragana
@@ -28,7 +29,7 @@ from app.services.use_cases import (
 )
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
-from app.schemas.coaching import CategoryGuideResponse, CoachResponse
+from app.schemas.coaching import CategoryGuideResponse, CoachResponse, TextGuideResponse
 from app.schemas.pronunciation import EvaluateResponse
 from app.schemas.pitch_accent import PitchAccentResponse
 from app.schemas.pitch_contour import PitchContourResponse
@@ -420,5 +421,47 @@ async def post_category_guide(
     settings: Settings = Depends(get_settings),
 ) -> CategoryGuideResponse:
     return await get_category_guide(category_name=category_name, lang=lang, settings=settings)
+
+
+@router.get(
+    "/text-guide",
+    response_model=TextGuideResponse,
+    summary="Tạo hướng dẫn phát âm từng cụm từ cho văn bản tiếng Nhật bằng Ollama AI",
+)
+async def get_text_guide(
+    text: str = Query(..., description="Văn bản/câu tiếng Nhật cần hướng dẫn phát âm (ví dụ: 高校で英語を勉強します。)"),
+    lang: str = Query("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
+    settings: Settings = Depends(get_settings),
+) -> TextGuideResponse:
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+
+    try:
+        guide = await generate_text_reading_guide(text, settings, lang=lang)
+        return TextGuideResponse(
+            text=text,
+            lang=lang,
+            guide=guide,
+        )
+    except CoachingUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Text reading guide generation failed")
+        raise HTTPException(status_code=500, detail=f"Text guide failed: {e}") from e
+
+
+@router.post(
+    "/text-guide",
+    response_model=TextGuideResponse,
+    summary="Tạo hướng dẫn phát âm từng cụm từ cho văn bản tiếng Nhật bằng Ollama AI (POST)",
+)
+async def post_text_guide(
+    text: str = Form(..., description="Văn bản/câu tiếng Nhật cần hướng dẫn phát âm"),
+    lang: str = Form("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
+    settings: Settings = Depends(get_settings),
+) -> TextGuideResponse:
+    return await get_text_guide(text=text, lang=lang, settings=settings)
+
 
 

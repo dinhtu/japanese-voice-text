@@ -710,3 +710,118 @@ async def generate_category_guide(
 
     return category_name.strip(), content.strip('"`\n ')
 
+
+TEXT_READING_GUIDE_PROMPTS: dict[str, str] = {
+    "vi": (
+        "Bạn là một chuyên gia hướng dẫn phát âm tiếng Nhật cho người Việt Nam.\n"
+        "Nhiệm vụ của bạn là nhận vào một câu/đoạn văn tiếng Nhật (text) và tạo ra hướng dẫn phát âm chi tiết từng cụm từ bằng tiếng Việt.\n\n"
+        "QUY TẮC BẮT BUỘC:\n"
+        "1. Chia câu tiếng Nhật thành các cụm từ (cụm nghĩa/cụm từ vựng).\n"
+        "2. Với mỗi cụm từ, cung cấp:\n"
+        "   - Cụm từ tiếng Nhật + phiên âm Rōmaji trong ngoặc đơn.\n"
+        "   - Phiên âm tiếng Việt tương đương phiên âm tự nhiên (ví dụ: \"Cô-cô đê\", \"Ê-gô ô\", \"Ben-kyô shi-ma-sư\").\n"
+        "   - Ghi chú/lưu ý phát âm quan trọng (như trường âm kéo dài, âm ngắt 「っ」, âm mũi 「ん」, nuốt âm/âm gió 「su/shi」, phát âm trợ từ 「を」 = \"ô\", 「は」 = \"wa\", 「へ」 = \"e\", v.v.).\n"
+        "3. Trình bày rõ ràng, dễ đọc, ngắn gọn, chính xác.\n\n"
+        "VÍ DỤ ĐẦU RA MONG MUỐN:\n"
+        "Hướng dẫn phát âm từng cụm từ:\n"
+        "• 高校で (Kou-kou de): Đọc là \"Cô-cô đê\". (Lưu ý: \"Kou\" là âm trường, kéo dài giọng thành \"cô\").\n"
+        "• 英語を (Ei-go o): Đọc là \"Ê-gô ô\". (Lưu ý: \"Ei\" đọc kéo dài thành \"ê\", chữ \"ကို\" viết là \"wo\" nhưng phát âm thuần là \"ô\").\n"
+        "• 勉強します (Ben-kyou shi-masu): Đọc là \"Ben-kyô shi-ma-sư\". (Lưu ý: \"Kyou\" đọc kéo dài thành \"kyô\", âm \"su\" ở cuối thường phát âm nhẹ, gió)."
+    ),
+    "en": (
+        "You are a Japanese pronunciation teacher for English speakers.\n"
+        "Your task is to take a Japanese sentence (text) and generate a step-by-step pronunciation guide in English, phrase by phrase.\n\n"
+        "MANDATORY RULES:\n"
+        "1. Break the Japanese text into natural phrases/meaningful chunks.\n"
+        "2. For each chunk, provide:\n"
+        "   - Japanese phrase + Rōmaji in parentheses.\n"
+        "   - Approximate phonetic reading in English.\n"
+        "   - Important pronunciation notes (long vowels, glottal stops, particle pronunciations like を=o, は=wa, へ=e, silent vowels like 'su'/'shi', etc.).\n"
+        "3. Keep it clear, well-structured, and easy to follow."
+    ),
+    "jp": (
+        "あなたは日本語発音の指導専門家です。\n"
+        "入力された日本語テキスト（text）を文節・フレーズごとに区切り、発音と読み方のポイントを丁寧に解説してください。\n\n"
+        "必須ルール:\n"
+        "1. テキストを自然な文節・フレーズに分割する。\n"
+        "2. 各フレーズについて、ローマ字表記、読み方のコツ（長音、促音「っ」、撥音「ん」、助詞「を」「は」「へ」の読み、無声化など）を解説する。\n"
+        "3. 分かりやすく、丁寧に整理して出力すること。"
+    ),
+    "ko": (
+        "당신은 한국인을 위한 일본어 발음 지도 전문가입니다.\n"
+        "입력받은 일본어 문장(text)을 의미 단위 구절로 나누어 각 구절별 발음 가이드를 한국어로 상세히 작성하세요.\n\n"
+        "필수 규칙:\n"
+        "1. 일본어 문장을 구절 단위로 분할합니다.\n"
+        "2. 각 구절별로:\n"
+        "   - 일본어 구절 + 로마지 표기 (괄호 안)\n"
+        "   - 한글 발음 가이드\n"
+        "   - 주요 발음 주의사항 (장음, 촉음, 탁음, 조사 발음 を=오, は=와, 무성화 등)\n"
+        "3. 읽기 쉽고 명확하게 작성하세요."
+    ),
+    "tw": (
+        "您是一位日語發音教學專家。\n"
+        "請將給定的日文句子（text）拆解為意群/詞組，並用繁體中文提供詳細的逐句發音與朗讀指導。\n\n"
+        "必填規則：\n"
+        "1. 將日文句子拆分為自然的詞組。\n"
+        "2. 針對每個詞組提供：\n"
+        "   - 日文詞組 + 羅馬字（括號內）\n"
+        "   - 發音指導與標注\n"
+        "   - 重要發音注意事項（長音、促音、撥音、助詞發音如 を=o、は=wa、無聲化等）\n"
+        "3. 條理清晰，易於閱讀。"
+    ),
+}
+TEXT_READING_GUIDE_PROMPTS["ja"] = TEXT_READING_GUIDE_PROMPTS["jp"]
+TEXT_READING_GUIDE_PROMPTS["zh"] = TEXT_READING_GUIDE_PROMPTS["tw"]
+TEXT_READING_GUIDE_PROMPTS["zh-tw"] = TEXT_READING_GUIDE_PROMPTS["tw"]
+
+
+async def generate_text_reading_guide(
+    text: str,
+    settings: "Settings",
+    lang: str = "vi",
+) -> str:
+    """Generate phrase-by-phrase reading and pronunciation guide for `text` in `lang` via Ollama."""
+    key = (lang or "vi").strip().lower()
+    system_prompt = TEXT_READING_GUIDE_PROMPTS.get(key, TEXT_READING_GUIDE_PROMPTS["vi"])
+
+    try:
+        from ollama import AsyncClient, ResponseError
+    except ImportError as e:
+        raise CoachingUnavailableError(
+            "Thiếu package 'ollama'. Cài bằng: pip install ollama"
+        ) from e
+
+    client = AsyncClient(host=settings.ollama_host, timeout=settings.ollama_timeout_s)
+    try:
+        response = await client.chat(
+            model=settings.ollama_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Text: {text.strip()}"},
+            ],
+            think=False,
+            stream=False,
+            options={"temperature": 0.3, "num_predict": 500},
+        )
+    except ResponseError as e:
+        if e.status_code == 404:
+            raise CoachingUnavailableError(
+                f"Model '{settings.ollama_model}' chưa được tải về Ollama. "
+                f"Chạy: ollama pull {settings.ollama_model}"
+            ) from e
+        raise CoachingUnavailableError(f"Ollama báo lỗi: {e}") from e
+    except CoachingUnavailableError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise CoachingUnavailableError(
+            f"Không kết nối được tới Ollama tại {settings.ollama_host}. "
+            f"Đã chạy `ollama serve` chưa? (chi tiết: {e})"
+        ) from e
+
+    content = (response.get("message", {}) or {}).get("content", "").strip()
+    if not content:
+        raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
+
+    return content.strip('"`\n ')
+
+

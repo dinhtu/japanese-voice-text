@@ -217,3 +217,14 @@ def test_category_guide_optional_param_handled(client):
     response_no_param = client.get("/api/pronunciation/category-guide", params={"lang": "vi"})
     assert response_no_param.status_code in (503, 500)
 
+
+def test_text_guide_empty_text_rejected(client):
+    response = client.get("/api/pronunciation/text-guide", params={"text": "  ", "lang": "vi"})
+    assert response.status_code == 400
+
+
+def test_text_guide_returns_503_when_ollama_unavailable(client):
+    response = client.get("/api/pronunciation/text-guide", params={"text": "高校で英語を勉強します。", "lang": "vi"})
+    assert response.status_code in (503, 500)
+
+

@@ -243,3 +243,11 @@ def test_category_guide_prompts_support_requested_languages():
         assert lang in CATEGORY_GUIDE_PROMPTS
         assert len(CATEGORY_GUIDE_PROMPTS[lang]) > 0
 
+
+def test_text_reading_guide_prompts_support_languages():
+    from app.services.coaching import TEXT_READING_GUIDE_PROMPTS
+    for lang in ("vi", "en", "jp", "ja", "ko", "tw", "zh"):
+        assert lang in TEXT_READING_GUIDE_PROMPTS
+        assert len(TEXT_READING_GUIDE_PROMPTS[lang]) > 0
+
+

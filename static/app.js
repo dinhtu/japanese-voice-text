@@ -15,6 +15,8 @@ const PITCH_API_URL = document.body.dataset.pitchUrl
   || `${API_BASE}/api/pronunciation/pitch-accent`;
 const COACH_API_URL = document.body.dataset.coachUrl
   || `${API_BASE}/api/pronunciation/coach`;
+const TEXT_GUIDE_API_URL = document.body.dataset.textGuideUrl
+  || `${API_BASE}/api/pronunciation/text-guide`;
 const TTS_LANG = document.body.dataset.ttsLang || "ja-JP";
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
@@ -94,6 +96,11 @@ const el = {
   coachAssessment: $("coach-assessment"),
   coachSuggestionBlock: $("coach-suggestion-block"),
   coachSuggestion: $("coach-suggestion"),
+  guideBtn: $("guide-btn"),
+  guidePanel: $("guide-panel"),
+  guideLang: $("guide-lang"),
+  guideStatus: $("guide-status"),
+  guideContent: $("guide-content"),
 };
 
 const STATUS_LABEL = {
@@ -247,6 +254,7 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
   clearOutput();
   clearPlayback();
   resetPitch();
+  resetTextGuide();
   if (document.body.dataset.readingUrl && !reading) {
     fetch(`${document.body.dataset.readingUrl}?text=${encodeURIComponent(text)}`)
       .then((response) => response.ok ? response.json() : null)
@@ -947,6 +955,85 @@ function comparePitch() {
 }
 
 el.coachBtn.addEventListener("click", requestCoach);
+
+/* -------------------------------------------------------- Text reading guide */
+
+let textGuideLoadedFor = null;
+let textGuideLoadedLang = null;
+
+function resetTextGuide() {
+  textGuideLoadedFor = null;
+  textGuideLoadedLang = null;
+  if (el.guidePanel) el.guidePanel.hidden = true;
+  if (el.guideBtn) el.guideBtn.setAttribute("aria-expanded", "false");
+  if (el.guideStatus) {
+    el.guideStatus.hidden = true;
+    el.guideStatus.textContent = "";
+  }
+  if (el.guideContent) {
+    el.guideContent.hidden = true;
+    el.guideContent.textContent = "";
+  }
+}
+
+async function requestTextGuide() {
+  if (!el.guidePanel || !el.guideBtn) return;
+
+  el.guidePanel.hidden = false;
+  el.guideBtn.setAttribute("aria-expanded", "true");
+  el.guideContent.hidden = true;
+  el.guideStatus.hidden = false;
+  el.guideStatus.classList.remove("is-error");
+  el.guideStatus.textContent = "Đang tạo hướng dẫn đọc từ AI…";
+
+  const selectedLang = el.guideLang ? el.guideLang.value : "vi";
+
+  try {
+    const response = await fetch(`${TEXT_GUIDE_API_URL}?text=${encodeURIComponent(target.text)}&lang=${encodeURIComponent(selectedLang)}`);
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((body) => body.detail)
+        .catch(() => undefined);
+      throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+    }
+    const result = await response.json();
+    el.guideContent.textContent = result.guide;
+    el.guideContent.hidden = false;
+    el.guideStatus.hidden = true;
+    textGuideLoadedFor = target.text;
+    textGuideLoadedLang = selectedLang;
+  } catch (error) {
+    el.guideStatus.textContent =
+      error instanceof Error ? error.message : "Không tạo được hướng dẫn đọc. Hãy thử lại.";
+    el.guideStatus.classList.add("is-error");
+  }
+}
+
+if (el.guideBtn) {
+  el.guideBtn.addEventListener("click", () => {
+    const opening = el.guidePanel.hidden;
+    if (opening) {
+      if (textGuideLoadedFor !== target.text || textGuideLoadedLang !== (el.guideLang?.value || "vi")) {
+        requestTextGuide();
+      } else {
+        el.guidePanel.hidden = false;
+        el.guideBtn.setAttribute("aria-expanded", "true");
+      }
+    } else {
+      el.guidePanel.hidden = true;
+      el.guideBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+}
+
+if (el.guideLang) {
+  el.guideLang.addEventListener("change", () => {
+    if (!el.guidePanel.hidden) {
+      requestTextGuide();
+    }
+  });
+}
 
 el.pitchBtn.addEventListener("click", () => {
   const opening = el.pitch.hidden;
