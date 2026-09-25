@@ -549,14 +549,77 @@ CATEGORY_GUIDE_PROMPTS["zh"] = CATEGORY_GUIDE_PROMPTS["tw"]
 CATEGORY_GUIDE_PROMPTS["zh-tw"] = CATEGORY_GUIDE_PROMPTS["tw"]
 
 
+CATEGORY_AUTO_GUIDE_PROMPTS: dict[str, str] = {
+    "vi": (
+        "Bạn là một chuyên gia giáo dục phát âm tiếng Nhật. "
+        "Hãy tự chọn 1 chủ đề/quy tắc quan trọng về phát âm tiếng Nhật "
+        "(ví dụ: 促音「っ」, 長音「ー」, 撥音「ん」, 高低アクセント, 母音の無声化, 清音・濁音, 連濁, v.v.). "
+        "Trả về DUY NHẤT một đối tượng JSON với 2 khóa:\n"
+        "- \"category_name\": Tên chủ đề/quy tắc phát âm.\n"
+        "- \"guide\": Đúng 1 câu duy nhất bằng Tiếng Việt giải thích bản chất hoặc mẹo phát âm chủ đề đó súc tích, tự nhiên.\n"
+        "VÍ DỤ:\n"
+        "{\"category_name\": \"促音「っ」\", \"guide\": \"Âm ngắt — chỗ nghỉ một nhịp trước phụ âm.\"}"
+    ),
+    "en": (
+        "You are a Japanese pronunciation teaching expert. "
+        "Choose 1 important Japanese pronunciation category or rule "
+        "(e.g., 促音「っ」, 長音「ー」, 撥音「ん」, Pitch Accent, Vowel Devoicing, Voiced Sounds, etc.). "
+        "Reply with ONLY a single valid JSON object with 2 keys:\n"
+        "- \"category_name\": Name of the pronunciation category/rule.\n"
+        "- \"guide\": Exactly 1 concise sentence in English explaining the tip or rule.\n"
+        "EXAMPLE:\n"
+        "{\"category_name\": \"促音「っ」\", \"guide\": \"Glottal stop — a one-beat pause before the consonant.\"}"
+    ),
+    "jp": (
+        "あなたは日本語発音の教育専門家です。日本語の発音に関する重要なテーマ/ルール"
+        "（例: 促音「っ」、長音「ー」、撥音「ん」、高低アクセント、母音の無声化など）を1つ自由に選んでください。"
+        "以下の2つのキーを持つJSONオブジェクトのみを出力してください:\n"
+        "- \"category_name\": 発音のテーマ・ルール名\n"
+        "- \"guide\": その発音のコツやポイントを簡潔に解説した1文（日本語）"
+    ),
+    "ko": (
+        "당신은 일본어 발음 교육 전문가입니다. 일본어 발음의 중요한 주제/규칙"
+        "(예: 促音「っ」, 長音「ー」, 撥音「ん」, 피치 악센트, 모음의 무성화 등)을 1개 자유롭게 선택하세요."
+        "다음 2개의 키를 가진 JSON 객체만 반환하세요:\n"
+        "- \"category_name\": 발음 주제/규칙 이름\n"
+        "- \"guide\": 한국어로 작성된 1문장의 핵심 발음 팁/설명"
+    ),
+    "tw": (
+        "您是一位日語發音教學專家。請自由選擇 1 個日語發音的重要主題或規則"
+        "（例如：促音「っ」、長音「ー」、撥音「ん」、高低音調 Pitch Accent、母音無聲化等）。"
+        "僅返回包含以下 2 個鍵的 JSON 物件：\n"
+        "- \"category_name\"：發音主題或規則名稱\n"
+        "- \"guide\"：使用繁體中文編寫的 1 句簡明發音要點說明"
+    ),
+}
+CATEGORY_AUTO_GUIDE_PROMPTS["ja"] = CATEGORY_AUTO_GUIDE_PROMPTS["jp"]
+CATEGORY_AUTO_GUIDE_PROMPTS["zh"] = CATEGORY_AUTO_GUIDE_PROMPTS["tw"]
+CATEGORY_AUTO_GUIDE_PROMPTS["zh-tw"] = CATEGORY_AUTO_GUIDE_PROMPTS["tw"]
+
+
 async def generate_category_guide(
-    category_name: str,
+    category_name: str | None,
     settings: "Settings",
     lang: str = "vi",
-) -> str:
-    """Generate a concise 1-sentence learning guide for a given category_name in `lang` via Ollama."""
+) -> tuple[str, str]:
+    """Generate a learning guide for a given category_name (or AI auto-generated category if None) in `lang`."""
     key = (lang or "vi").strip().lower()
-    system_prompt = CATEGORY_GUIDE_PROMPTS.get(key, CATEGORY_GUIDE_PROMPTS["vi"])
+
+    if not category_name or not category_name.strip():
+        system_prompt = CATEGORY_AUTO_GUIDE_PROMPTS.get(key, CATEGORY_AUTO_GUIDE_PROMPTS["vi"])
+        user_content = "Tự chọn 1 chủ đề phát âm tiếng Nhật và đưa ra gợi ý học."
+        json_schema = {
+            "type": "object",
+            "properties": {
+                "category_name": {"type": "string"},
+                "guide": {"type": "string"},
+            },
+            "required": ["category_name", "guide"],
+        }
+    else:
+        system_prompt = CATEGORY_GUIDE_PROMPTS.get(key, CATEGORY_GUIDE_PROMPTS["vi"])
+        user_content = f"Category: {category_name.strip()}"
+        json_schema = None
 
     try:
         from ollama import AsyncClient, ResponseError
@@ -567,16 +630,20 @@ async def generate_category_guide(
 
     client = AsyncClient(host=settings.ollama_host, timeout=settings.ollama_timeout_s)
     try:
-        response = await client.chat(
-            model=settings.ollama_model,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": settings.ollama_model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Category: {category_name}"},
+                {"role": "user", "content": user_content},
             ],
-            think=False,
-            stream=False,
-            options={"temperature": 0.3, "num_predict": 150},
-        )
+            "think": False,
+            "stream": False,
+            "options": {"temperature": 0.7 if not category_name else 0.3, "num_predict": 200},
+        }
+        if json_schema:
+            kwargs["format"] = json_schema
+
+        response = await client.chat(**kwargs)
     except ResponseError as e:
         if e.status_code == 404:
             raise CoachingUnavailableError(
@@ -596,5 +663,15 @@ async def generate_category_guide(
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
 
-    return content.strip('"`\n ')
+    if json_schema:
+        try:
+            data = json.loads(content)
+            cat = str(data.get("category_name", "") or "").strip() or "Phát âm tiếng Nhật"
+            guide = str(data.get("guide", "") or "").strip()
+        except Exception:
+            cat = "Phát âm tiếng Nhật"
+            guide = content.strip('"`\n ')
+        return cat, guide
+
+    return category_name.strip(), content.strip('"`\n ')
 

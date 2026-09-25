@@ -388,21 +388,17 @@ async def coach_pronunciation(
 @router.get(
     "/category-guide",
     response_model=CategoryGuideResponse,
-    summary="Tạo 1 câu hướng dẫn học dựa trên tên category_name bằng Ollama AI",
+    summary="Tạo 1 câu hướng dẫn học tiếng Nhật (AI tự động gợi ý chủ đề nếu không truyền category_name)",
 )
 async def get_category_guide(
-    category_name: str = Query(..., description="Tên danh mục / chủ đề học (ví dụ: 促音「っ」)"),
+    category_name: str | None = Query(None, description="Tên danh mục / chủ đề học (tùy chọn, để trống AI sẽ tự tạo chủ đề)"),
     lang: str = Query("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
     settings: Settings = Depends(get_settings),
 ) -> CategoryGuideResponse:
-    category_name = category_name.strip()
-    if not category_name:
-        raise HTTPException(status_code=400, detail="Field 'category_name' must not be empty.")
-
     try:
-        guide = await generate_category_guide(category_name, settings, lang=lang)
+        cat_name, guide = await generate_category_guide(category_name, settings, lang=lang)
         return CategoryGuideResponse(
-            category_name=category_name,
+            category_name=cat_name,
             lang=lang,
             guide=guide,
         )
@@ -416,12 +412,13 @@ async def get_category_guide(
 @router.post(
     "/category-guide",
     response_model=CategoryGuideResponse,
-    summary="Tạo 1 câu hướng dẫn học dựa trên tên category_name bằng Ollama AI (POST)",
+    summary="Tạo 1 câu hướng dẫn học tiếng Nhật (AI tự động gợi ý chủ đề nếu không truyền category_name) (POST)",
 )
 async def post_category_guide(
-    category_name: str = Form(..., description="Tên danh mục / chủ đề học (ví dụ: 促音「っ」)"),
+    category_name: str | None = Form(None, description="Tên danh mục / chủ đề học (tùy chọn, để trống AI sẽ tự tạo chủ đề)"),
     lang: str = Form("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
     settings: Settings = Depends(get_settings),
 ) -> CategoryGuideResponse:
     return await get_category_guide(category_name=category_name, lang=lang, settings=settings)
+
 
