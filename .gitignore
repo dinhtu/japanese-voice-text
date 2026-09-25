@@ -42,3 +42,4 @@ eval_samples*.txt
 .pytest_cache/
 .agent-task.json
 uv.lock
+auto_publish.sh
