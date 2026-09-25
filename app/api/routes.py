@@ -35,13 +35,20 @@ from app.schemas.pitch_contour import PitchContourResponse
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-ALLOWED_SUFFIXES = {".wav"}
-# curl and some browsers send a generic binary type for .wav uploads.
+ALLOWED_SUFFIXES = {
+    ".wav", ".mp3", ".ogg", ".opus", ".flac", ".m4a", ".aac",
+    ".webm", ".weba", ".wma", ".aiff", ".aif", ".mp4",
+}
+# curl and some browsers send a generic binary type or audio/video mime types.
 ALLOWED_CONTENT_TYPES = {
     "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave",
+    "audio/mpeg", "audio/mp3", "audio/x-mp3", "audio/x-mpeg",
+    "audio/ogg", "audio/vorbis", "audio/opus", "audio/flac", "audio/x-flac",
+    "audio/mp4", "audio/aac", "audio/x-m4a", "audio/m4a", "audio/x-aac",
+    "audio/webm", "audio/weba", "audio/x-ms-wma", "audio/aiff", "audio/x-aiff",
+    "video/webm", "video/mp4",
     "application/octet-stream", "binary/octet-stream", "",
 }
-RIFF_MAGIC = b"RIFF"
 
 
 def get_use_case(
@@ -50,17 +57,20 @@ def get_use_case(
     return EvaluatePronunciationUseCase(asr_service)
 
 
-def _validate_upload(audio: UploadFile) -> None:
+def _validate_upload(audio: UploadFile) -> str:
+    """Validate uploaded audio and return its file extension (defaulting to .wav)."""
     suffix = Path(audio.filename or "").suffix.lower()
-    if suffix not in ALLOWED_SUFFIXES:
-        raise HTTPException(status_code=400, detail="Only .wav files are accepted.")
-    # The declared type is only advisory — the RIFF magic check below is what
-    # actually proves the payload is a WAV.
+    if suffix and suffix not in ALLOWED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file extension: {suffix}. Supported formats: {', '.join(sorted(ALLOWED_SUFFIXES))}",
+        )
     ctype = (audio.content_type or "").lower().split(";")[0].strip()
-    if ctype not in ALLOWED_CONTENT_TYPES and not ctype.startswith("audio/"):
+    if ctype and not (ctype.startswith("audio/") or ctype.startswith("video/") or ctype in ALLOWED_CONTENT_TYPES):
         raise HTTPException(
             status_code=400, detail=f"Unsupported content type: {audio.content_type}"
         )
+    return suffix if suffix in ALLOWED_SUFFIXES else ".wav"
 
 
 @router.post(
@@ -70,14 +80,14 @@ def _validate_upload(audio: UploadFile) -> None:
 )
 async def evaluate_pronunciation(
     text: str = Form(..., description="Japanese target text (kanji or kana)"),
-    audio: UploadFile = File(..., description="WAV recording of the user reading it"),
+    audio: UploadFile = File(..., description="Audio recording of the user reading it"),
     use_case: EvaluatePronunciationUseCase = Depends(get_use_case),
     settings: Settings = Depends(get_settings),
 ) -> EvaluateResponse:
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
 
     content = await audio.read()
     if not content:
@@ -87,11 +97,9 @@ async def evaluate_pronunciation(
             status_code=400,
             detail=f"Audio exceeds the {settings.max_audio_bytes // (1024 * 1024)}MB limit.",
         )
-    if not content.startswith(RIFF_MAGIC):
-        raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
 
     # Temporary file, removed as soon as inference finishes.
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="pronunciation_")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="pronunciation_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
@@ -178,7 +186,7 @@ async def get_pitch_contour(
     if not text:
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
 
     content = await audio.read()
     if not content:
@@ -188,8 +196,6 @@ async def get_pitch_contour(
             status_code=400,
             detail=f"Audio exceeds the {settings.max_audio_bytes // (1024 * 1024)}MB limit.",
         )
-    if not content.startswith(RIFF_MAGIC):
-        raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
 
     try:
         moras = pitch_accent_pattern(text)
@@ -199,7 +205,7 @@ async def get_pitch_contour(
 
     target_hiragana = to_hiragana(text)
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="pitch_contour_")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="pitch_contour_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
@@ -264,7 +270,7 @@ async def coach_pronunciation(
     text: str = Form(
         ..., description="Same target text sent to /evaluate, so the facts line up"
     ),
-    audio: UploadFile = File(..., description="WAV recording to analyze"),
+    audio: UploadFile = File(..., description="Audio recording to analyze"),
     lang: str = Form(
         "vi",
         description=f"Comment language. One of: {', '.join(SUPPORTED_LANGUAGES)}",
@@ -283,7 +289,7 @@ async def coach_pronunciation(
             detail=f"Unsupported lang '{lang}'. Supported: {', '.join(SUPPORTED_LANGUAGES)}",
         )
 
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
 
     content = await audio.read()
     if not content:
@@ -293,8 +299,6 @@ async def coach_pronunciation(
             status_code=400,
             detail=f"Audio exceeds the {settings.max_audio_bytes // (1024 * 1024)}MB limit.",
         )
-    if not content.startswith(RIFF_MAGIC):
-        raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
 
     try:
         moras = pitch_accent_pattern(text)
@@ -308,7 +312,7 @@ async def coach_pronunciation(
             detail="Target text contains no pronounceable Japanese content.",
         )
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="coach_")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="coach_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)

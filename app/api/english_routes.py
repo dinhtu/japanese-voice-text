@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
-from app.api.routes import RIFF_MAGIC, _validate_upload
+from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse
@@ -54,16 +54,14 @@ async def evaluate_english(
 ) -> EvaluateResponse:
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
     content = await audio.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
     if len(content) > settings.max_audio_bytes:
         raise HTTPException(status_code=400, detail="Audio exceeds the upload limit.")
-    if not content.startswith(RIFF_MAGIC):
-        raise HTTPException(status_code=400, detail="File is not a valid WAV (RIFF) file.")
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="en_pronunciation_")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="en_pronunciation_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)
@@ -112,13 +110,15 @@ async def coach_english(
     lang = (lang or "vi").strip().lower()
     if lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported lang '{lang}'.")
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
     content = await audio.read()
-    if not content or not content.startswith(RIFF_MAGIC):
-        raise HTTPException(status_code=400, detail="Need a non-empty WAV file.")
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+    if len(content) > settings.max_audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio exceeds the upload limit.")
 
     words = word_pitch_pattern(text)
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="en_coach_")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="en_coach_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)

@@ -159,15 +159,22 @@ def test_generic_binary_content_type_is_accepted(client):
     assert response.status_code == 200
 
 
-def test_non_wav_extension_is_rejected(client):
-    response = post(client, filename="test.mp3", content_type="audio/mpeg")
+def test_mp3_and_other_audio_extensions_are_accepted(client):
+    """MP3, FLAC, OGG, M4A, etc. are accepted by the API."""
+    for ext, ctype in [("mp3", "audio/mpeg"), ("flac", "audio/flac"), ("m4a", "audio/mp4")]:
+        response = post(client, filename=f"test.{ext}", content_type=ctype)
+        assert response.status_code == 200
+
+
+def test_unsupported_extension_is_rejected(client):
+    response = post(client, filename="test.xyz", content_type="application/xyz")
     assert response.status_code == 400
-    assert "wav" in response.json()["detail"].lower()
+    assert "unsupported" in response.json()["detail"].lower()
 
 
-def test_non_riff_content_is_rejected(client):
+def test_invalid_audio_content_is_handled(client):
     response = post(client, content=b"this is not audio at all")
-    assert response.status_code == 400
+    assert response.status_code in (400, 422)
 
 
 def test_empty_file_is_rejected(client):

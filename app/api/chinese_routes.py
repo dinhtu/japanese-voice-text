@@ -4,7 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from app.api.routes import RIFF_MAGIC, _validate_upload
+from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
@@ -36,11 +36,13 @@ async def evaluate_chinese(text: str = Form(...), audio: UploadFile = File(...),
     text = text.strip()
     if not normalize_chinese(text):
         raise HTTPException(400, "Field 'text' must contain Chinese characters.")
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
     content = await audio.read()
-    if not content or len(content) > settings.max_audio_bytes or not content.startswith(RIFF_MAGIC):
-        raise HTTPException(400, "Need a non-empty WAV file within the upload limit.")
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="zh_pronunciation_")
+    if not content:
+        raise HTTPException(400, "Uploaded audio file is empty.")
+    if len(content) > settings.max_audio_bytes:
+        raise HTTPException(400, "Audio exceeds the upload limit.")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="zh_pronunciation_")
     try:
         with os.fdopen(fd, "wb") as f: f.write(content)
         with gpu_session():
@@ -70,11 +72,13 @@ async def coach_chinese(
     lang = lang.strip().lower()
     if lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(400, f"Unsupported lang '{lang}'.")
-    _validate_upload(audio)
+    suffix = _validate_upload(audio)
     content = await audio.read()
-    if not content or len(content) > settings.max_audio_bytes or not content.startswith(RIFF_MAGIC):
-        raise HTTPException(400, "Need a non-empty WAV file within the upload limit.")
-    fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="zh_coach_")
+    if not content:
+        raise HTTPException(400, "Uploaded audio file is empty.")
+    if len(content) > settings.max_audio_bytes:
+        raise HTTPException(400, "Audio exceeds the upload limit.")
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="zh_coach_")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content)

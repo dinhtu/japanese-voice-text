@@ -25,8 +25,11 @@ const MAX_DURATION_SECONDS = 30;
 const MAX_UPLOAD_SECONDS = 120;
 /** Rejected before decoding, so a huge file never reaches the AudioContext. */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-/** Uploads are .wav only for now, to match what the API accepts. */
-const UPLOAD_EXTENSION = ".wav";
+/** Supported audio upload extensions. */
+const ALLOWED_UPLOAD_EXTENSIONS = [
+  ".wav", ".mp3", ".ogg", ".opus", ".flac", ".m4a", ".aac",
+  ".webm", ".weba", ".wma", ".aiff", ".aif", ".mp4"
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -404,9 +407,10 @@ function showPlayback(wav) {
 async function submitFile(file) {
   if (!file || status !== "idle") return;
 
+  const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
   // A dropped file bypasses the input's accept filter, so check it here too.
-  if (!file.name.toLowerCase().endsWith(UPLOAD_EXTENSION)) {
-    showError(`Chỉ nhận file ${UPLOAD_EXTENSION} — file bạn chọn là "${file.name}".`);
+  if (file.name.includes(".") && !ALLOWED_UPLOAD_EXTENSIONS.includes(ext) && !file.type.startsWith("audio/")) {
+    showError(`Định dạng file "${file.name}" không được hỗ trợ. Hãy chọn file âm thanh (WAV, MP3, FLAC, OGG, M4A, WebM...).`);
     return;
   }
 
@@ -431,7 +435,7 @@ async function submitFile(file) {
     wav = encodeWav(await toMonoPcm(decoded), TARGET_SAMPLE_RATE);
   } catch {
     setStatus("idle");
-    showError("Không đọc được file WAV này. Hãy thử một file khác.");
+    showError("Không đọc được file âm thanh này. Hãy thử một file khác.");
     return;
   }
 
@@ -1085,5 +1089,5 @@ window.addEventListener("pagehide", releaseResources);
 
 el.timerMax.textContent = `tối đa ${formatDuration(MAX_DURATION_SECONDS)}`;
 el.uploadHint.textContent =
-  `Chỉ nhận file ${UPLOAD_EXTENSION}, tối đa ${formatDuration(MAX_UPLOAD_SECONDS)} — kéo thả vào đây cũng được`;
+  `Hỗ trợ WAV, MP3, FLAC, OGG, M4A, WebM..., tối đa ${formatDuration(MAX_UPLOAD_SECONDS)} — kéo thả vào đây cũng được`;
 setStatus("idle");
