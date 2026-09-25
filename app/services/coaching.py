@@ -597,17 +597,48 @@ CATEGORY_AUTO_GUIDE_PROMPTS["zh"] = CATEGORY_AUTO_GUIDE_PROMPTS["tw"]
 CATEGORY_AUTO_GUIDE_PROMPTS["zh-tw"] = CATEGORY_AUTO_GUIDE_PROMPTS["tw"]
 
 
+JAPANESE_PRONUNCIATION_TOPIC_POOL: tuple[str, ...] = (
+    "促音「っ」",
+    "長音「ー」",
+    "撥音「ん」",
+    "高低アクセント (Pitch Accent)",
+    "母音の無声化 (です/ます)",
+    "清音と濁音 (か vs が / た vs だ)",
+    "半濁音 (ぱ行音)",
+    "拗音 (きゃ・きゅ・きょ)",
+    "連濁 (れんだく)",
+    "鼻濁音 (ガ行鼻濁音)",
+    "文末のイントネーション (疑問文・語調)",
+    "助詞のアクセント (が/に/を/は)",
+    "複合名詞のアクセント",
+    "拍 (Mora) のリズムと等時性",
+    "長短音の対比 (おじさん vs おじいさん)",
+    "「ん」の発音変化 (m, n, ŋ, N)",
+    "息のコントロールと発声 (呼吸)",
+    "外来語・カタカナ語のアクセント",
+    "二重母音・母音の連続",
+    "閉鎖音と摩擦音の発音",
+)
+
+
 async def generate_category_guide(
     category_name: str | None,
     settings: "Settings",
     lang: str = "vi",
 ) -> tuple[str, str]:
     """Generate a learning guide for a given category_name (or AI auto-generated category if None) in `lang`."""
+    import random
+
     key = (lang or "vi").strip().lower()
 
     if not category_name or not category_name.strip():
         system_prompt = CATEGORY_AUTO_GUIDE_PROMPTS.get(key, CATEGORY_AUTO_GUIDE_PROMPTS["vi"])
-        user_content = "Tự chọn 1 chủ đề phát âm tiếng Nhật và đưa ra gợi ý học."
+        suggested_topic = random.choice(JAPANESE_PRONUNCIATION_TOPIC_POOL)
+        rand_id = random.randint(100, 999)
+        user_content = (
+            f"Hãy tự chọn 1 chủ đề phát âm tiếng Nhật sáng tạo. Gợi ý tham khảo: {suggested_topic} (mã: {rand_id}). "
+            "Trả về JSON gồm category_name và guide súc tích."
+        )
         json_schema = {
             "type": "object",
             "properties": {
@@ -638,7 +669,11 @@ async def generate_category_guide(
             ],
             "think": False,
             "stream": False,
-            "options": {"temperature": 0.7 if not category_name else 0.3, "num_predict": 200},
+            "options": {
+                "temperature": 0.9 if not category_name else 0.3,
+                "top_p": 0.95,
+                "num_predict": 200,
+            },
         }
         if json_schema:
             kwargs["format"] = json_schema
