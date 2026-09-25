@@ -13,6 +13,7 @@ from app.services.coaching import (
     SUPPORTED_LANGUAGES,
     CoachingUnavailableError,
     build_facts,
+    generate_category_guide,
     generate_comment,
 )
 from app.services.mora_timing import resolve_mora_windows
@@ -27,7 +28,7 @@ from app.services.use_cases import (
 )
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
-from app.schemas.coaching import CoachResponse
+from app.schemas.coaching import CategoryGuideResponse, CoachResponse
 from app.schemas.pronunciation import EvaluateResponse
 from app.schemas.pitch_accent import PitchAccentResponse
 from app.schemas.pitch_contour import PitchContourResponse
@@ -382,3 +383,45 @@ async def coach_pronunciation(
         raise HTTPException(status_code=500, detail=f"Coaching failed: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@router.get(
+    "/category-guide",
+    response_model=CategoryGuideResponse,
+    summary="Tạo 1 câu hướng dẫn học dựa trên tên category_name bằng Ollama AI",
+)
+async def get_category_guide(
+    category_name: str = Query(..., description="Tên danh mục / chủ đề học (ví dụ: 促音「っ」)"),
+    lang: str = Query("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
+    settings: Settings = Depends(get_settings),
+) -> CategoryGuideResponse:
+    category_name = category_name.strip()
+    if not category_name:
+        raise HTTPException(status_code=400, detail="Field 'category_name' must not be empty.")
+
+    try:
+        guide = await generate_category_guide(category_name, settings, lang=lang)
+        return CategoryGuideResponse(
+            category_name=category_name,
+            lang=lang,
+            guide=guide,
+        )
+    except CoachingUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Category guide generation failed")
+        raise HTTPException(status_code=500, detail=f"Category guide failed: {e}") from e
+
+
+@router.post(
+    "/category-guide",
+    response_model=CategoryGuideResponse,
+    summary="Tạo 1 câu hướng dẫn học dựa trên tên category_name bằng Ollama AI (POST)",
+)
+async def post_category_guide(
+    category_name: str = Form(..., description="Tên danh mục / chủ đề học (ví dụ: 促音「っ」)"),
+    lang: str = Form("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
+    settings: Settings = Depends(get_settings),
+) -> CategoryGuideResponse:
+    return await get_category_guide(category_name=category_name, lang=lang, settings=settings)
+

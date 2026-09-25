@@ -494,3 +494,107 @@ async def generate_comment(
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
     return _parse_comment(content)
+
+
+CATEGORY_GUIDE_PROMPTS: dict[str, str] = {
+    "vi": (
+        "Bạn là một trợ lý giáo dục ngôn ngữ. Dựa vào tên chủ đề/thể loại bài học (category_name), "
+        "hãy giải thích ngắn gọn bản chất và cách phát âm hoặc ghi nhớ của chủ đề này cho người học.\n"
+        "QUY TẮC BẮT BUỘC:\n"
+        "- Trả về DUY NHẤT 1 câu duy nhất (ngắn gọn, súc tích, tự nhiên).\n"
+        "- Viết hoàn toàn bằng Tiếng Việt.\n"
+        "- Không dùng bullet point, không viết định dạng markdown hay tiêu đề, không giải thích dài dòng.\n"
+        "VÍ DỤ:\n"
+        "Đầu vào: 促音「っ」\n"
+        "Đầu ra: Âm ngắt — chỗ nghỉ một nhịp trước phụ âm."
+    ),
+    "en": (
+        "You are a language learning education assistant. Given a learning category/topic name (category_name), "
+        "write EXACTLY ONE concise, natural sentence instructing or explaining how to pronounce or remember it.\n"
+        "MANDATORY RULES:\n"
+        "- Return EXACTLY ONE sentence (concise and natural).\n"
+        "- Write entirely in English.\n"
+        "- Do not use bullet points, markdown formatting, or titles.\n"
+        "EXAMPLE:\n"
+        "Input: 促音「っ」\n"
+        "Output: Glottal stop — a one-beat pause before the consonant."
+    ),
+    "jp": (
+        "あなたは言語学習の教育アシスタントです。学習カテゴリ名（category_name）に基づき、"
+        "学習者が発音や覚え方を理解できるような説明・指導文を【1文のみ】で作成してください。\n"
+        "必須ルール:\n"
+        "- 必ず1文のみで出力してください（簡潔かつ自然）。\n"
+        "- 全て日本語で記述してください。\n"
+        "- マークダウン、箇条書き、タイトルなどは一切含めないでください。"
+    ),
+    "ko": (
+        "당신은 언어 학습 교육 보조입니다. 학습 카테고리 이름(category_name)을 바탕으로 "
+        "학습자가 발음이나 기억법을 이해할 수 있는 안내/설명 문장을 【딱 1문장】으로 작성하세요.\n"
+        "필수 규칙:\n"
+        "- 정확히 단 1문장만 반환하세요.\n"
+        "- 한국어로만 작성하세요.\n"
+        "- 마크다운, 불렛포인트, 제목 등을 일체 포함하지 마세요."
+    ),
+    "tw": (
+        "您是一位語言學習教學助手。請根據學習分類名稱（category_name），"
+        "編寫【恰好一句】簡明扼要的說明或學習指導，幫助學習者理解發音或記憶要點。\n"
+        "必填規則：\n"
+        "- 必須僅返回 1 個句子（簡潔自然）。\n"
+        "- 完全使用繁體中文編寫。\n"
+        "- 請勿使用 Markdown 格式、項目符號或標題。"
+    ),
+}
+CATEGORY_GUIDE_PROMPTS["ja"] = CATEGORY_GUIDE_PROMPTS["jp"]
+CATEGORY_GUIDE_PROMPTS["zh"] = CATEGORY_GUIDE_PROMPTS["tw"]
+CATEGORY_GUIDE_PROMPTS["zh-tw"] = CATEGORY_GUIDE_PROMPTS["tw"]
+
+
+async def generate_category_guide(
+    category_name: str,
+    settings: "Settings",
+    lang: str = "vi",
+) -> str:
+    """Generate a concise 1-sentence learning guide for a given category_name in `lang` via Ollama."""
+    key = (lang or "vi").strip().lower()
+    system_prompt = CATEGORY_GUIDE_PROMPTS.get(key, CATEGORY_GUIDE_PROMPTS["vi"])
+
+    try:
+        from ollama import AsyncClient, ResponseError
+    except ImportError as e:
+        raise CoachingUnavailableError(
+            "Thiếu package 'ollama'. Cài bằng: pip install ollama"
+        ) from e
+
+    client = AsyncClient(host=settings.ollama_host, timeout=settings.ollama_timeout_s)
+    try:
+        response = await client.chat(
+            model=settings.ollama_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Category: {category_name}"},
+            ],
+            think=False,
+            stream=False,
+            options={"temperature": 0.3, "num_predict": 150},
+        )
+    except ResponseError as e:
+        if e.status_code == 404:
+            raise CoachingUnavailableError(
+                f"Model '{settings.ollama_model}' chưa được tải về Ollama. "
+                f"Chạy: ollama pull {settings.ollama_model}"
+            ) from e
+        raise CoachingUnavailableError(f"Ollama báo lỗi: {e}") from e
+    except CoachingUnavailableError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise CoachingUnavailableError(
+            f"Không kết nối được tới Ollama tại {settings.ollama_host}. "
+            f"Đã chạy `ollama serve` chưa? (chi tiết: {e})"
+        ) from e
+
+    content = (response.get("message", {}) or {}).get("content", "").strip()
+    if not content:
+        raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
+
+    return content.strip('"`\n ')
+

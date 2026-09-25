@@ -235,3 +235,11 @@ def test_comment_json_schema_requires_both_keys():
     assert COMMENT_JSON_SCHEMA["type"] == "object"
     assert set(COMMENT_JSON_SCHEMA["required"]) == {"assessment", "suggestion"}
     assert set(COMMENT_JSON_SCHEMA["properties"]) == {"assessment", "suggestion"}
+
+
+def test_category_guide_prompts_support_requested_languages():
+    from app.services.coaching import CATEGORY_GUIDE_PROMPTS
+    for lang in ("vi", "en", "jp", "ja", "ko", "tw", "zh"):
+        assert lang in CATEGORY_GUIDE_PROMPTS
+        assert len(CATEGORY_GUIDE_PROMPTS[lang]) > 0
+

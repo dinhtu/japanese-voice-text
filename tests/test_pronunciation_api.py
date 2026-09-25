@@ -207,3 +207,15 @@ def test_static_assets_are_served(client):
         response = client.get(path)
         assert response.status_code == 200, path
         assert content_type in response.headers["content-type"]
+
+
+def test_category_guide_empty_param_rejected(client):
+    response = client.get("/api/pronunciation/category-guide", params={"category_name": "  "})
+    assert response.status_code == 400
+
+
+def test_category_guide_returns_503_when_ollama_unavailable(client):
+    # Without running Ollama, calling /category-guide returns 503 Service Unavailable
+    response = client.get("/api/pronunciation/category-guide", params={"category_name": "促音「っ」", "lang": "vi"})
+    assert response.status_code in (503, 500)
+
