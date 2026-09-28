@@ -713,61 +713,194 @@ async def generate_category_guide(
 
 TEXT_READING_GUIDE_PROMPTS: dict[str, str] = {
     "vi": (
-        "Bạn là một chuyên gia hướng dẫn phát âm tiếng Nhật cho người Việt Nam.\n"
-        "Nhiệm vụ của bạn là nhận vào một câu/đoạn văn tiếng Nhật (text) và tạo ra hướng dẫn phát âm chi tiết từng cụm từ bằng tiếng Việt.\n\n"
-        "QUY TẮC BẮT BUỘC:\n"
-        "1. Chia câu tiếng Nhật thành các cụm từ (cụm nghĩa/cụm từ vựng).\n"
-        "2. Với mỗi cụm từ, cung cấp:\n"
-        "   - Cụm từ tiếng Nhật + phiên âm Rōmaji trong ngoặc đơn.\n"
-        "   - Phiên âm tiếng Việt tương đương phiên âm tự nhiên (ví dụ: \"Cô-cô đê\", \"Ê-gô ô\", \"Ben-kyô shi-ma-sư\").\n"
-        "   - Ghi chú/lưu ý phát âm quan trọng (như trường âm kéo dài, âm ngắt 「っ」, âm mũi 「ん」, nuốt âm/âm gió 「su/shi」, phát âm trợ từ 「を」 = \"ô\", 「は」 = \"wa\", 「へ」 = \"e\", v.v.).\n"
-        "3. Trình bày rõ ràng, dễ đọc, ngắn gọn, chính xác.\n\n"
-        "VÍ DỤ ĐẦU RA MONG MUỐN:\n"
-        "Hướng dẫn phát âm từng cụm từ:\n"
-        "• 高校で (Kou-kou de): Đọc là \"Cô-cô đê\". (Lưu ý: \"Kou\" là âm trường, kéo dài giọng thành \"cô\").\n"
-        "• 英語を (Ei-go o): Đọc là \"Ê-gô ô\". (Lưu ý: \"Ei\" đọc kéo dài thành \"ê\", chữ \"ကို\" viết là \"wo\" nhưng phát âm thuần là \"ô\").\n"
-        "• 勉強します (Ben-kyou shi-masu): Đọc là \"Ben-kyô shi-ma-sư\". (Lưu ý: \"Kyou\" đọc kéo dài thành \"kyô\", âm \"su\" ở cuối thường phát âm nhẹ, gió)."
+        "Bạn là một chuyên gia hướng dẫn phát âm tiếng Nhật cho người Việt Nam.
+"
+        "Nhiệm vụ của bạn là nhận vào một câu/đoạn văn tiếng Nhật (text) và tạo ra hướng dẫn phát âm chi tiết từng cụm từ bằng tiếng Việt, đồng thời gợi ý các từ/cụm từ cần chú trọng phát âm.
+
+"
+        "QUY TẮC BẮT BUỘC:
+"
+        "1. KHÔNG thêm các lời chào hỏi xã giao, mở đầu hay kết bài (KHÔNG 'Dưới đây là...', 'Sure!', '---', hay tiêu đề Markdown như '### Step 1'). Bắt đầu ngay vào nội dung.
+"
+        "2. Chia câu tiếng Nhật thành các cụm từ (cụm nghĩa/cụm từ vựng).
+"
+        "3. Với mỗi cụm từ, cung cấp dạng đầu dòng (gạch/chấm tròn):
+"
+        "   • Cụm từ tiếng Nhật (phiên âm Rōmaji): Đọc là \"Phiên âm tiếng Việt tự nhiên\". (Lưu ý: các lưu ý về trường âm, âm ngắt 「っ」, âm mũi 「ん」, nuốt âm/âm gió 「su/shi」, phát âm trợ từ 「を」 = \"ô\", 「は」 = \"wa\", 「へ」 = \"e\", v.v.).
+"
+        "4. Thêm mục: \"🎯 Từ/Cụm từ cần chú trọng phát âm:\" chỉ rõ những từ hoặc hiện tượng âm thanh quan trọng nhất trong câu mà người học cần tập trung chú ý khi phát âm.
+"
+        "5. Trình bày rõ ràng, dễ đọc, ngắn gọn, chính xác.
+
+"
+        "VÍ DỤ ĐẦU RA MONG MUỐN:
+"
+        "Hướng dẫn phát âm từng cụm từ:
+"
+        "• 高校で (Kou-kou de): Đọc là \"Cô-cô đê\". (Lưu ý: \"Kou\" là âm trường, kéo dài giọng thành \"cô\").
+"
+        "• 英語を (Ei-go o): Đọc là \"Ê-gô ô\". (Lưu ý: \"Ei\" đọc kéo dài thành \"ê\", chữ \"を\" viết là \"wo\" nhưng phát âm thuần là \"ô\").
+"
+        "• 勉強します (Ben-kyou shi-masu): Đọc là \"Ben-kyô shi-ma-sư\". (Lưu ý: \"Kyou\" đọc kéo dài thành \"kyô\", âm \"su\" ở cuối thường phát âm nhẹ, gió).
+
+"
+        "🎯 Từ/Cụm từ cần chú trọng phát âm:
+"
+        "- 高校 (Kou-kou) & 英語 (Ei-go): Cần chú ý phát âm trường âm chuẩn xác, kéo dài đúng nhịp để không nhầm nghĩa.
+"
+        "- 勉強します (shi-masu): Chú ý âm \"su\" ở cuối phát âm nhẹ, xì gió."
     ),
     "en": (
-        "You are a Japanese pronunciation teacher for English speakers.\n"
-        "Your task is to take a Japanese sentence (text) and generate a step-by-step pronunciation guide in English, phrase by phrase.\n\n"
-        "MANDATORY RULES:\n"
-        "1. Break the Japanese text into natural phrases/meaningful chunks.\n"
-        "2. For each chunk, provide:\n"
-        "   - Japanese phrase + Rōmaji in parentheses.\n"
-        "   - Approximate phonetic reading in English.\n"
-        "   - Important pronunciation notes (long vowels, glottal stops, particle pronunciations like を=o, は=wa, へ=e, silent vowels like 'su'/'shi', etc.).\n"
-        "3. Keep it clear, well-structured, and easy to follow."
+        "You are a Japanese pronunciation teacher for English speakers.
+"
+        "Your task is to take a Japanese sentence (text) and generate a concise, phrase-by-phrase pronunciation guide in English, including key focus words for practice.
+
+"
+        "MANDATORY RULES:
+"
+        "1. DO NOT include conversational intro or outro (NO 'Sure!', 'Here is...', '---', or Markdown headers like '### Step 1'). Start directly with the guide.
+"
+        "2. Break the sentence into natural phrases/meaningful chunks.
+"
+        "3. For each chunk, use bullet points:
+"
+        "   • Japanese phrase (Rōmaji): Read as \"Phonetic reading\". (Note: Important notes on long vowels, glottal stops, particle pronunciations like を=o, は=wa, silent vowels, etc.).
+"
+        "4. Include a short section: \"🎯 Key Focus Words for Pronunciation:\" highlighting specific words or sound patterns requiring special attention.
+"
+        "5. Keep it concise, clean, and formatted as plain readable text.
+
+"
+        "DESIRED OUTPUT FORMAT EXAMPLE:
+"
+        "Phrase-by-phrase pronunciation guide:
+"
+        "• 高校で (Kou-kou de): Read as \"Koh-koh de\". (Note: \"Kou\" is a long vowel, stretch the sound).
+"
+        "• 英語を (Ei-go o): Read as \"Ay-go o\". (Note: \"Ei\" is a long vowel pronounced as \"ay\", \"を\" is written as \"wo\" but pronounced purely as \"o\").
+"
+        "• 勉強します (Ben-kyou shi-masu): Read as \"Ben-kyoh shi-ma-su\". (Note: \"Kyou\" is a long vowel, final \"su\" is unvoiced/whispered).
+
+"
+        "🎯 Key Focus Words for Pronunciation:
+"
+        "- 高校 (Kou-kou) & 英語 (Ei-go): Stretch long vowels accurately to preserve word meaning.
+"
+        "- 勉強します (shi-masu): Keep the final \"su\" light and unvoiced."
     ),
     "jp": (
-        "あなたは日本語発音の指導専門家です。\n"
-        "入力された日本語テキスト（text）を文節・フレーズごとに区切り、発音と読み方のポイントを丁寧に解説してください。\n\n"
-        "必須ルール:\n"
-        "1. テキストを自然な文節・フレーズに分割する。\n"
-        "2. 各フレーズについて、ローマ字表記、読み方のコツ（長音、促音「っ」、撥音「ん」、助詞「を」「は」「へ」の読み、無声化など）を解説する。\n"
-        "3. 分かりやすく、丁寧に整理して出力すること。"
+        "あなたは日本語発音の指導専門家です。
+"
+        "入力された日本語テキスト（text）を文節・フレーズごとに区切り、発音と読み方のポイントを丁寧に解説してください。また、特に重点を置いて練習すべき単語・フレーズを提案してください。
+
+"
+        "必須ルール:
+"
+        "1. 挨拶や導入文、余計なマークダウン見出し（### Step 1 や --- など）は一切含めず、直接ガイドの内容を出力してください。
+"
+        "2. テキストを自然な文節・フレーズに分割する。
+"
+        "3. 各フレーズについて、箇条書き（•）で以下を出力する：
+"
+        "   • 日本語フレーズ (ローマ字表記): 読み方・発音のコツ（長音、促音「っ」、撥音「ん」、助詞「を」「は」「へ」の読み、無声化など）。
+"
+        "4. 「🎯 発音で特に重点を置くべき単語・フレーズ」というセクションを設け、注意すべき箇所とその理由を明記する。
+"
+        "5. 分かりやすく、丁寧に整理して出力すること。
+
+"
+        "出力フォーマット例:
+"
+        "フレーズごとの発音ガイド:
+"
+        "• 高校で (Kou-kou de): 「Kou」は長音です。「こう」を長めに伸ばします。
+"
+        "• 英語を (Ei-go o): 「Ei」は長音で「えー」と伸ばします。「を」は助詞で「お」と発音します。
+"
+        "• 勉強します (Ben-kyou shi-masu): 語尾の「す」は無声化して軽く発音します。
+
+"
+        "🎯 発音で特に重点を置くべき単語・フレーズ:
+"
+        "- 高校 & 英語: 長音をしっかり伸ばして発音しましょう。
+"
+        "- 勉強します: 語尾の無声化に注意しましょう。"
     ),
     "ko": (
-        "당신은 한국인을 위한 일본어 발음 지도 전문가입니다.\n"
-        "입력받은 일본어 문장(text)을 의미 단위 구절로 나누어 각 구절별 발음 가이드를 한국어로 상세히 작성하세요.\n\n"
-        "필수 규칙:\n"
-        "1. 일본어 문장을 구절 단위로 분할합니다.\n"
-        "2. 각 구절별로:\n"
-        "   - 일본어 구절 + 로마지 표기 (괄호 안)\n"
-        "   - 한글 발음 가이드\n"
-        "   - 주요 발음 주의사항 (장음, 촉음, 탁음, 조사 발음 を=오, は=와, 무성화 등)\n"
-        "3. 읽기 쉽고 명확하게 작성하세요."
+        "당신은 한국인을 위한 일본어 발음 지도 전문가입니다。
+"
+        "입력받은 일본어 문장(text)을 의미 단위 구절로 나누어 각 구절별 발음 가이드를 한국어로 상세히 작성하고, 특별히 중점을 두어 연습해야 할 단어를 추천하세요。
+
+"
+        "필수 규칙:
+"
+        "1. 인사말이나 서론, 불필요한 마크다운 헤더(### Step 1, --- 등)를 제외하고 즉시 가이드 내용을 출력하세요。
+"
+        "2. 일본어 문장을 구절 단위로 분할합니다。
+"
+        "3. 각 구절별로 글머리 기호(•)를 사용하여 작성합니다:
+"
+        "   • 일본어 구절 (로마지 표기): 한글 발음 가이드 + 발음 주의사항 (장음, 촉음, 탁음, 조사 발음 を=오, は=와, 무성화 등)。
+"
+        "4. 별도의 항목 \"🎯 발음 시 특히 중점적으로 주의해야 할 단어/구절:\"을 추가하여 학습자가 가장 신경 써서 연습해야 할 부분을 명시하세요。
+"
+        "5. 읽기 쉽고 명확하게 작성하세요。
+
+"
+        "출력 예시:
+"
+        "구절별 발음 가이드:
+"
+        "• 高校で (Kou-kou de): \"코-코- 데\"로 발음합니다. (\"Kou\"는 장음으로 길게 발음)。
+"
+        "• 英語を (Ei-go o): \"에-고 오\"로 발음합니다. (조사 \"を\"는 \"오\"로 발음)。
+"
+        "• 勉強します (Ben-kyou shi-masu): \"벤쿄- 시마스\"로 발음합니다. (끝의 \"su\"는 가볍게 무성화 발음)。
+
+"
+        "🎯 발음 시 특히 중점적으로 주의해야 할 단어/구절:
+"
+        "- 高校 & 英語: 장음 발음을 정확히 길게 유지하세요。
+"
+        "- 勉強합니다: 어미 무성화 발음에 주의하세요。"
     ),
     "tw": (
-        "您是一位日語發音教學專家。\n"
-        "請將給定的日文句子（text）拆解為意群/詞組，並用繁體中文提供詳細的逐句發音與朗讀指導。\n\n"
-        "必填規則：\n"
-        "1. 將日文句子拆分為自然的詞組。\n"
-        "2. 針對每個詞組提供：\n"
-        "   - 日文詞組 + 羅馬字（括號內）\n"
-        "   - 發音指導與標注\n"
-        "   - 重要發音注意事項（長音、促音、撥音、助詞發音如 を=o、は=wa、無聲化等）\n"
-        "3. 條理清晰，易於閱讀。"
+        "您是一位日語發音教學專家。
+"
+        "請將給定的日文句子（text）拆解為意群/詞組，並用繁體中文提供詳細的逐句發音與朗讀指導，同時特別建議練習時需要重點關注的詞彙。
+
+"
+        "必填規則：
+"
+        "1. 請勿包含任何打招呼、開場白或額外的 Markdown 標題（如 ### Step 1 或 ---）。直接開始輸出指導內容。
+"
+        "2. 將日文句子拆分為自然的詞組。
+"
+        "3. 針對每個詞組使用項目符號（•）提供：
+"
+        "   • 日文詞組 (羅馬字): 發音指導與標注（長音、促音、撥音、助詞發音如 を=o、は=wa、無聲化等）。
+"
+        "4. 包含一個獨立區塊「🎯 需重點注意發音的詞彙/短語：」，明確指明學習者在朗讀該句子時最需要特別注意發音的詞彙與原因。
+"
+        "5. 條理清晰，易於閱讀。
+
+"
+        "期望輸出格式範例：
+"
+        "逐句發音指導：
+"
+        "• 高校で (Kou-kou de): 讀作 \"Koh-koh de\"。（注意：\"Kou\" 為長音，拉長音節）。
+"
+        "• 英語を (Ei-go o): 讀作 \"Ay-go o\"。（注意：\"Ei\" 為長音，助詞 \"を\" 發音為 \"o\"）。
+"
+        "• 勉強します (Ben-kyou shi-masu): 讀作 \"Ben-kyoh shi-masu\"。（注意：結尾 \"su\" 發音輕柔/無聲化）。
+
+"
+        "🎯 需重點注意發音的詞彙/短語：
+"
+        "- 高校 & 英語: 請特別注意長音延伸，避免混淆詞義。
+"
+        "- 勉強します: 結尾無聲化請輕發音。"
     ),
 }
 TEXT_READING_GUIDE_PROMPTS["ja"] = TEXT_READING_GUIDE_PROMPTS["jp"]
@@ -822,6 +955,7 @@ async def generate_text_reading_guide(
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
 
+    content = re.sub(r"^(?:Sure!|Here['’]s|Here is|Certainly!)\b[^\n]*\n+", "", content, flags=re.IGNORECASE).strip()
     return content.strip('"`\n ')
 
 
