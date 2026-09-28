@@ -166,9 +166,10 @@ while `recognized_text` keeps the ASR Hanzi. `GET /api/pronunciation-zh/reading`
 provides tone-marked pinyin for the practice page. `POST /api/pronunciation-zh/coach`
 uses Ollama if configured.
 
-The score measures agreement with the ASR transcript, not independently verified
-pronunciation. The F0 chart uses CTC-aligned character windows when available;
-it does not score Mandarin tones. Rhythm and intonation remain unmeasured (`null`).
+The pronunciation score measures agreement with the ASR transcript rather than
+independently verified articulation. Rhythm uses CTC-aligned syllable durations;
+intonation compares start/middle/end F0 with each Mandarin tone contour. Both are
+reported when alignment and voiced pitch are available.
 
 ```
 WAV --> wav2vec2 Dual CTC --> recognized kana --\

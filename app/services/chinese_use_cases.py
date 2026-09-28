@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
-from app.services.aspect_scoring import AspectScores
+from app.services.aspect_scoring import score_aspects
 from app.services.chinese_asr import ChineseASRService
 from app.services.chinese_text import (
-    normalize_chinese, pinyin_syllables, score_chinese_fluency, score_syllables,
+    chinese_pitch_pattern, chinese_tone_matches, normalize_chinese,
+    pinyin_syllables, score_syllables,
 )
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 
@@ -33,6 +35,7 @@ class EvaluateChineseUseCase:
         speech_ratio = None
         vad_method = None
         measured_pitch: list[dict] = []
+        pitch_contours: list[list[float | None]] = []
         from src.asr.inference import load_audio
 
         samples, sample_rate = load_audio(audio_path)
@@ -47,11 +50,22 @@ class EvaluateChineseUseCase:
         except Exception:  # noqa: BLE001
             logger.warning("Chinese VAD unavailable", exc_info=True)
 
-        if recognition.windows and score.score >= 60:
+        if recognition.windows:
             try:
-                from app.services.pitch_extraction import extract_pitch_for_windows
+                from statistics import median
 
-                points = extract_pitch_for_windows(samples, sample_rate, recognition.windows)
+                from app.services.pitch_extraction import extract_mandarin_tone_contours
+
+                pitch_contours = extract_mandarin_tone_contours(
+                    samples, sample_rate, recognition.windows
+                )
+                points = []
+                for contour in pitch_contours:
+                    voiced = [float(value) for value in contour if value is not None]
+                    points.append({
+                        "semitone": round(median(voiced), 2) if voiced else None,
+                        "voiced": bool(voiced),
+                    })
                 measured_pitch = [
                     {"mora": char, "semitone": point.get("semitone"),
                      "voiced": bool(point.get("voiced")), "expected": ""}
@@ -60,14 +74,23 @@ class EvaluateChineseUseCase:
             except Exception:  # noqa: BLE001
                 logger.warning("Chinese F0 unavailable", exc_info=True)
 
-        fluency = score_chinese_fluency(len(target_syllables), speech_duration, pause_count, score.score)
-        aspects = AspectScores(
-            overall_score=float(score.score), pronunciation_score=float(score.score),
-            fluency_score=fluency, rhythm_score=None, intonation_score=None,
-            rhythm_measured=False, intonation_measured=False,
-            method="pinyin-asr+vad" if vad_method else "pinyin-asr",
-            vad_method=vad_method, pause_count=pause_count, speech_ratio=speech_ratio,
+        tones = [item["surface_tone"] for item in chinese_pitch_pattern(target)]
+        pitch_matched, pitch_total = chinese_tone_matches(pitch_contours, tones)
+        aspects = score_aspects(
+            pronunciation_cer_score=score.score,
+            n_morae=len(target_syllables),
+            audio_duration=recognition.duration,
+            speech_duration=speech_duration,
+            windows=recognition.windows,
+            moras=target_syllables,
+            errors=score.errors,
+            pitch_matched=pitch_matched,
+            pitch_total=pitch_total,
+            pause_count=pause_count,
+            speech_ratio=speech_ratio,
+            vad_method=vad_method,
         )
+        aspects = replace(aspects, method=aspects.method.replace("cer", "pinyin-asr", 1))
         return EvaluationResult(
             target_text=target_text, target_hiragana=target,
             recognized_text=recognition.text, recognized_hiragana=recognized,
