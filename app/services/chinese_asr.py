@@ -16,6 +16,7 @@ class ChineseRecognition:
     duration: float
     inference_time: float
     windows: list[tuple[float, float]] | None = None
+    alignment_confidences: list[float] | None = None
 
 
 class ChineseASRService:
@@ -58,25 +59,39 @@ class ChineseASRService:
         with torch.inference_mode():
             logits = self._model(values).logits
             ids = logits.argmax(dim=-1).cpu()
-            windows = self._align(logits, align_to, duration) if align_to else None
+            alignment = self._align(logits, align_to, duration) if align_to else None
+            windows, alignment_confidences = alignment if alignment else (None, None)
         text = self._processor.batch_decode(ids)[0]
-        return ChineseRecognition(text=text.strip(), duration=duration, inference_time=time.perf_counter() - t0, windows=windows)
+        return ChineseRecognition(
+            text=text.strip(), duration=duration,
+            inference_time=time.perf_counter() - t0, windows=windows,
+            alignment_confidences=alignment_confidences,
+        )
 
-    def _align(self, logits, target: str, duration: float) -> list[tuple[float, float]] | None:
+    def _align(
+        self, logits, target: str, duration: float,
+    ) -> tuple[list[tuple[float, float]], list[float]] | None:
         """CTC character windows; unavailable tokens leave pitch unmeasured."""
-        from src.asr.force_align import _viterbi_token_frames
+        from src.asr.force_align import _viterbi_token_frames, token_span_confidences
 
         vocab = self._processor.tokenizer.get_vocab()
         if not target or any(char not in vocab for char in target):
             return None
         log_probs = logits[0].float().log_softmax(dim=-1).cpu().numpy()
+        targets = [vocab[char] for char in target]
         spans = _viterbi_token_frames(
-            log_probs, [vocab[char] for char in target], blank=self._model.config.pad_token_id
+            log_probs, targets, blank=self._model.config.pad_token_id
         )
         if not spans or any(span is None for span in spans):
             return None
+        confidences = token_span_confidences(log_probs, targets, spans)
         seconds_per_frame = duration / log_probs.shape[0]
-        return [(start * seconds_per_frame, end * seconds_per_frame) for start, end in spans]
+        windows = [(start * seconds_per_frame, end * seconds_per_frame) for start, end in spans]
+        confidences = [
+            confidence if 0.04 <= end - start <= 1.2 else 0.0
+            for (start, end), confidence in zip(windows, confidences)
+        ]
+        return windows, confidences
 
 
 @lru_cache

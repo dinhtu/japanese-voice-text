@@ -85,11 +85,13 @@ def score_syllables(target: list[str], heard: list[str]) -> ScoreResult:
 def chinese_tone_matches(
     contours: list[list[float | None]],
     tones: list[int],
-) -> tuple[int | None, int | None]:
+    alignment_confidences: list[float] | None = None,
+) -> tuple[float | None, float | None]:
     """Count aligned syllables whose F0 shape matches the Mandarin tone."""
-    matched = total = 0
-    for values, tone in zip(contours, tones):
-        if len(values) != 3 or any(value is None for value in values):
+    matched = total = 0.0
+    confidences = alignment_confidences or [1.0] * len(contours)
+    for values, tone, confidence in zip(contours, tones, confidences):
+        if confidence < 0.12 or len(values) != 3 or any(value is None for value in values):
             continue
         start, middle, end = numeric = [float(value) for value in values]
         if tone in {1, 5}:
@@ -100,6 +102,6 @@ def chinese_tone_matches(
             error = max(0.0, 0.8 - (start - middle)) + max(0.0, 0.8 - (end - middle))
         else:  # fourth tone
             error = max(0.0, 1.5 - (start - end)) + max(0.0, middle - start)
-        total += 1
-        matched += error <= 1.5
+        total += confidence
+        matched += confidence if error <= 1.5 else 0.0
     return (matched, total) if total else (None, None)

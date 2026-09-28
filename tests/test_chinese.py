@@ -15,6 +15,15 @@ def test_chinese_tone_matches_expected_shapes():
     assert (matched, total) == (4, 4)
 
 
+def test_chinese_tone_matches_ignore_weak_alignment():
+    matched, total = chinese_tone_matches(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, -2.0]],
+        [1, 4],
+        [0.05, 0.8],
+    )
+    assert (matched, total) == (0.8, 0.8)
+
+
 def test_chinese_pitch_pattern_and_third_tone_sandhi():
     pattern = chinese_pitch_pattern("你好")
     assert [(p["mora"], p["tone"], p["surface_tone"]) for p in pattern] == [

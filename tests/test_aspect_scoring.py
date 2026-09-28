@@ -82,6 +82,16 @@ def test_rhythm_penalizes_uneven_windows_and_short_sokuon():
     assert uneven_score < even_score
 
 
+def test_rhythm_ignores_low_confidence_alignment_window():
+    windows = [(0.0, 0.2), (0.2, 1.1), (1.1, 1.3)]
+    score, measured = score_rhythm(
+        windows, ["ni", "hao", "ma"], [], [],
+        alignment_confidences=[0.9, 0.05, 0.9],
+    )
+    assert measured is True
+    assert score == 100.0
+
+
 def test_intonation_none_without_voiced_frames():
     score, measured = score_intonation(None, None)
     assert score is None

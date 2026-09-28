@@ -114,6 +114,23 @@ def _fill_missing(
     return [s if s is not None else (0, 1) for s in filled]
 
 
+def token_span_confidences(
+    log_probs: np.ndarray,
+    targets: list[int],
+    spans: list[tuple[int, int] | None],
+) -> list[float]:
+    """Mean CTC posterior of each target token inside its Viterbi span."""
+    confidences: list[float] = []
+    for token, span in zip(targets, spans):
+        if span is None or span[1] <= span[0]:
+            confidences.append(0.0)
+            continue
+        start, end = span
+        mean_log_probability = float(np.mean(log_probs[start:end, token]))
+        confidences.append(round(float(np.exp(mean_log_probability)), 4))
+    return confidences
+
+
 def align_kana(
     kana_logits: torch.Tensor,
     vocab: KanaVocab,
