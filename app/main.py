@@ -8,6 +8,7 @@ Run:
 """
 
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -25,6 +26,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# Windows can register .js as text/plain; module scripts require a JavaScript
+# MIME type or browsers reject the entire file before any button is wired.
+mimetypes.add_type("text/javascript", ".js")
 
 
 @asynccontextmanager

@@ -125,7 +125,10 @@ class Settings:
         Set PUBLIC_BASE_URL only when assets must be absolute (CDN, embedding
         the page on another host).
         """
-        return f"{self.public_base_url}/static/{path.lstrip('/')}"
+        clean_path = path.lstrip("/")
+        asset = STATIC_DIR / clean_path
+        version = asset.stat().st_mtime_ns if asset.is_file() else 0
+        return f"{self.public_base_url}/static/{clean_path}?v={version}"
 
     @property
     def api_base_url(self) -> str:

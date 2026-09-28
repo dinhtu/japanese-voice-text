@@ -20,4 +20,5 @@ def test_language_pages_use_their_own_endpoints():
     assert "data-reading-url" not in english
     assert "data-evaluate-url=\"/api/pronunciation-zh/evaluate\"" in chinese
     assert "data-reading-url=\"/api/pronunciation-zh/reading\"" in chinese
+    assert "data-pitch-url=\"/api/pronunciation-zh/pitch-accent\"" in chinese
     assert "data-tts-lang=\"zh-CN\"" in chinese

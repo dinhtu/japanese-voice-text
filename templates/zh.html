@@ -18,7 +18,8 @@
   <body
     data-api-base="{{ api_base_url }}"
     data-evaluate-url="{{ api_base_url }}/api/pronunciation-zh/evaluate"
-        data-coach-url="{{ api_base_url }}/api/pronunciation-zh/coach"
+    data-pitch-url="{{ api_base_url }}/api/pronunciation-zh/pitch-accent"
+    data-coach-url="{{ api_base_url }}/api/pronunciation-zh/coach"
     data-tts-lang="zh-CN"
     data-target-lang="zh"
     data-reading-url="{{ api_base_url }}/api/pronunciation-zh/reading"
@@ -116,7 +117,7 @@
           <div class="card__head">
             <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
             <div class="card__actions">
-              <button type="button" class="link-btn" id="pitch-btn" title="Xem F0 đo từ bản ghi" aria-expanded="false">
+              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu và F0 đo từ bản ghi" aria-expanded="false">
                 <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
                 Cao độ
               </button>

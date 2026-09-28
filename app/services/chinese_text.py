@@ -15,6 +15,49 @@ def pinyin_syllables(text: str) -> list[str]:
     return lazy_pinyin(normalize_chinese(text), style=Style.NORMAL)
 
 
+_TONE_CONTOURS = {
+    1: [5, 5],
+    2: [3, 5],
+    3: [2, 1, 4],
+    4: [5, 1],
+    5: [3, 3],
+}
+
+
+def chinese_pitch_pattern(text: str) -> list[dict]:
+    """Return pinyin and the standard Chao contour for each Hanzi syllable."""
+    import re
+    from pypinyin import Style, lazy_pinyin
+
+    target = normalize_chinese(text)
+    if not target:
+        return []
+    numbered = lazy_pinyin(target, style=Style.TONE3, neutral_tone_with_five=True)
+    tones = []
+    syllables = []
+    for value in numbered:
+        match = re.search(r"([1-5])$", value)
+        tone = int(match.group(1)) if match else 5
+        tones.append(tone)
+        syllables.append(re.sub(r"[1-5]$", "", value))
+
+    # Basic third-tone sandhi: in a run of third tones, all but the last rise.
+    surface = tones.copy()
+    for index in range(len(surface) - 1):
+        if tones[index] == tones[index + 1] == 3:
+            surface[index] = 2
+
+    return [
+        {
+            "mora": syllable,
+            "tone": tone,
+            "surface_tone": spoken,
+            "contour": _TONE_CONTOURS[spoken],
+        }
+        for syllable, tone, spoken in zip(syllables, tones, surface)
+    ]
+
+
 def score_syllables(target: list[str], heard: list[str]) -> ScoreResult:
     """Pinyin without lexical tones: homophonous Hanzi count as the same sound."""
     if not target:

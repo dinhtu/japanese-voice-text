@@ -13,7 +13,7 @@ from app.services.coaching import (
     SUPPORTED_LANGUAGES, CoachingUnavailableError, build_facts, generate_comment,
 )
 from app.services.chinese_asr import ChineseASRService, get_chinese_asr_service
-from app.services.chinese_text import normalize_chinese
+from app.services.chinese_text import chinese_pitch_pattern, normalize_chinese
 from app.services.chinese_use_cases import EvaluateChineseUseCase
 from app.services.use_cases import EmptyTargetError
 
@@ -28,6 +28,19 @@ def chinese_reading(text: str = Query(..., min_length=1, max_length=200)) -> dic
     if not target:
         raise HTTPException(400, "No Chinese characters found.")
     return {"reading": " ".join(lazy_pinyin(target, style=Style.TONE))}
+
+
+@router.get("/pitch-accent")
+def chinese_pitch_accent(text: str = Query(..., min_length=1, max_length=200)) -> dict:
+    pattern = chinese_pitch_pattern(text)
+    if not pattern:
+        raise HTTPException(400, "No Chinese characters found.")
+    return {
+        "success": True,
+        "text": text.strip(),
+        "reading": " ".join(item["mora"] for item in pattern),
+        "pattern": pattern,
+    }
 
 @router.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate_chinese(text: str = Form(...), audio: UploadFile = File(...),
