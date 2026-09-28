@@ -143,7 +143,8 @@ def score_rhythm(
     ordinary: list[float] = []
     for mora, (start, end) in zip(moras, windows):
         dur = end - start
-        if mora.mora in {"っ", "ー"} or dur <= 0:
+        mora_text = getattr(mora, "mora", mora if isinstance(mora, str) else "")
+        if mora_text in {"っ", "ー"} or dur <= 0:
             continue
         ordinary.append(dur)
 

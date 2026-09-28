@@ -226,6 +226,31 @@ def extract_pitch_for_windows(
     ]
 
 
+def extract_mandarin_tone_contours(
+    samples: np.ndarray,
+    sample_rate: int,
+    windows: list[tuple[float, float]],
+) -> list[list[float | None]]:
+    """Return start/middle/end F0 used to classify each Mandarin tone."""
+    empty = [[None, None, None] for _ in windows]
+    if not windows:
+        return empty
+    analysis = _analyze(samples, sample_rate)
+    if analysis is None:
+        return empty
+    reference_hz = float(np.mean(analysis.pitch_hz[analysis.voiced]))
+    contours: list[list[float | None]] = []
+    for start_sec, end_sec in windows:
+        lo = int(round(start_sec / analysis.frame_time))
+        hi = int(round(end_sec / analysis.frame_time))
+        edges = np.linspace(lo, max(lo + 3, hi), 4).round().astype(int)
+        contours.append([
+            _aggregate(analysis, int(edges[i]), int(edges[i + 1]), reference_hz)["semitone"]
+            for i in range(3)
+        ])
+    return contours
+
+
 def extract_pitch_per_mora(
     samples: np.ndarray,
     sample_rate: int,

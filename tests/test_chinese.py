@@ -1,10 +1,18 @@
 from app.services.chinese_text import (
     chinese_pitch_pattern,
+    chinese_tone_matches,
     normalize_chinese,
     pinyin_syllables,
-    score_chinese_fluency,
     score_syllables,
 )
+
+
+def test_chinese_tone_matches_expected_shapes():
+    matched, total = chinese_tone_matches(
+        [[0.0, 0.1, 0.0], [-1.0, 0.0, 2.0], [1.0, -1.0, 1.0], [2.0, 0.0, -2.0]],
+        [1, 2, 3, 4],
+    )
+    assert (matched, total) == (4, 4)
 
 
 def test_chinese_pitch_pattern_and_third_tone_sandhi():
@@ -30,12 +38,5 @@ def test_syllable_deletion_has_target_position():
     result = score_syllables(["ni", "hao", "ma"], ["ni", "ma"])
     assert result.distance == 1
     assert [(e.type, e.position, e.target) for e in result.errors] == [("del", 1, "hao")]
+    assert result.length == 3
 
-
-def test_chinese_fluency_uses_syllable_rate_and_pauses():
-    fluent = score_chinese_fluency(12, 3.0, 0, 100)
-    slow = score_chinese_fluency(12, 12.0, 0, 100)
-    paused = score_chinese_fluency(12, 3.0, 3, 100)
-    assert fluent > slow
-    assert fluent > paused
-    assert score_chinese_fluency(12, 3.0, 0, 0) == 0

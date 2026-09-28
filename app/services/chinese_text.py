@@ -82,15 +82,24 @@ def score_syllables(target: list[str], heard: list[str]) -> ScoreResult:
     return ScoreResult(score, round(error_rate, 4), distance, len(target), level, message, errors)
 
 
-def score_chinese_fluency(syllables: int, duration: float, pauses: int, accuracy: int) -> float:
-    """Broad Mandarin reading band in syllables/s, penalizing hesitations."""
-    if duration <= 0 or accuracy <= 0:
-        return 0.0
-    rate = syllables / duration
-    if rate < 2.0:
-        pace = max(20.0, 50.0 * rate)
-    elif rate > 6.0:
-        pace = max(20.0, 100.0 - 20.0 * (rate - 6.0))
-    else:
-        pace = 100.0
-    return round(max(0.0, pace - max(0, pauses - 1) * 5) * (0.75 + 0.25 * accuracy / 100), 2)
+def chinese_tone_matches(
+    contours: list[list[float | None]],
+    tones: list[int],
+) -> tuple[int | None, int | None]:
+    """Count aligned syllables whose F0 shape matches the Mandarin tone."""
+    matched = total = 0
+    for values, tone in zip(contours, tones):
+        if len(values) != 3 or any(value is None for value in values):
+            continue
+        start, middle, end = numeric = [float(value) for value in values]
+        if tone in {1, 5}:
+            error = max(numeric) - min(numeric)
+        elif tone == 2:
+            error = max(0.0, 1.5 - (end - start)) + max(0.0, start - middle)
+        elif tone == 3:
+            error = max(0.0, 0.8 - (start - middle)) + max(0.0, 0.8 - (end - middle))
+        else:  # fourth tone
+            error = max(0.0, 1.5 - (start - end)) + max(0.0, middle - start)
+        total += 1
+        matched += error <= 1.5
+    return (matched, total) if total else (None, None)
