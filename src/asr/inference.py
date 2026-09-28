@@ -77,7 +77,7 @@ def _decode_ffmpeg(path: str | Path) -> tuple[torch.Tensor, int]:
         "1",
         "-ar",
         str(TARGET_SAMPLE_RATE),
-        "-pipe:1",
+        "pipe:1",
     ]
     try:
         res = subprocess.run(
