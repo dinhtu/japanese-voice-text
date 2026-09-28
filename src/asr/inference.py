@@ -7,6 +7,8 @@ Holds the model/feature-extractor once and transcribes audio files:
     print(result.kana)
 """
 
+import io
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,11 +41,11 @@ def resolve_device(name: str | None = None) -> torch.device:
 def _decode(path: str | Path) -> tuple[torch.Tensor, int]:
     """Decode to a (channels, samples) float tensor.
 
-    torchaudio 2.9+ delegates to torchcodec, which needs FFmpeg shared libraries
-    that are often missing on Windows; soundfile handles WAV/FLAC without them.
+    torchaudio 2.9+ delegates to torchcodec; soundfile handles WAV/FLAC;
+    ffmpeg CLI handles M4A/AAC/MP4/WEBM/WMA and other compressed formats.
     """
     errors = []
-    for backend in (_decode_torchaudio, _decode_soundfile):
+    for backend in (_decode_torchaudio, _decode_soundfile, _decode_ffmpeg):
         try:
             return backend(path)
         except Exception as e:  # noqa: BLE001 — backend errors vary by format
@@ -57,6 +59,41 @@ def _decode_torchaudio(path: str | Path) -> tuple[torch.Tensor, int]:
 
 def _decode_soundfile(path: str | Path) -> tuple[torch.Tensor, int]:
     data, sr = soundfile.read(str(path), dtype="float32", always_2d=True)
+    return torch.from_numpy(data.T.copy()), sr
+
+
+def _decode_ffmpeg(path: str | Path) -> tuple[torch.Tensor, int]:
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(path),
+        "-f",
+        "wav",
+        "-ac",
+        "1",
+        "-ar",
+        str(TARGET_SAMPLE_RATE),
+        "-pipe:1",
+    ]
+    try:
+        res = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError("ffmpeg executable not found in PATH") from e
+
+    if res.returncode != 0:
+        err_msg = res.stderr.decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(f"ffmpeg conversion failed: {err_msg}")
+
+    if not res.stdout:
+        raise RuntimeError("ffmpeg output is empty")
+
+    data, sr = soundfile.read(io.BytesIO(res.stdout), dtype="float32", always_2d=True)
     return torch.from_numpy(data.T.copy()), sr
 
 
