@@ -31,10 +31,6 @@ class MeasuredPitchItem(BaseModel):
     semitone: float | None = None
     voiced: bool = False
     expected: str = Field(description='"H" | "L" from the reference accent pattern')
-    alignment_confidence: float | None = Field(
-        default=None, ge=0, le=1,
-        description="CTC target-token confidence; Mandarin alignment only",
-    )
 
 
 class Feedback(BaseModel):
@@ -161,7 +157,6 @@ class EvaluateResponse(BaseModel):
                     semitone=p.get("semitone"),
                     voiced=bool(p.get("voiced")),
                     expected=str(p.get("expected", "L")),
-                    alignment_confidence=p.get("alignment_confidence"),
                 )
                 for p in (result.measured_pitch or [])
             ],

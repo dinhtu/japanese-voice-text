@@ -113,7 +113,6 @@ def score_rhythm(
     moras: Sequence["MoraPitch"] | None,
     duration_issues: Sequence["DurationIssue"],
     errors: Sequence["PronunciationError"],
-    alignment_confidences: Sequence[float] | None = None,
 ) -> tuple[float, bool]:
     """Evenness of mora timing, plus sokuon/chouon and insertion/deletion.
 
@@ -141,27 +140,22 @@ def score_rhythm(
     if not measured:
         return _round_score(100.0 - edit_penalty), False
 
-    ordinary: list[tuple[float, float]] = []
-    confidences = alignment_confidences or [1.0] * len(windows)
-    for mora, (start, end), confidence in zip(moras, windows, confidences):
+    ordinary: list[float] = []
+    for mora, (start, end) in zip(moras, windows):
         dur = end - start
         mora_text = getattr(mora, "mora", mora if isinstance(mora, str) else "")
-        if mora_text in {"っ", "ー"} or dur <= 0 or confidence < 0.12:
+        if mora_text in {"っ", "ー"} or dur <= 0:
             continue
-        ordinary.append((dur, confidence))
+        ordinary.append(dur)
 
     if len(ordinary) < 2:
-        return _round_score(100.0 - edit_penalty), False
+        evenness = 100.0
     else:
-        weight = sum(confidence for _duration, confidence in ordinary)
-        mean = sum(duration * confidence for duration, confidence in ordinary) / weight
+        mean = sum(ordinary) / len(ordinary)
         if mean <= 0:
             evenness = 100.0
         else:
-            var = sum(
-                confidence * (duration - mean) ** 2
-                for duration, confidence in ordinary
-            ) / weight
+            var = sum((d - mean) ** 2 for d in ordinary) / len(ordinary)
             cv = (var ** 0.5) / mean
             if cv <= _RHYTHM_CV_GOOD:
                 evenness = 100.0
@@ -174,8 +168,8 @@ def score_rhythm(
 
 
 def score_intonation(
-    pitch_matched: float | None,
-    pitch_total: float | None,
+    pitch_matched: int | None,
+    pitch_total: int | None,
     pasqa_score: float | None = None,
 ) -> tuple[float | None, bool]:
     """F0 H/L direction, blended with PASQA MOS when that model ran.
@@ -242,14 +236,13 @@ def score_aspects(
     moras: Sequence["MoraPitch"] | None = None,
     duration_issues: Sequence["DurationIssue"] = (),
     errors: Sequence["PronunciationError"] = (),
-    pitch_matched: float | None = None,
-    pitch_total: float | None = None,
+    pitch_matched: int | None = None,
+    pitch_total: int | None = None,
     gop_score: float | None = None,
     pause_count: int = 0,
     speech_ratio: float | None = None,
     vad_method: str | None = None,
     pasqa_score: float | None = None,
-    alignment_confidences: Sequence[float] | None = None,
 ) -> AspectScores:
     """Build the five utterance scores from already-measured facts."""
     pronunciation = mix_pronunciation(float(pronunciation_cer_score), gop_score)
@@ -269,10 +262,7 @@ def score_aspects(
         pause_count=pause_count,
         speech_ratio=speech_ratio,
     )
-    rhythm, rhythm_measured = score_rhythm(
-        windows, moras, duration_issues, errors,
-        alignment_confidences=alignment_confidences,
-    )
+    rhythm, rhythm_measured = score_rhythm(windows, moras, duration_issues, errors)
     intonation, intonation_measured = score_intonation(
         pitch_matched, pitch_total, pasqa_score=pasqa_score
     )

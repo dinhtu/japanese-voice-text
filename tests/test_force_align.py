@@ -2,11 +2,7 @@
 
 import numpy as np
 
-from src.asr.force_align import (
-    _fill_missing,
-    _viterbi_token_frames,
-    token_span_confidences,
-)
+from src.asr.force_align import _fill_missing, _viterbi_token_frames
 from src.asr.kana_vocab import BLANK_IDX
 
 
@@ -40,9 +36,3 @@ def test_fill_missing_interpolates_a_gap():
     assert filled[0] == (0, 2)
     assert filled[2] == (6, 8)
     assert filled[1][0] >= 2 and filled[1][1] <= 6
-
-
-def test_token_span_confidence_uses_ctc_posterior():
-    log_probs = _emissions([BLANK_IDX, 1, 1, BLANK_IDX, 2])
-    confidences = token_span_confidences(log_probs, [1, 2], [(1, 3), (4, 5)])
-    assert confidences == [1.0, 1.0]

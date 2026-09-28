@@ -66,22 +66,16 @@ class EvaluateChineseUseCase:
                         "semitone": round(median(voiced), 2) if voiced else None,
                         "voiced": bool(voiced),
                     })
-                confidences = recognition.alignment_confidences or [1.0] * len(points)
                 measured_pitch = [
                     {"mora": char, "semitone": point.get("semitone"),
-                     "voiced": bool(point.get("voiced")), "expected": "",
-                     "alignment_confidence": confidence}
-                    for char, point, confidence in zip(
-                        target, points, confidences
-                    )
+                     "voiced": bool(point.get("voiced")), "expected": ""}
+                    for char, point in zip(target, points)
                 ]
             except Exception:  # noqa: BLE001
                 logger.warning("Chinese F0 unavailable", exc_info=True)
 
         tones = [item["surface_tone"] for item in chinese_pitch_pattern(target)]
-        pitch_matched, pitch_total = chinese_tone_matches(
-            pitch_contours, tones, recognition.alignment_confidences
-        )
+        pitch_matched, pitch_total = chinese_tone_matches(pitch_contours, tones)
         aspects = score_aspects(
             pronunciation_cer_score=score.score,
             n_morae=len(target_syllables),
@@ -95,12 +89,8 @@ class EvaluateChineseUseCase:
             pause_count=pause_count,
             speech_ratio=speech_ratio,
             vad_method=vad_method,
-            alignment_confidences=recognition.alignment_confidences,
         )
-        method = aspects.method.replace("cer", "pinyin-asr", 1)
-        if aspects.rhythm_measured:
-            method = method.replace("pinyin-asr", "pinyin-asr+alignment", 1)
-        aspects = replace(aspects, method=method)
+        aspects = replace(aspects, method=aspects.method.replace("cer", "pinyin-asr", 1))
         return EvaluationResult(
             target_text=target_text, target_hiragana=target,
             recognized_text=recognition.text, recognized_hiragana=recognized,
