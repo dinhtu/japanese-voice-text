@@ -16,9 +16,13 @@ def test_language_pages_use_their_own_endpoints():
     chinese = env.get_template("zh.html").render(context)
 
     assert "data-evaluate-url=\"/api/pronunciation-en/evaluate\"" in english
+    assert "data-text-guide-url=\"/api/pronunciation-en/text-guide\"" in english
+    assert "id=\"guide-btn\"" in english
     assert "pronunciation-zh" not in english
     assert "data-reading-url" not in english
     assert "data-evaluate-url=\"/api/pronunciation-zh/evaluate\"" in chinese
     assert "data-reading-url=\"/api/pronunciation-zh/reading\"" in chinese
     assert "data-pitch-url=\"/api/pronunciation-zh/pitch-accent\"" in chinese
     assert "data-tts-lang=\"zh-CN\"" in chinese
+    assert "data-text-guide-url=\"/api/pronunciation-zh/text-guide\"" in chinese
+    assert "id=\"guide-btn\"" in chinese

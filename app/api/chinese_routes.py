@@ -1,5 +1,6 @@
 """Chinese pronunciation API; same response shape as the English endpoint."""
 from __future__ import annotations
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -8,9 +9,10 @@ from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
-from app.schemas.coaching import CoachResponse
+from app.schemas.coaching import CoachResponse, TextGuideResponse
 from app.services.coaching import (
     SUPPORTED_LANGUAGES, CoachingUnavailableError, build_facts, generate_comment,
+    generate_text_reading_guide,
 )
 from app.services.chinese_asr import ChineseASRService, get_chinese_asr_service
 from app.services.chinese_text import chinese_pitch_pattern, normalize_chinese
@@ -18,6 +20,7 @@ from app.services.chinese_use_cases import EvaluateChineseUseCase
 from app.services.use_cases import EmptyTargetError
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/reading")
@@ -113,3 +116,40 @@ async def coach_chinese(
         raise HTTPException(500, f"Coaching failed: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@router.get(
+    "/text-guide",
+    response_model=TextGuideResponse,
+    summary="Tạo hướng dẫn phát âm từng cụm từ cho văn bản tiếng Trung bằng Ollama AI",
+)
+async def get_chinese_text_guide(
+    text: str = Query(..., description="Văn bản/câu tiếng Trung cần hướng dẫn phát âm (ví dụ: 你好，我是学生。)"),
+    lang: str = Query("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
+    settings: Settings = Depends(get_settings),
+) -> TextGuideResponse:
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+
+    try:
+        guide = await generate_text_reading_guide(text, settings, lang=lang, target_lang="zh")
+        return TextGuideResponse(text=text, lang=lang, guide=guide)
+    except CoachingUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Chinese text reading guide generation failed")
+        raise HTTPException(status_code=500, detail=f"Text guide failed: {e}") from e
+
+
+@router.post(
+    "/text-guide",
+    response_model=TextGuideResponse,
+    summary="Tạo hướng dẫn phát âm từng cụm từ cho văn bản tiếng Trung bằng Ollama AI (POST)",
+)
+async def post_chinese_text_guide(
+    text: str = Form(..., description="Văn bản/câu tiếng Trung cần hướng dẫn phát âm"),
+    lang: str = Form("vi", description="Ngôn ngữ câu hướng dẫn (jp, en, ko, tw, vi)"),
+    settings: Settings = Depends(get_settings),
+) -> TextGuideResponse:
+    return await get_chinese_text_guide(text=text, lang=lang, settings=settings)

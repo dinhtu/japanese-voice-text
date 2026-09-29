@@ -228,3 +228,37 @@ def test_text_guide_returns_503_when_ollama_unavailable(client):
     assert response.status_code in (503, 500)
 
 
+
+
+def test_english_text_guide_empty_text_rejected(client):
+    response = client.get("/api/pronunciation-en/text-guide", params={"text": "  ", "lang": "vi"})
+    assert response.status_code == 400
+
+
+def test_english_text_guide_returns_503_when_ollama_unavailable(client):
+    response = client.get("/api/pronunciation-en/text-guide", params={"text": "How are you today?", "lang": "vi"})
+    assert response.status_code in (503, 500)
+
+
+def test_english_text_guide_uses_english_prompt():
+    from app.services.coaching import ENGLISH_TEXT_READING_GUIDE_PROMPTS, TEXT_READING_GUIDE_PROMPTS
+
+    for key in ("vi", "en", "jp", "ko", "tw"):
+        assert ENGLISH_TEXT_READING_GUIDE_PROMPTS[key] != TEXT_READING_GUIDE_PROMPTS[key]
+
+
+def test_chinese_text_guide_empty_text_rejected(client):
+    response = client.get("/api/pronunciation-zh/text-guide", params={"text": "  ", "lang": "vi"})
+    assert response.status_code == 400
+
+
+def test_chinese_text_guide_returns_503_when_ollama_unavailable(client):
+    response = client.get("/api/pronunciation-zh/text-guide", params={"text": "你好，我是学生。", "lang": "vi"})
+    assert response.status_code in (503, 500)
+
+
+def test_chinese_text_guide_uses_chinese_prompt():
+    from app.services.coaching import CHINESE_TEXT_READING_GUIDE_PROMPTS, TEXT_READING_GUIDE_PROMPTS
+
+    for key in ("vi", "en", "jp", "ko", "tw"):
+        assert CHINESE_TEXT_READING_GUIDE_PROMPTS[key] != TEXT_READING_GUIDE_PROMPTS[key]
