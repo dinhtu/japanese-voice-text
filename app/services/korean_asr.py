@@ -1,4 +1,4 @@
-"""Lazy, VRAM-friendly Korean wav2vec2 CTC ASR."""
+"""Lazy, VRAM-friendly Korean ASR service supporting Whisper and Wav2Vec2 CTC."""
 
 from __future__ import annotations
 
@@ -25,16 +25,31 @@ class KoreanASRService:
         self._model = self._processor = self._device = None
 
     @property
+    def is_whisper(self) -> bool:
+        return "whisper" in self.settings.ko_asr_model.lower()
+
+    @property
     def is_loaded(self) -> bool:
         return self._model is not None
 
     def load(self) -> None:
-        from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+        if self._model is not None:
+            return
 
-        if self._model is None:
-            self._device = resolve_device(self.settings.ko_asr_device)
-            self._processor = Wav2Vec2Processor.from_pretrained(self.settings.ko_asr_model)
-            self._model = Wav2Vec2ForCTC.from_pretrained(self.settings.ko_asr_model).eval()
+        self._device = resolve_device(self.settings.ko_asr_device)
+        model_id = self.settings.ko_asr_model
+
+        if self.is_whisper:
+            from transformers import WhisperForConditionalGeneration, WhisperProcessor
+
+            self._processor = WhisperProcessor.from_pretrained(model_id)
+            self._model = WhisperForConditionalGeneration.from_pretrained(model_id).eval()
+        else:
+            from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+
+            self._processor = Wav2Vec2Processor.from_pretrained(model_id)
+            self._model = Wav2Vec2ForCTC.from_pretrained(model_id).eval()
+
         if self._device.type == "cuda" and self.settings.ko_asr_fp16:
             self._model.half()
         else:
@@ -44,6 +59,7 @@ class KoreanASRService:
     def offload(self) -> None:
         if self._model is not None and self._device is not None and self._device.type == "cuda":
             from app.core.vram import module_to_cpu
+
             module_to_cpu(self._model)
 
     def recognize(self, audio_path: str | Path, align_to: str = "") -> KoreanRecognition:
@@ -62,14 +78,31 @@ class KoreanASRService:
                 samples = (samples / peak) * 0.95
 
         self.load()
+        t0 = time.perf_counter()
+
+        if self.is_whisper:
+            inputs = self._processor(samples, sampling_rate=sample_rate, return_tensors="pt")
+            features = inputs.input_features.to(self._device)
+            if self._device.type == "cuda" and self.settings.ko_asr_fp16:
+                features = features.half()
+            with torch.inference_mode():
+                predicted_ids = self._model.generate(
+                    features,
+                    language="korean",
+                    task="transcribe",
+                    no_repeat_ngram_size=3,
+                )
+            text = self._processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+            del features, predicted_ids
+            return KoreanRecognition(text.strip(), duration, time.perf_counter() - t0, None)
+
+        # Wav2Vec2 CTC path
         inputs = self._processor(samples, sampling_rate=sample_rate, return_tensors="pt", padding=True)
         values = inputs.input_values.to(self._device)
         if self._device.type == "cuda" and self.settings.ko_asr_fp16:
             values = values.half()
-        t0 = time.perf_counter()
         with torch.inference_mode():
             logits = self._model(values).logits
-            # Slightly penalize CTC blank token on speech to prevent skipping unstressed syllables
             pad_id = getattr(self._model.config, "pad_token_id", None) or self._processor.tokenizer.pad_token_id
             dec_logits = logits.clone()
             if pad_id is not None:
