@@ -1,5 +1,7 @@
 """Korean pronunciation API, matching the existing language response shape."""
 
+from __future__ import annotations
+
 import logging
 import os
 import tempfile
@@ -11,6 +13,7 @@ from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse, TextGuideResponse
+from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
 from app.services.coaching import (
     SUPPORTED_LANGUAGES,
@@ -65,19 +68,23 @@ def korean_reading(text: str = Query(..., min_length=1, max_length=200)) -> dict
 
 @router.get(
     "/pitch-accent",
+    response_model=PitchAccentResponse,
     summary="Lấy cao độ mẫu Accentual Phrase (H/L) của câu tiếng Hàn",
 )
-def korean_pitch_accent(text: str = Query(..., min_length=1, max_length=200)) -> dict:
+def korean_pitch_accent(text: str = Query(..., min_length=1, max_length=200)) -> PitchAccentResponse:
     text = _check_text(text)
     pattern = korean_pitch_pattern(text)
     if not pattern:
         raise HTTPException(400, "No Hangul characters found.")
-    return {
-        "success": True,
-        "text": text,
-        "reading": " ".join(item["mora"] for item in pattern),
-        "pattern": pattern,
-    }
+    return PitchAccentResponse(
+        success=True,
+        text=text,
+        reading=" ".join(item["mora"] for item in pattern),
+        pattern=[
+            MoraPitchItem(mora=item["mora"], pitch=item["pitch"], phrase=item["phrase"])
+            for item in pattern
+        ],
+    )
 
 
 @router.post("/evaluate", response_model=EvaluateResponse)
@@ -92,22 +99,29 @@ async def evaluate_korean(
     try:
         with gpu_session():
             result = EvaluateKoreanUseCase(asr).execute(text, path)
-        response = EvaluateResponse.from_result(result)
+        rec_moras = [
+            MoraPitchItem(mora=item["mora"], pitch=item["pitch"], phrase=item["phrase"])
+            for item in (korean_pitch_pattern(result.recognized_text) if result.recognized_text else [])
+        ]
+        response = EvaluateResponse.from_result(result, recognized_moras=rec_moras)
         target_chars = list(normalize_korean(text))
         bad = {e.position for e in result.score.errors if e.type in ("sub", "del")}
-        rec_pitch = korean_pitch_pattern(result.recognized_text) if result.recognized_text else []
         return response.model_copy(
             update={
                 "mora_status": [
                     MoraStatusItem(mora=c, ok=i not in bad) for i, c in enumerate(target_chars)
                 ],
-                "recognized_pitch_pattern": rec_pitch,
             }
         )
     except (EmptyTargetError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(422, f"Could not read the audio: {exc}") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Korean evaluation failed")
+        raise HTTPException(500, f"Inference failed: {exc}") from exc
     finally:
         Path(path).unlink(missing_ok=True)
 

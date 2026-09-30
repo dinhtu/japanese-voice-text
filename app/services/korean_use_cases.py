@@ -82,7 +82,7 @@ class EvaluateKoreanUseCase:
 
         return EvaluationResult(
             target_text=target_text,
-            target_hiragana=target_reading or target_norm,
+            target_hiragana=target_norm,
             recognized_text=recognition.text,
             recognized_hiragana=recognized_display,
             score=score,
@@ -90,4 +90,6 @@ class EvaluateKoreanUseCase:
             audio_duration=round(recognition.duration, 2),
             inference_ms=round(recognition.inference_time * 1000, 1),
             measured_pitch=measured_pitch,
+            target_reading=target_reading,
+            recognized_reading=korean_pronunciation(recognition.text) if recognition.text else None,
         )

@@ -269,7 +269,16 @@ def score_korean_syllables(target_text: str, recognized_text: str) -> ScoreResul
     norm_rec = normalize_korean(recognized_text)
 
     if not norm_target:
-        return ScoreResult(score=0, cer=1.0, distance=len(norm_rec), length=0, errors=[], feedback=_feedback(0))
+        level, message = _feedback(0)
+        return ScoreResult(
+            score=0,
+            cer=1.0,
+            distance=len(norm_rec),
+            target_length=0,
+            level=level,
+            message=message,
+            errors=[],
+        )
 
     # Also compute phonetic readings
     ph_target = "".join(normalize_korean(korean_pronunciation(target_text)))
@@ -277,7 +286,16 @@ def score_korean_syllables(target_text: str, recognized_text: str) -> ScoreResul
 
     # Direct match (orthographic or phonetic)
     if norm_target == norm_rec or ph_target == ph_rec or ph_target == norm_rec or norm_target == ph_rec:
-        return ScoreResult(score=100, cer=0.0, distance=0, length=len(norm_target), errors=[], feedback=_feedback(100))
+        level, message = _feedback(100)
+        return ScoreResult(
+            score=100,
+            cer=0.0,
+            distance=0,
+            target_length=len(norm_target),
+            level=level,
+            message=message,
+            errors=[],
+        )
 
     # Compute edit distance on the best matching representation
     d_orth = edit_distance(list(norm_target), list(norm_rec))
@@ -295,9 +313,9 @@ def score_korean_syllables(target_text: str, recognized_text: str) -> ScoreResul
     errors: list[PronunciationError] = []
     for tag, src, dst in raw_ops:
         if tag == "insert":
-            errors.append(PronunciationError(type="ins", target=None, recognized=base_r[dst], position=src))
+            errors.append(PronunciationError(type="ins", target="", recognized=base_r[dst], position=src))
         elif tag == "delete":
-            errors.append(PronunciationError(type="del", target=norm_target[min(src, len(norm_target)-1)], recognized=None, position=src))
+            errors.append(PronunciationError(type="del", target=norm_target[min(src, len(norm_target)-1)], recognized="", position=src))
         elif tag == "replace":
             # Check if this character is a valid phonetic variant (e.g. 합 vs 함)
             t_char = norm_target[min(src, len(norm_target)-1)]
@@ -309,12 +327,14 @@ def score_korean_syllables(target_text: str, recognized_text: str) -> ScoreResul
     n = len(norm_target)
     cer = actual_dist / n if n > 0 else 0.0
     score = max(0, round((1.0 - cer) * 100))
+    level, message = _feedback(score)
 
     return ScoreResult(
         score=score,
         cer=round(cer, 4),
         distance=actual_dist,
-        length=n,
+        target_length=n,
+        level=level,
+        message=message,
         errors=errors,
-        feedback=_feedback(score),
     )
