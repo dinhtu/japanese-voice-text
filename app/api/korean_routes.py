@@ -21,7 +21,11 @@ from app.services.coaching import (
 )
 from app.services.english_text import WordPitch
 from app.services.korean_asr import KoreanASRService, get_korean_asr_service
-from app.services.korean_text import normalize_korean
+from app.services.korean_text import (
+    korean_pitch_pattern,
+    korean_pronunciation,
+    normalize_korean,
+)
 from app.services.korean_use_cases import EvaluateKoreanUseCase
 from app.services.use_cases import EmptyTargetError
 
@@ -49,9 +53,37 @@ async def _save_upload(audio: UploadFile, settings: Settings, prefix: str) -> st
     return path
 
 
+@router.get(
+    "/reading",
+    summary="Lấy cách đọc chuẩn theo quy tắc phát âm tiếng Hàn",
+)
+def korean_reading(text: str = Query(..., min_length=1, max_length=200)) -> dict[str, str]:
+    text = _check_text(text)
+    reading = korean_pronunciation(text)
+    return {"reading": reading}
+
+
+@router.get(
+    "/pitch-accent",
+    summary="Lấy cao độ mẫu Accentual Phrase (H/L) của câu tiếng Hàn",
+)
+def korean_pitch_accent(text: str = Query(..., min_length=1, max_length=200)) -> dict:
+    text = _check_text(text)
+    pattern = korean_pitch_pattern(text)
+    if not pattern:
+        raise HTTPException(400, "No Hangul characters found.")
+    return {
+        "success": True,
+        "text": text,
+        "reading": " ".join(item["mora"] for item in pattern),
+        "pattern": pattern,
+    }
+
+
 @router.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate_korean(
-    text: str = Form(...), audio: UploadFile = File(...),
+    text: str = Form(...),
+    audio: UploadFile = File(...),
     asr: KoreanASRService = Depends(get_korean_asr_service),
     settings: Settings = Depends(get_settings),
 ) -> EvaluateResponse:
@@ -61,10 +93,17 @@ async def evaluate_korean(
         with gpu_session():
             result = EvaluateKoreanUseCase(asr).execute(text, path)
         response = EvaluateResponse.from_result(result)
+        target_chars = list(normalize_korean(text))
         bad = {e.position for e in result.score.errors if e.type in ("sub", "del")}
-        return response.model_copy(update={"mora_status": [
-            MoraStatusItem(mora=c, ok=i not in bad) for i, c in enumerate(result.target_hiragana)
-        ]})
+        rec_pitch = korean_pitch_pattern(result.recognized_text) if result.recognized_text else []
+        return response.model_copy(
+            update={
+                "mora_status": [
+                    MoraStatusItem(mora=c, ok=i not in bad) for i, c in enumerate(target_chars)
+                ],
+                "recognized_pitch_pattern": rec_pitch,
+            }
+        )
     except (EmptyTargetError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
@@ -75,7 +114,9 @@ async def evaluate_korean(
 
 @router.post("/coach", response_model=CoachResponse)
 async def coach_korean(
-    text: str = Form(...), audio: UploadFile = File(...), lang: str = Form("vi"),
+    text: str = Form(...),
+    audio: UploadFile = File(...),
+    lang: str = Form("vi"),
     asr: KoreanASRService = Depends(get_korean_asr_service),
     settings: Settings = Depends(get_settings),
 ) -> CoachResponse:
@@ -87,11 +128,22 @@ async def coach_korean(
     try:
         with gpu_session():
             result = EvaluateKoreanUseCase(asr).execute(text, path)
-        units = [WordPitch(mora=c, pitch="L") for c in result.target_hiragana]
-        facts = build_facts(text, result.score.score, result.score.level, units,
-                            result.score.errors, [], None)
+        units = [WordPitch(mora=c, pitch="L") for c in normalize_korean(text)]
+        facts = build_facts(
+            text,
+            result.score.score,
+            result.score.level,
+            units,
+            result.score.errors,
+            [],
+            None,
+        )
         comment = await generate_comment(facts, settings, lang=lang, target_lang="ko")
-        return CoachResponse(assessment=comment.assessment, suggestion=comment.suggestion, lang=lang)
+        return CoachResponse(
+            assessment=comment.assessment,
+            suggestion=comment.suggestion,
+            lang=lang,
+        )
     except CoachingUnavailableError as exc:
         raise HTTPException(503, str(exc)) from exc
     finally:

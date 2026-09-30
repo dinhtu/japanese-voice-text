@@ -18,6 +18,7 @@ const COACH_API_URL = document.body.dataset.coachUrl
 const TEXT_GUIDE_API_URL = document.body.dataset.textGuideUrl
   || `${API_BASE}/api/pronunciation/text-guide`;
 const TTS_LANG = document.body.dataset.ttsLang || "ja-JP";
+const TARGET_LANG = document.body.dataset.targetLang || "ja";
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
@@ -889,11 +890,19 @@ function renderPitchChart() {
       })
       .join("");
     learnerSvg = `${lines}${dots}`;
-    hint = `<p class="pitch__hint">Nét xanh bậc vuông là mẫu H/L (OpenJTalk). Nét liền chấm là cùng mẫu nối mora. Nét đứt là F0 đo từ bản ghi.</p>`;
+    let methodText = "Nét xanh bậc vuông là mẫu H/L (OpenJTalk).";
+    if (TARGET_LANG === "ko") {
+      methodText = "Nét xanh bậc vuông là cao độ mẫu Accentual Phrase (H/L).";
+    } else if (TARGET_LANG === "zh") {
+      methodText = "Nét xanh bậc vuông là cao độ mẫu thanh điệu.";
+    } else if (TARGET_LANG === "en") {
+      methodText = "Nét xanh bậc vuông là trọng âm từ mẫu (H/L).";
+    }
+    hint = `<p class="pitch__hint">${methodText} Nét liền chấm là cùng mẫu nối âm. Nét đứt là F0 đo từ bản ghi.</p>`;
   } else if (learnerReady) {
     hint = `<p class="pitch__hint">Không đo được F0 có thanh trong bản ghi này.</p>`;
   } else {
-    hint = `<p class="pitch__hint">Nét xanh bậc vuông là cao độ mẫu (H ngang, L ngang, xuống/lên 90° khi đổi accent).</p>`;
+    hint = `<p class="pitch__hint">Nét xanh bậc vuông là cao độ mẫu (H cao, L thấp, đổi bậc theo ngữ điệu).</p>`;
   }
 
   el.pitchChart.innerHTML = `

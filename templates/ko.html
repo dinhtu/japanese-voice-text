@@ -18,8 +18,9 @@
   <body
     data-api-base="{{ api_base_url }}"
     data-evaluate-url="{{ api_base_url }}/api/pronunciation-ko/evaluate"
+    data-reading-url="{{ api_base_url }}/api/pronunciation-ko/reading"
+    data-pitch-url="{{ api_base_url }}/api/pronunciation-ko/pitch-accent"
     data-text-guide-url="{{ api_base_url }}/api/pronunciation-ko/text-guide"
-    data-pitch-url=""
     data-coach-url="{{ api_base_url }}/api/pronunciation-ko/coach"
     data-tts-lang="ko-KR"
     data-target-lang="ko"
@@ -106,7 +107,7 @@
           <a href="/">Tiếng Nhật</a>
           <a href="/en">English</a>
           <a href="/zh">Tiếng Trung</a>
-          <a href="/ko" aria-current="page">한국어</a>
+          <a href="/ko" aria-current="page">Tiếng Hàn</a>
         </nav>
         <h1>Luyện phát âm tiếng Hàn</h1>
         <p class="lead">
@@ -125,9 +126,9 @@
                 <svg class="icon icon--sm"><use href="#i-chat" /></svg>
                 Hướng dẫn đọc AI
               </button>
-              <button type="button" class="link-btn" id="pitch-btn" title="Xem Pitch / Intonation (F0) đo từ bản ghi" aria-expanded="false">
+              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu và F0 đo từ bản ghi" aria-expanded="false">
                 <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
-                Pitch / Intonation
+                Cao độ
               </button>
               <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
                 <svg class="icon icon--sm"><use href="#i-volume" /></svg>
@@ -162,15 +163,21 @@
 
             <div class="pitch" id="pitch" hidden>
               <div class="pitch__head">
-                <span class="pitch__title" id="pitch-title">Pitch / Intonation (F0)</span>
+                <span class="pitch__title" id="pitch-title">Cao độ mẫu và F0 đo được</span>
                 <div class="pitch__legend" id="pitch-legend">
+                  <span class="pitch__legend-item">
+                    <i class="pitch__swatch pitch__swatch--step"></i>Mẫu bậc
+                  </span>
+                  <span class="pitch__legend-item">
+                    <i class="pitch__swatch pitch__swatch--ref"></i>Mẫu (H/L)
+                  </span>
                   <span class="pitch__legend-item">
                     <i class="pitch__swatch pitch__swatch--you"></i>Bạn (F0 đo)
                   </span>
                 </div>
               </div>
               <div class="pitch__body" id="pitch-body">
-                <p class="pitch__status" id="pitch-status">Đang phân tích Pitch / Intonation…</p>
+                <p class="pitch__status" id="pitch-status">Đang phân tích cao độ…</p>
                 <div class="pitch__chart" id="pitch-chart" hidden></div>
               </div>
             </div>
@@ -382,9 +389,7 @@
             </div>
 
             <p class="note">
-              CER đo độ khớp âm tiết Hangul mà ASR nhận ra, không phải độ chính
-              xác âm vị. Pitch / Intonation dùng F0 tương đối của chính bản ghi,
-              không dùng quy tắc H/L tiếng Nhật.
+              Độ khớp âm tiết Hangul được chuẩn hóa theo quy tắc phát âm chuẩn tiếng Hàn (nối âm, biến âm, mũi hóa, nhược hóa). Cao độ mẫu hiển thị bậc âm điệu cụm từ (Accentual Phrase H/L) kết hợp với đường F0 thực tế đo từ giọng đọc của bạn.
             </p>
           </div>
         </section>

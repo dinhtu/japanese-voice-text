@@ -6,7 +6,15 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.aspect_scoring import score_f0_dynamics
 from app.services.korean_asr import KoreanRecognition, get_korean_asr_service
-from app.services.korean_text import korean_syllables, normalize_korean
+from app.services.korean_text import (
+    decompose_hangul,
+    compose_hangul,
+    korean_pitch_pattern,
+    korean_pronunciation,
+    korean_syllables,
+    normalize_korean,
+    score_korean_syllables,
+)
 from app.services.scoring import score_pronunciation
 from app.services.coaching import KOREAN_TEXT_READING_GUIDE_PROMPTS, TEXT_READING_GUIDE_PROMPTS
 
@@ -33,18 +41,42 @@ def make_wav(seconds: float = 0.1, sample_rate: int = 16_000) -> bytes:
     return header + data
 
 
+def test_decompose_and_compose_hangul():
+    cho, jung, jong = decompose_hangul("한")
+    assert (cho, jung, jong) == ("ㅎ", "ㅏ", "ㄴ")
+    assert compose_hangul(cho, jung, jong) == "한"
+
+
 def test_normalize_korean_composes_jamo_and_removes_non_hangul():
     decomposed = unicodedata.normalize("NFD", "안녕")
     assert normalize_korean(f" {decomposed}, hello! ") == "안녕"
     assert korean_syllables("한국어") == ["한", "국", "어"]
 
 
-def test_korean_errors_are_hangul_syllable_level():
-    result = score_pronunciation("안녕하세요", "안녕하새요")
-    assert result.distance == 1
-    assert [(e.type, e.target, e.recognized, e.position) for e in result.errors] == [
-        ("sub", "세", "새", 3)
-    ]
+def test_korean_pronunciation_rules():
+    # Nasalization: ㅂ + ㄴ -> [ㅁ]
+    assert korean_pronunciation("감사합니다") == "감사함니다"
+    # Liaison: 국 + 어 -> [구거]
+    assert korean_pronunciation("한국어") == "한구거"
+    # H-deletion: 좋아 -> [조아]
+    assert korean_pronunciation("좋아요") == "조아요"
+    # Tensification: 학 + 교 -> [학꾜]
+    assert korean_pronunciation("학교") == "학꾜"
+
+
+def test_score_korean_syllables_tolerates_phonetic_realization():
+    # If target is orthographic 감사합니다 and recognized is phonetic 감사함니다, score should be 100
+    result = score_korean_syllables("감사합니다", "감사함니다")
+    assert result.score == 100
+    assert result.distance == 0
+
+
+def test_korean_pitch_pattern_accentual_phrase():
+    pattern = korean_pitch_pattern("안녕하세요")
+    assert len(pattern) == 5
+    for item in pattern:
+        assert set(item) == {"mora", "pitch", "phrase"}
+        assert item["pitch"] in ("H", "L")
 
 
 def test_reference_free_f0_score_requires_two_voiced_points():
@@ -58,22 +90,40 @@ def test_reference_free_f0_score_requires_two_voiced_points():
 
 
 def test_korean_evaluate_endpoint():
-    app.dependency_overrides[get_korean_asr_service] = lambda: StubKoreanASRService(text="안녕하세요")
+    app.dependency_overrides[get_korean_asr_service] = lambda: StubKoreanASRService(text="감사함니다")
     try:
         with TestClient(app) as client:
             resp = client.post(
                 "/api/pronunciation-ko/evaluate",
-                data={"text": "안녕하세요"},
+                data={"text": "감사합니다"},
                 files={"audio": ("sample.wav", io.BytesIO(make_wav()), "audio/wav")},
             )
             assert resp.status_code == 200
             data = resp.json()
             assert data["success"] is True
             assert data["score"] == 100
-            assert data["target_text"] == "안녕하세요"
+            assert data["target_text"] == "감사합니다"
+            assert data["target_hiragana"] == "감사함니다"
             assert len(data["mora_status"]) == 5
+            assert all(m["ok"] is True for m in data["mora_status"])
     finally:
         app.dependency_overrides.clear()
+
+
+def test_korean_pitch_accent_endpoint():
+    with TestClient(app) as client:
+        resp = client.get("/api/pronunciation-ko/pitch-accent", params={"text": "안녕하세요"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert len(data["pattern"]) == 5
+
+
+def test_korean_reading_endpoint():
+    with TestClient(app) as client:
+        resp = client.get("/api/pronunciation-ko/reading", params={"text": "감사합니다"})
+        assert resp.status_code == 200
+        assert resp.json()["reading"] == "감사함니다"
 
 
 def test_korean_evaluate_rejects_non_korean():
@@ -101,4 +151,3 @@ def test_korean_text_guide_returns_503_when_ollama_unavailable():
 def test_korean_text_guide_uses_korean_prompt():
     for key in ("vi", "en", "jp", "ko", "tw"):
         assert KOREAN_TEXT_READING_GUIDE_PROMPTS[key] != TEXT_READING_GUIDE_PROMPTS[key]
-

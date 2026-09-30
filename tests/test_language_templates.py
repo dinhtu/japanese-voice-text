@@ -26,6 +26,8 @@ def test_language_pages_use_their_own_endpoints():
     assert "data-pitch-url=\"/api/pronunciation-zh/pitch-accent\"" in chinese
     assert "data-tts-lang=\"zh-CN\"" in chinese
     assert "data-evaluate-url=\"/api/pronunciation-ko/evaluate\"" in korean
+    assert "data-reading-url=\"/api/pronunciation-ko/reading\"" in korean
+    assert "data-pitch-url=\"/api/pronunciation-ko/pitch-accent\"" in korean
     assert "data-text-guide-url=\"/api/pronunciation-ko/text-guide\"" in korean
     assert "data-coach-url=\"/api/pronunciation-ko/coach\"" in korean
     assert "data-tts-lang=\"ko-KR\"" in korean
