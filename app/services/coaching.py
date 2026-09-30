@@ -206,6 +206,19 @@ CHINESE_TARGET_PROMPTS = {
     ),
 }
 
+KOREAN_TARGET_PROMPTS = {
+    "vi": (
+        "Bạn là giáo viên phát âm tiếng Hàn cho người Việt. Chỉ mô tả dữ liệu đã đo: "
+        "độ khớp âm tiết Hangul từ ASR, độ trôi chảy và đường F0. Không gọi CER là độ chính xác âm vị "
+        "và không suy đoán lỗi phụ âm/nguyên âm. Trả về đúng JSON gồm assessment và suggestion bằng tiếng Việt."
+    ),
+    "en": (
+        "You teach Korean pronunciation to Vietnamese learners. Only describe measured Hangul-syllable "
+        "ASR matches, fluency and F0 contour facts. Do not call CER phoneme accuracy or invent segmental "
+        "errors. Return JSON with assessment and suggestion in English."
+    ),
+}
+
 # JSON schema passed to Ollama's `format` parameter (see generate_comment)
 # so the model is constrained to emit exactly this shape instead of free
 # text -- this is what makes the assessment/suggestion split in the UI
@@ -232,7 +245,9 @@ def resolve_system_prompt(lang: str, target_lang: str = "ja") -> str:
     Raises:
         ValueError: `lang` isn't one of SUPPORTED_LANGUAGES.
     """
-    table = CHINESE_TARGET_PROMPTS if target_lang == "zh" else (ENGLISH_TARGET_PROMPTS if target_lang == "en" else SYSTEM_PROMPTS)
+    table = (KOREAN_TARGET_PROMPTS if target_lang == "ko" else
+             CHINESE_TARGET_PROMPTS if target_lang == "zh" else
+             ENGLISH_TARGET_PROMPTS if target_lang == "en" else SYSTEM_PROMPTS)
     try:
         return table[lang]
     except KeyError:
@@ -1043,6 +1058,101 @@ CHINESE_TEXT_READING_GUIDE_PROMPTS["zh"] = CHINESE_TEXT_READING_GUIDE_PROMPTS["t
 CHINESE_TEXT_READING_GUIDE_PROMPTS["zh-tw"] = CHINESE_TEXT_READING_GUIDE_PROMPTS["tw"]
 
 
+KOREAN_TEXT_READING_GUIDE_PROMPTS: dict[str, str] = {
+    "vi": """Bạn là một chuyên gia hướng dẫn phát âm tiếng Hàn (Korean) cho người Việt Nam.
+Nhiệm vụ của bạn là nhận vào một câu/đoạn văn tiếng Hàn (text) và tạo ra hướng dẫn phát âm chi tiết từng cụm từ bằng tiếng Việt, đồng thời gợi ý các từ/cụm từ cần chú trọng phát âm.
+
+QUY TẮC BẮT BUỘC:
+1. KHÔNG thêm các lời chào hỏi xã giao, mở đầu hay kết bài (KHÔNG 'Dưới đây là...', 'Sure!', '---', hay tiêu đề Markdown như '### Step 1'). Bắt đầu ngay vào nội dung.
+2. Chia câu tiếng Hàn thành các cụm từ/cụm nghĩa tự nhiên.
+3. Với mỗi cụm từ, cung cấp dạng đầu dòng (chấm tròn):
+   • Cụm từ tiếng Hàn (Romanization): Đọc gần giống "Phiên âm tiếng Việt tự nhiên". (Lưu ý: quy tắc nối âm 연음, biến âm phụ âm như mũi hóa 비음화, lưu âm hóa 유음화, âm bật hơi 격음화, âm căng/nén 된소리, biến đổi patchim 받침...).
+4. Thêm mục: "🎯 Từ/Cụm từ cần chú trọng phát âm:" chỉ rõ những từ, hiện tượng biến âm hoặc patchim quan trọng nhất mà người Việt hay đọc sai trong câu này.
+5. Trình bày rõ ràng, dễ đọc, ngắn gọn, chính xác.
+
+VÍ DỤ ĐẦU RA MONG MUỐN:
+Hướng dẫn phát âm từng cụm từ:
+• 안녕하세요 (annyeonghaseyo): Đọc gần giống "an-nyơng-ha-sê-yo". (Lưu ý: "안" đọc tròn âm 'an', "녕" đọc dứt khoát 'nyơng', giữ ngữ điệu mềm mại).
+• 감사합니다 (gamsahamnida): Đọc gần giống "gam-sa-ham-ni-đa". (Lưu ý: hiện tượng mũi hóa ở "합" gặp "니" biến thành [함] 'ham-ni-đa', không đọc là 'hap-ni-đa').
+
+🎯 Từ/Cụm từ cần chú trọng phát âm:
+- 감사합니다: Chú ý biến âm mũi hóa ㅂ + ㄴ → [ㅁ] + ㄴ ("ham-ni-da").
+- 안녕하세요: Đọc nối liền mạch, không ngắt quãng từng âm tiết.""",
+    "en": """You are a Korean pronunciation coach for English speakers.
+Your task is to take a Korean sentence (text) and generate a concise, phrase-by-phrase pronunciation guide in English, including key focus words for practice.
+
+MANDATORY RULES:
+1. DO NOT include conversational intro or outro (NO 'Sure!', 'Here is...', '---', or Markdown headers like '### Step 1'). Start directly with the guide.
+2. Break the sentence into natural words/phrases.
+3. For each chunk, use bullet points:
+   • Korean phrase (Romanization): Sounds like "approximate English re-spelling". (Note: linking rules, batchim sound changes, nasalization, liquidization, tensification/glottalization, aspiration, etc.).
+4. Include a short section: "🎯 Key Focus Words for Pronunciation:" highlighting specific words or sound patterns requiring special attention.
+5. Keep it concise, clean, and formatted as plain readable text.
+
+DESIRED OUTPUT FORMAT EXAMPLE:
+Phrase-by-phrase pronunciation guide:
+• 안녕하세요 (annyeonghaseyo): Sounds like "ahn-nyung-hah-seh-yoh". (Note: smooth phrasing, polite intonation).
+• 감사합니다 (gamsahamnida): Sounds like "gahm-sah-hahm-nee-dah". (Note: nasalization rule where ㅂ before ㄴ is pronounced as [ㅁ] /m/).
+
+🎯 Key Focus Words for Pronunciation:
+- 감사합니다: Apply the nasalization rule (pronounced [감사함니다]).
+- 안녕하세요: Keep the flow smooth without pausing between syllables.""",
+    "jp": """あなたは日本人学習者向けの韓国語発音指導の専門家です。
+入力された韓国語テキスト（text）を単語・フレーズごとに区切り、発音と読み方のポイントを日本語で丁寧に解説してください。また、特に重点を置いて練習すべき単語・フレーズを提案してください。
+
+必須ルール:
+1. 挨拶や導入文、余計なマークダウン見出し（### Step 1 や --- など）は一切含めず、直接ガイドの内容を出力してください。
+2. テキストを自然な単語・フレーズに分割する。
+3. 各フレーズについて、箇条書き（•）で以下を出力する：
+   • 韓国語フレーズ (カタカナ表記): 発音のコツ（パッチム、連音化、鼻音化、流音化、濃音化、激音化など）。
+4. 「🎯 発音で特に重点を置くべき単語・フレーズ」というセクションを設け、日本人が間違えやすい箇所とその理由を明記する。
+5. 分かりやすく、丁寧に整理して出力すること。
+
+出力フォーマット例:
+フレーズごとの発音ガイド:
+• 안녕하세요: 「アンニョンハセヨ」。自然になめらかにつなげて発音します。
+• 감사합니다: 「カムサハムニダ」。「합」のパッチムㅂは後ろのㄴの影響で鼻音化し、[ㅁ]（ム）の音になります。
+
+🎯 発音で特に重点を置くべき単語・フレーズ:
+- 감사합니다: 鼻音化（ㅂ＋ㄴ→[ㅁ]＋ㄴ）に注意しましょう。""",
+    "ko": """당신은 한국어 학습자를 위한 발음 지도 전문가입니다.
+입력받은 한국어 문장(text)을 구절 단위로 나누어 각 구절별 발음 가이드를 한국어로 상세히 작성하고, 특별히 중점을 두어 연습해야 할 단어를 추천하세요.
+
+필수 규칙:
+1. 인사말이나 서론, 불필요한 마크다운 헤더를 제외하고 즉시 가이드 내용을 출력하세요.
+2. 한국어 문장을 자연스러운 구절 단위로 분할합니다.
+3. 각 구절별로 글머리 기호(•)를 사용하여 표준 발음 및 발음 팁(받침, 연음, 비음화, 유음화, 경음화, 격음화 등)을 작성합니다.
+4. "🎯 발음 시 특히 중점적으로 주의해야 할 단어/구절:" 항목을 추가합니다.
+
+출력 예시:
+구절별 발음 가이드:
+• 안녕하세요 [안녕하세요]: 각 음절을 또렷하고 자연스럽게 이어 발음합니다.
+• 감사합니다 [감사함니다]: "합"의 받침 ㅂ이 뒤의 "니"를 만나 [ㅁ]으로 비음화됩니다.
+
+🎯 발음 시 특히 중점적으로 주의해야 할 단어/구절:
+- 감사합니다: 비음화 법칙 [감사함니다]에 유의하세요.""",
+    "tw": """您是一位韓語發音教學專家。
+請將給定的韓文句子（text）拆解為詞組，並用繁體中文提供詳細的逐句發音與朗讀指導，同時特別建議練習時需要重點關注的詞彙。
+
+必填規則：
+1. 請勿包含任何打招呼或開場白，直接開始輸出指導內容。
+2. 將韓文句子拆分為自然的詞組。
+3. 針對每個詞組使用項目符號（•）提供發音技巧（收音 Batchim、連音、鼻音化、流音化、緊音化、激音化等）。
+4. 包含「🎯 需重點注意發音的詞彙/短語：」區塊。
+
+期望輸出格式範例：
+逐句發音指導：
+• 안녕하세요 (an-nyeong-ha-se-yo): 讀作「安寧哈塞喲」，語調親切自然。
+• 감사합니다 (gam-sa-ham-ni-da): 讀作「康撒哈母尼達」，「합」收音 ㅂ 遇到 ㄴ 產生鼻音化讀作 [ㅁ]。
+
+🎯 需重點注意發音的詞彙/短語：
+- 감사합니다: 注意 ㅂ + ㄴ → [ㅁ] + ㄴ 鼻音化規則。""",
+}
+KOREAN_TEXT_READING_GUIDE_PROMPTS["ja"] = KOREAN_TEXT_READING_GUIDE_PROMPTS["jp"]
+KOREAN_TEXT_READING_GUIDE_PROMPTS["zh"] = KOREAN_TEXT_READING_GUIDE_PROMPTS["tw"]
+KOREAN_TEXT_READING_GUIDE_PROMPTS["zh-tw"] = KOREAN_TEXT_READING_GUIDE_PROMPTS["tw"]
+
+
 async def generate_text_reading_guide(
     text: str,
     settings: "Settings",
@@ -1051,12 +1161,13 @@ async def generate_text_reading_guide(
 ) -> str:
     """Generate phrase-by-phrase reading and pronunciation guide for `text` in `lang` via Ollama.
 
-    `target_lang` is the language of `text` itself: "ja" (default), "en" or "zh".
+    `target_lang` is the language of `text` itself: "ja" (default), "en", "zh" or "ko".
     """
     key = (lang or "vi").strip().lower()
     table = {
         "en": ENGLISH_TEXT_READING_GUIDE_PROMPTS,
         "zh": CHINESE_TEXT_READING_GUIDE_PROMPTS,
+        "ko": KOREAN_TEXT_READING_GUIDE_PROMPTS,
     }.get(target_lang, TEXT_READING_GUIDE_PROMPTS)
     system_prompt = table.get(key, table["vi"])
 

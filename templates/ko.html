@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#2563eb" />
     <meta
       name="description"
-      content="Đọc to câu tiếng Anh và nhận điểm từ wav2vec2-base-960h."
+      content="Đọc câu tiếng Hàn và nhận điểm từ Korean wav2vec2, VAD và F0."
     />
-    <title>Pronunciation check | Luyện phát âm tiếng Anh</title>
+    <title>Pronunciation check | Luyện phát âm tiếng Hàn</title>
     <link rel="stylesheet" href="{{ asset_url('app.css') }}" />
     <link
       rel="icon"
@@ -17,11 +17,12 @@
   </head>
   <body
     data-api-base="{{ api_base_url }}"
-    data-evaluate-url="{{ api_base_url }}/api/pronunciation-en/evaluate"
-    data-pitch-url="{{ api_base_url }}/api/pronunciation-en/pitch-accent"
-    data-coach-url="{{ api_base_url }}/api/pronunciation-en/coach"
-    data-text-guide-url="{{ api_base_url }}/api/pronunciation-en/text-guide"
-    data-tts-lang="en-US"
+    data-evaluate-url="{{ api_base_url }}/api/pronunciation-ko/evaluate"
+    data-text-guide-url="{{ api_base_url }}/api/pronunciation-ko/text-guide"
+    data-pitch-url=""
+    data-coach-url="{{ api_base_url }}/api/pronunciation-ko/coach"
+    data-tts-lang="ko-KR"
+    data-target-lang="ko"
   >
     <!-- Icon sprite: only the glyphs this page uses, so no icon library. -->
     <svg hidden xmlns="http://www.w3.org/2000/svg">
@@ -99,18 +100,18 @@
       <header class="page__header">
         <span class="badge">
           <svg class="icon icon--sm"><use href="#i-languages" /></svg>
-          wav2vec2 English · 5 khía cạnh
+          wav2vec2 Korean · 5 khía cạnh
         </span>
         <nav class="lang-switch" aria-label="Ngôn ngữ luyện">
           <a href="/">Tiếng Nhật</a>
-          <a href="/en" aria-current="page">English</a>
+          <a href="/en">English</a>
           <a href="/zh">Tiếng Trung</a>
-          <a href="/ko">한국어</a>
+          <a href="/ko" aria-current="page">한국어</a>
         </nav>
-        <h1>Luyện phát âm tiếng Anh</h1>
+        <h1>Luyện phát âm tiếng Hàn</h1>
         <p class="lead">
-          Đọc to câu bên dưới. ASR English (wav2vec2-base) chấm CER, VAD và F0
-          — cùng 5 khía cạnh như trang Nhật, model khác.
+          Đọc câu tiếng Hàn bên dưới. Korean ASR chấm độ khớp âm tiết Hangul,
+          VAD, nhịp và F0.
         </p>
       </header>
 
@@ -124,9 +125,9 @@
                 <svg class="icon icon--sm"><use href="#i-chat" /></svg>
                 Hướng dẫn đọc AI
               </button>
-              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu (H/L) và F0 đo từ bản ghi" aria-expanded="false">
+              <button type="button" class="link-btn" id="pitch-btn" title="Xem Pitch / Intonation (F0) đo từ bản ghi" aria-expanded="false">
                 <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
-                Cao độ
+                Pitch / Intonation
               </button>
               <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
                 <svg class="icon icon--sm"><use href="#i-volume" /></svg>
@@ -154,22 +155,22 @@
                 </label>
               </div>
               <div class="pitch__body">
-                <p class="pitch__status" id="guide-status" hidden></p>
-                <div class="coach__block-text" id="guide-content" hidden style="white-space: pre-wrap; font-size: 0.95rem; line-height: 1.6; color: var(--ink); margin-top: 0.5rem;"></div>
+                <p class="pitch__status" id="guide-status">Đang tải hướng dẫn đọc…</p>
+                <div class="guide__content" id="guide-content" hidden style="white-space: pre-wrap; font-size: 0.95rem; line-height: 1.6; color: var(--text-main);"></div>
               </div>
             </div>
 
             <div class="pitch" id="pitch" hidden>
               <div class="pitch__head">
-                <span class="pitch__title" id="pitch-title">Cao độ mẫu</span>
+                <span class="pitch__title" id="pitch-title">Pitch / Intonation (F0)</span>
                 <div class="pitch__legend" id="pitch-legend">
                   <span class="pitch__legend-item">
-                    <i class="pitch__swatch pitch__swatch--ref"></i>Mẫu
+                    <i class="pitch__swatch pitch__swatch--you"></i>Bạn (F0 đo)
                   </span>
                 </div>
               </div>
               <div class="pitch__body" id="pitch-body">
-                <p class="pitch__status" id="pitch-status">Đang phân tích cao độ…</p>
+                <p class="pitch__status" id="pitch-status">Đang phân tích Pitch / Intonation…</p>
                 <div class="pitch__chart" id="pitch-chart" hidden></div>
               </div>
             </div>
@@ -204,7 +205,7 @@
                   id="custom-input"
                   rows="2"
                   maxlength="200"
-                  placeholder="e.g. How are you today?"
+                  placeholder="예: 오늘 날씨가 좋아요."
                   aria-label="Câu tự nhập"
                 ></textarea>
                 <button type="submit" class="solid-btn" id="custom-apply">
@@ -381,9 +382,9 @@
             </div>
 
             <p class="note">
-              Vòng tròn là CER chữ (điểm tổng cũ). Bốn thanh còn lại từ
-              GOPT (accuracy / completeness / fluency / prosodic). GOP từ
-              wav2vec2-base-960h. Trang Nhật không dùng GOPT.
+              CER đo độ khớp âm tiết Hangul mà ASR nhận ra, không phải độ chính
+              xác âm vị. Pitch / Intonation dùng F0 tương đối của chính bản ghi,
+              không dùng quy tắc H/L tiếng Nhật.
             </p>
           </div>
         </section>
@@ -397,3 +398,5 @@
     <script type="module" src="{{ asset_url('app.js') }}"></script>
   </body>
 </html>
+
+

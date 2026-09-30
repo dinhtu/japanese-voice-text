@@ -13,6 +13,10 @@ from app.constants.chinese_texts import (
     DEFAULT_PRACTICE_TEXT as ZH_DEFAULT,
     PRACTICE_TEXTS as ZH_TEXTS,
 )
+from app.constants.korean_texts import (
+    DEFAULT_PRACTICE_TEXT as KO_DEFAULT,
+    PRACTICE_TEXTS as KO_TEXTS,
+)
 from app.core.config import TEMPLATES_DIR, get_settings
 
 router = APIRouter()
@@ -62,4 +66,12 @@ def chinese_practice_page(request: Request) -> HTMLResponse:
             "default_text": ZH_DEFAULT,
             "api_base_url": settings.api_base_url,
         },
+    )
+
+
+@router.get("/ko", response_class=HTMLResponse, include_in_schema=False)
+def korean_practice_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request, "ko.html",
+        {"texts": KO_TEXTS, "default_text": KO_DEFAULT, "api_base_url": settings.api_base_url},
     )

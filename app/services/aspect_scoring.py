@@ -190,6 +190,22 @@ def score_intonation(
     return None, False
 
 
+def score_f0_dynamics(points: Sequence[dict]) -> tuple[float | None, bool]:
+    """Reference-free F0 activity score; it is prosody, not accent correctness."""
+    values = [float(p["semitone"]) for p in points if p.get("voiced") and p.get("semitone") is not None]
+    if len(values) < 2:
+        return None, False
+    coverage = len(values) / max(len(points), 1)
+    pitch_range = max(values) - min(values)
+    # A visible but not exaggerated contour gets full credit. This deliberately
+    # avoids applying Japanese H/L rules to languages without a reference contour.
+    activity = 100.0 if 2.0 <= pitch_range <= 12.0 else (
+        _lerp(pitch_range, 0.0, 2.0, 45.0, 100.0)
+        if pitch_range < 2.0 else _lerp(min(pitch_range, 20.0), 12.0, 20.0, 100.0, 65.0)
+    )
+    return _round_score(activity * (0.7 + 0.3 * coverage)), True
+
+
 def combine_overall(
     pronunciation: float,
     fluency: float,

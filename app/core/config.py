@@ -109,6 +109,11 @@ class Settings:
             "ZH_ASR_MODEL", "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
         ).strip() or "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
         self.zh_asr_device = os.getenv("ZH_ASR_DEVICE") or None
+        self.ko_asr_model = os.getenv(
+            "KO_ASR_MODEL", "kresnik/wav2vec2-large-xlsr-korean"
+        ).strip() or "kresnik/wav2vec2-large-xlsr-korean"
+        self.ko_asr_device = os.getenv("KO_ASR_DEVICE") or None
+        self.ko_asr_fp16 = os.getenv("KO_ASR_FP16", "1") == "1"
 
         self.gopt_checkpoint = Path(
             os.getenv("GOPT_CHECKPOINT", "").strip()

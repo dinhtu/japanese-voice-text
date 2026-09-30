@@ -475,7 +475,8 @@ async function evaluate(wav) {
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
     learnerPitch = result.measured_pitch ?? [];
-    if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
+    if (document.body.dataset.targetLang === "ko") renderKoreanPitch();
+    else if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
     else if (referencePattern) renderPitchChart();
   } catch (error) {
     showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
@@ -947,6 +948,10 @@ async function loadPitchAccent(text) {
 function comparePitch() {
   el.pitch.hidden = false;
   el.pitchBtn.setAttribute("aria-expanded", "true");
+  if (document.body.dataset.targetLang === "ko") {
+    renderKoreanPitch();
+    return Promise.resolve();
+  }
   if (pitchLoadedFor !== target.text) return loadPitchAccent(target.text);
   if (document.body.dataset.targetLang === "zh") renderChinesePitch();
   return Promise.resolve();
@@ -1037,9 +1042,29 @@ el.pitchBtn.addEventListener("click", () => {
   const opening = el.pitch.hidden;
   el.pitch.hidden = !opening;
   el.pitchBtn.setAttribute("aria-expanded", String(opening));
-  if (opening && pitchLoadedFor !== target.text) loadPitchAccent(target.text);
+  if (opening && document.body.dataset.targetLang === "ko") renderKoreanPitch();
+  else if (opening && pitchLoadedFor !== target.text) loadPitchAccent(target.text);
   else if (opening && document.body.dataset.targetLang === "zh") renderChinesePitch();
 });
+
+function renderKoreanPitch() {
+  const all = learnerPitch || [];
+  const voiced = all.filter((p) => p && p.voiced && p.semitone != null);
+  el.pitchTitle.textContent = "Pitch / Intonation (F0)";
+  el.pitchLegend.innerHTML = '<span class="pitch__legend-item"><i class="pitch__swatch pitch__swatch--you"></i>Bạn (F0 đo)</span>';
+  if (!learnerPitch) return setPitchStatus("Ghi âm để xem đường F0 / ngữ điệu.");
+  if (!voiced.length) return setPitchStatus("Không đo được F0 có thanh trong bản ghi này.");
+  const width = Math.max(160, all.length * 40);
+  const plotted = all.map((p, i) => !p || !p.voiced || p.semitone == null ? null : ({
+    x: ((i + 0.5) / all.length) * width, y: semitoneToY(p.semitone, 16, 78),
+  }));
+  const lines = f0Segments(plotted).filter((s) => s.length > 1)
+    .map((s) => `<polyline class="pitch__line pitch__line--you" points="${patternPolyline(s)}" />`).join("");
+  const dots = plotted.filter(Boolean).map((p) => `<circle class="pitch__dot pitch__dot--you" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" />`).join("");
+  el.pitchChart.innerHTML = `<div class="pitch__scroll"><div class="pitch__plot" style="width:max(100%,${width}px)"><svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">${lines}${dots}</svg><div class="pitch__labels" style="grid-template-columns:repeat(${all.length},1fr)">${all.map((p) => `<span class="pitch__label">${p.mora}</span>`).join("")}</div></div></div><p class="pitch__hint">Đường F0 tương đối của bản ghi; đây không phải quy tắc H/L hay pitch accent tiếng Nhật.</p>`;
+  el.pitchChart.hidden = false;
+  el.pitchStatus.hidden = true;
+}
 
 function renderChinesePitch() {
   const points = (learnerPitch || []).filter((p) => p.voiced && p.semitone != null);
@@ -1171,7 +1196,8 @@ el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
   learnerPitch = null;
-  if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
+  if (document.body.dataset.targetLang === "ko") renderKoreanPitch();
+  else if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
   else if (referencePattern) renderPitchChart();
 });
 

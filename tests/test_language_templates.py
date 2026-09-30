@@ -14,6 +14,7 @@ def test_language_pages_use_their_own_endpoints():
     }
     english = env.get_template("en.html").render(context)
     chinese = env.get_template("zh.html").render(context)
+    korean = env.get_template("ko.html").render(context)
 
     assert "data-evaluate-url=\"/api/pronunciation-en/evaluate\"" in english
     assert "data-text-guide-url=\"/api/pronunciation-en/text-guide\"" in english
@@ -24,5 +25,11 @@ def test_language_pages_use_their_own_endpoints():
     assert "data-reading-url=\"/api/pronunciation-zh/reading\"" in chinese
     assert "data-pitch-url=\"/api/pronunciation-zh/pitch-accent\"" in chinese
     assert "data-tts-lang=\"zh-CN\"" in chinese
+    assert "data-evaluate-url=\"/api/pronunciation-ko/evaluate\"" in korean
+    assert "data-text-guide-url=\"/api/pronunciation-ko/text-guide\"" in korean
+    assert "data-coach-url=\"/api/pronunciation-ko/coach\"" in korean
+    assert "data-tts-lang=\"ko-KR\"" in korean
+    assert "data-target-lang=\"ko\"" in korean
+    assert "Pitch Accent" not in korean
     assert "data-text-guide-url=\"/api/pronunciation-zh/text-guide\"" in chinese
     assert "id=\"guide-btn\"" in chinese
