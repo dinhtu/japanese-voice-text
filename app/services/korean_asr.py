@@ -33,27 +33,26 @@ class KoreanASRService:
         return self._model is not None
 
     def load(self) -> None:
-        if self._model is not None:
-            return
-
         self._device = resolve_device(self.settings.ko_asr_device)
         model_id = self.settings.ko_asr_model
 
-        if self.is_whisper:
-            from transformers import WhisperForConditionalGeneration, WhisperProcessor
+        if self._model is None:
+            if self.is_whisper:
+                from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
-            self._processor = WhisperProcessor.from_pretrained(model_id)
-            self._model = WhisperForConditionalGeneration.from_pretrained(model_id).eval()
-        else:
-            from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+                self._processor = WhisperProcessor.from_pretrained(model_id)
+                self._model = WhisperForConditionalGeneration.from_pretrained(model_id).eval()
+            else:
+                from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
-            self._processor = Wav2Vec2Processor.from_pretrained(model_id)
-            self._model = Wav2Vec2ForCTC.from_pretrained(model_id).eval()
+                self._processor = Wav2Vec2Processor.from_pretrained(model_id)
+                self._model = Wav2Vec2ForCTC.from_pretrained(model_id).eval()
 
-        if self._device.type == "cuda" and self.settings.ko_asr_fp16:
-            self._model.half()
-        else:
-            self._model.float()
+            if self._device.type == "cuda" and self.settings.ko_asr_fp16:
+                self._model.half()
+            else:
+                self._model.float()
+
         self._model.to(self._device)
 
     def offload(self) -> None:

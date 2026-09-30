@@ -160,6 +160,15 @@ async def coach_korean(
         )
     except CoachingUnavailableError as exc:
         raise HTTPException(503, str(exc)) from exc
+    except (EmptyTargetError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(422, f"Could not read the audio: {exc}") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Korean coaching failed")
+        raise HTTPException(500, f"Coaching failed: {exc}") from exc
     finally:
         Path(path).unlink(missing_ok=True)
 
