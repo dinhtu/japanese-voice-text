@@ -47,12 +47,20 @@ class KoreanASRService:
             module_to_cpu(self._model)
 
     def recognize(self, audio_path: str | Path, align_to: str = "") -> KoreanRecognition:
+        import numpy as np
         import torch
 
         samples, sample_rate = load_audio(audio_path)
         duration = len(samples) / sample_rate if sample_rate else 0.0
         if duration > 30:
             raise ValueError("Korean recordings must be 30 seconds or shorter.")
+
+        # Audio amplitude peak normalization to prevent low-volume mic drops
+        if len(samples) > 0:
+            peak = float(np.max(np.abs(samples)))
+            if peak > 1e-4:
+                samples = (samples / peak) * 0.95
+
         self.load()
         inputs = self._processor(samples, sampling_rate=sample_rate, return_tensors="pt", padding=True)
         values = inputs.input_values.to(self._device)
@@ -61,10 +69,15 @@ class KoreanASRService:
         t0 = time.perf_counter()
         with torch.inference_mode():
             logits = self._model(values).logits
-            ids = logits.argmax(dim=-1).cpu()
+            # Slightly penalize CTC blank token on speech to prevent skipping unstressed syllables
+            pad_id = getattr(self._model.config, "pad_token_id", None) or self._processor.tokenizer.pad_token_id
+            dec_logits = logits.clone()
+            if pad_id is not None:
+                dec_logits[..., pad_id] -= 0.6
+            ids = dec_logits.argmax(dim=-1).cpu()
             windows = self._align(logits, align_to, duration) if align_to else None
         text = self._processor.batch_decode(ids)[0]
-        del logits, values
+        del logits, dec_logits, values
         return KoreanRecognition(text.strip(), duration, time.perf_counter() - t0, windows)
 
     def _align(self, logits, target: str, duration: float):
