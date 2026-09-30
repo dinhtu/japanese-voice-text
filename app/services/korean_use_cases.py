@@ -47,13 +47,29 @@ class EvaluateKoreanUseCase:
         except Exception:  # noqa: BLE001
             logger.warning("Korean VAD unavailable", exc_info=True)
 
-        from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
         windows = recognition.windows
+        if not windows and len(target_norm) > 0 and speech_duration > 0:
+            step = speech_duration / len(target_norm)
+            windows = [(i * step, (i + 1) * step) for i in range(len(target_norm))]
+
+        from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
         points = (extract_pitch_for_windows(samples, sample_rate, windows)
                   if windows else extract_pitch_per_mora(samples, sample_rate, len(target_norm)))
 
         pitch_refs = korean_pitch_pattern(target_text)
         expected_tones = [p["pitch"] for p in pitch_refs] if len(pitch_refs) == len(target_norm) else ["L"] * len(target_norm)
+
+        # Compute pitch match against AP intonation contour
+        voiced_pts = [float(p["semitone"]) for p in points if p.get("voiced") and p.get("semitone") is not None]
+        mean_pitch = sum(voiced_pts) / len(voiced_pts) if len(voiced_pts) >= 2 else None
+
+        pitch_matched = 0
+        pitch_total = 0
+        for point, exp in zip(points, expected_tones):
+            if point.get("voiced") and point.get("semitone") is not None and mean_pitch is not None:
+                pitch_total += 1
+                if (exp == "H" and point["semitone"] >= mean_pitch) or (exp == "L" and point["semitone"] <= mean_pitch):
+                    pitch_matched += 1
 
         measured_pitch = [
             {
@@ -69,13 +85,16 @@ class EvaluateKoreanUseCase:
             n_morae=len(target_norm), audio_duration=recognition.duration,
             speech_duration=speech_duration, windows=windows, moras=list(target_norm),
             errors=score.errors, pause_count=pause_count,
+            pitch_matched=pitch_matched if pitch_total > 0 else None,
+            pitch_total=pitch_total if pitch_total > 0 else None,
             speech_ratio=speech_ratio, vad_method=vad_method,
         )
-        intonation, measured = score_f0_dynamics(points)
-        aspects = replace(
-            aspects, intonation_score=intonation, intonation_measured=measured,
-            method=aspects.method.replace("cer", "hangul-asr", 1) + ("+f0" if measured else ""),
-        )
+        if aspects.intonation_score is None:
+            intonation, measured = score_f0_dynamics(points)
+            aspects = replace(
+                aspects, intonation_score=intonation, intonation_measured=measured,
+                method=aspects.method.replace("cer", "hangul-asr", 1) + ("+f0" if measured else ""),
+            )
 
         target_reading = korean_pronunciation(target_text)
         recognized_display = recognition.text if recognition.text else (recognized_norm or "—")

@@ -957,12 +957,9 @@ async function loadPitchAccent(text) {
 function comparePitch() {
   el.pitch.hidden = false;
   el.pitchBtn.setAttribute("aria-expanded", "true");
-  if (document.body.dataset.targetLang === "ko") {
-    renderKoreanPitch();
-    return Promise.resolve();
-  }
   if (pitchLoadedFor !== target.text) return loadPitchAccent(target.text);
   if (document.body.dataset.targetLang === "zh") renderChinesePitch();
+  else renderPitchChart();
   return Promise.resolve();
 }
 
