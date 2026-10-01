@@ -12,8 +12,8 @@ from app.services.korean_text import (
     korean_pitch_pattern,
     korean_pronunciation,
     normalize_korean,
-    score_korean_syllables,
 )
+from app.services.scoring import score_pronunciation
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 from src.asr.inference import load_audio
 
@@ -32,7 +32,7 @@ class EvaluateKoreanUseCase:
         recognition = self.asr.recognize(audio_path, align_to=target_norm)
         recognized_norm = normalize_korean(recognition.text)
 
-        score = score_korean_syllables(target_text, recognition.text)
+        score = score_pronunciation(target_norm, recognized_norm)
         samples, sample_rate = load_audio(audio_path)
 
         speech_duration = recognition.duration
