@@ -1,22 +1,14 @@
-"""Japanese text to kana (hiragana) conversion using fugashi (NINJAL UniDic) & pyopenjtalk."""
+"""Japanese text to kana (hiragana) conversion using pykakasi."""
 
 import logging
 import re
 import unicodedata
 
+import pykakasi
+
 logger = logging.getLogger(__name__)
 
-try:
-    import fugashi
-
-    _fugashi_tagger = fugashi.Tagger()
-except Exception:  # noqa: BLE001
-    _fugashi_tagger = None
-
-try:
-    import pyopenjtalk
-except Exception:  # noqa: BLE001
-    pyopenjtalk = None
+_kakasi = pykakasi.kakasi()
 
 _ALPHA_TO_KATA = {
     "A": "エー", "B": "ビー", "C": "シー", "D": "ディー", "E": "イー", "F": "エフ",
@@ -32,33 +24,9 @@ _CLEAN_RE = re.compile(r"[・]+")
 class JapaneseKanaConverter:
     """Convert Japanese text to space-separated hiragana characters."""
 
-    def _g2p_unidic(self, text: str) -> str:
-        if _fugashi_tagger is None:
-            return ""
-        try:
-            nodes = list(_fugashi_tagger(text))
-            words: list[str] = []
-            for i, w in enumerate(nodes):
-                surf = w.surface
-                pron = getattr(w.feature, "pron", None)
-                kana = getattr(w.feature, "kana", None)
-                if surf == "何":
-                    next_w = nodes[i + 1].surface if i + 1 < len(nodes) else ""
-                    if next_w in ("を", "が", "から", "まで", "か", "？", "?") or not next_w:
-                        words.append("ナニ")
-                    else:
-                        words.append("ナン")
-                    continue
-                if pron and pron != "*":
-                    words.append(pron)
-                elif kana and kana != "*":
-                    words.append(kana)
-                else:
-                    words.append(surf)
-            return "".join(words)
-        except Exception:  # noqa: BLE001
-            logger.debug("Fugashi UniDic G2P failed; falling back", exc_info=True)
-            return ""
+    @property
+    def engine(self) -> str:
+        return "pykakasi"
 
     def text_to_kana(self, text: str) -> str:
         text = _CLEAN_RE.sub(" ", text)
@@ -66,27 +34,23 @@ class JapaneseKanaConverter:
         if not text:
             return ""
 
-        katakana = self._g2p_unidic(text)
-        if not katakana and pyopenjtalk is not None:
-            try:
-                katakana = pyopenjtalk.g2p(text, kana=True)
-            except Exception:  # noqa: BLE001
-                katakana = ""
-        if not katakana:
+        # pykakasi converts Japanese text into natural compound hiragana readings
+        res = _kakasi.convert(text)
+        hira = "".join(item["hira"] for item in res)
+        if not hira:
             return ""
 
-        # NFKC: full-width latin (e.g. "Ａ") -> ASCII ("A")
-        katakana = unicodedata.normalize("NFKC", katakana)
-        katakana = "".join(_ALPHA_TO_KATA.get(ch.upper(), ch) for ch in katakana)
-        katakana = katakana.translate(_DROP_CHARS)
-        katakana = "".join(ch for ch in katakana if self._is_kana(ch))
+        # NFKC normalization
+        hira = unicodedata.normalize("NFKC", hira)
+        hira = "".join(_ALPHA_TO_KATA.get(ch.upper(), ch) for ch in hira)
+        hira = hira.translate(_DROP_CHARS)
+        hira = "".join(ch for ch in self._kata_to_hira(hira) if self._is_kana(ch))
 
-        if not katakana:
+        if not hira:
             return ""
 
-        hiragana = self._kata_to_hira(katakana)
         # Deliberately drop <sp> to avoid brittle word-boundary supervision.
-        return " ".join(list(hiragana))
+        return " ".join(list(hira))
 
     def _kata_to_hira(self, text: str) -> str:
         """Convert katakana to hiragana."""
