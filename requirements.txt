@@ -34,6 +34,9 @@ pypinyin>=0.53.0
 numpy>=1.26.0
 soundfile>=0.12.0
 pyopenjtalk>=0.4.1
+# Japanese morphological analysis & accurate reading (NINJAL UniDic)
+fugashi>=1.3.0
+unidic-lite>=1.0.8
 # Same extra as `pip install pyopenjtalk[marine]` — DNN accent for
 # /pitch-accent (jp-pitch-accent-analyzer). Falls back to NAIST dict
 # if this is missing.

@@ -1,9 +1,22 @@
-"""Japanese text to kana (hiragana) conversion using pyopenjtalk."""
+"""Japanese text to kana (hiragana) conversion using fugashi (NINJAL UniDic) & pyopenjtalk."""
 
+import logging
 import re
 import unicodedata
 
-import pyopenjtalk
+logger = logging.getLogger(__name__)
+
+try:
+    import fugashi
+
+    _fugashi_tagger = fugashi.Tagger()
+except Exception:  # noqa: BLE001
+    _fugashi_tagger = None
+
+try:
+    import pyopenjtalk
+except Exception:  # noqa: BLE001
+    pyopenjtalk = None
 
 _ALPHA_TO_KATA = {
     "A": "エー", "B": "ビー", "C": "シー", "D": "ディー", "E": "イー", "F": "エフ",
@@ -19,13 +32,46 @@ _CLEAN_RE = re.compile(r"[・]+")
 class JapaneseKanaConverter:
     """Convert Japanese text to space-separated hiragana characters."""
 
+    def _g2p_unidic(self, text: str) -> str:
+        if _fugashi_tagger is None:
+            return ""
+        try:
+            nodes = list(_fugashi_tagger(text))
+            words: list[str] = []
+            for i, w in enumerate(nodes):
+                surf = w.surface
+                pron = getattr(w.feature, "pron", None)
+                kana = getattr(w.feature, "kana", None)
+                if surf == "何":
+                    next_w = nodes[i + 1].surface if i + 1 < len(nodes) else ""
+                    if next_w in ("を", "が", "から", "まで", "か", "？", "?") or not next_w:
+                        words.append("ナニ")
+                    else:
+                        words.append("ナン")
+                    continue
+                if pron and pron != "*":
+                    words.append(pron)
+                elif kana and kana != "*":
+                    words.append(kana)
+                else:
+                    words.append(surf)
+            return "".join(words)
+        except Exception:  # noqa: BLE001
+            logger.debug("Fugashi UniDic G2P failed; falling back", exc_info=True)
+            return ""
+
     def text_to_kana(self, text: str) -> str:
         text = _CLEAN_RE.sub(" ", text)
         text = re.sub(r"\s+", " ", text).strip()
         if not text:
             return ""
 
-        katakana = pyopenjtalk.g2p(text, kana=True)
+        katakana = self._g2p_unidic(text)
+        if not katakana and pyopenjtalk is not None:
+            try:
+                katakana = pyopenjtalk.g2p(text, kana=True)
+            except Exception:  # noqa: BLE001
+                katakana = ""
         if not katakana:
             return ""
 
