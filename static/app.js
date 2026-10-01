@@ -476,8 +476,7 @@ async function evaluate(wav) {
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
     learnerPitch = result.measured_pitch ?? [];
-    if (document.body.dataset.targetLang === "ko") renderKoreanPitch();
-    else if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
+    if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
     else if (referencePattern) renderPitchChart();
   } catch (error) {
     showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
@@ -1183,8 +1182,7 @@ el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
   learnerPitch = null;
-  if (document.body.dataset.targetLang === "ko") renderKoreanPitch();
-  else if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
+  if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
   else if (referencePattern) renderPitchChart();
 });
 
