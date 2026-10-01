@@ -38,15 +38,23 @@ class JapaneseKanaConverter:
         try:
             nodes = list(_fugashi_tagger(text))
             words: list[str] = []
-            for w in nodes:
+            for i, w in enumerate(nodes):
+                surf = w.surface
                 pron = getattr(w.feature, "pron", None)
                 kana = getattr(w.feature, "kana", None)
+                if surf == "何":
+                    next_w = nodes[i + 1].surface if i + 1 < len(nodes) else ""
+                    if next_w in ("を", "が", "から", "まで", "か", "？", "?") or not next_w:
+                        words.append("ナニ")
+                    else:
+                        words.append("ナン")
+                    continue
                 if pron and pron != "*":
                     words.append(pron)
                 elif kana and kana != "*":
                     words.append(kana)
                 else:
-                    words.append(w.surface)
+                    words.append(surf)
             return "".join(words)
         except Exception:  # noqa: BLE001
             logger.debug("Fugashi UniDic G2P failed; falling back", exc_info=True)
