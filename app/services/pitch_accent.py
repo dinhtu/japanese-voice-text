@@ -34,6 +34,12 @@ def _split_kana_morae(kana: str) -> list[str]:
     return morae
 
 
+def _hira_to_kata(text: str) -> str:
+    return "".join(
+        chr(ord(ch) + 0x60) if 0x3041 <= ord(ch) <= 0x3096 else ch for ch in text
+    )
+
+
 def _kata_to_hira(text: str) -> str:
     return "".join(
         chr(ord(ch) - 0x60) if 0x30A1 <= ord(ch) <= 0x30F6 else ch for ch in text
@@ -74,7 +80,23 @@ def pitch_accent_pattern(text: str) -> list[MoraPitch]:
             continue
 
         atype_str = getattr(w.feature, "aType", "*")
-        atype = int(atype_str) if atype_str and atype_str.isdigit() else None
+        if atype_str and atype_str != "*":
+            first_atype = atype_str.split(",")[0].strip()
+            atype = int(first_atype) if first_atype.isdigit() else None
+        else:
+            atype = None
+
+        # Fallback: if hiragana-written loanword (e.g. ぷろじぇくと), try looking up Katakana in UniDic
+        if atype is None and w.surface:
+            kata_surface = _hira_to_kata(w.surface)
+            if kata_surface != w.surface:
+                kata_nodes = list(_fugashi_tagger(kata_surface))
+                if kata_nodes:
+                    k_atype_str = getattr(kata_nodes[0].feature, "aType", "*")
+                    if k_atype_str and k_atype_str != "*":
+                        k_first = k_atype_str.split(",")[0].strip()
+                        if k_first.isdigit():
+                            atype = int(k_first)
 
         if pos in ("助詞", "助動詞") and atype is None:
             for _ in token_morae:
@@ -102,8 +124,10 @@ def pitch_accent_pattern(text: str) -> list[MoraPitch]:
                         in_high = False
                         hl_list.append(("L", phrase_idx))
             else:
-                for _ in token_morae:
-                    hl_list.append(("H" if in_high else "L", phrase_idx))
+                # Standard Japanese default for unknown content words: Heiban (L H H H...)
+                in_high = True
+                for idx, _ in enumerate(token_morae):
+                    hl_list.append(("L" if idx == 0 and len(token_morae) > 1 else "H", phrase_idx))
 
     res: list[MoraPitch] = []
     for i, mora in enumerate(full_morae):

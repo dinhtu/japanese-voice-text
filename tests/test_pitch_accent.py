@@ -31,6 +31,18 @@ def test_practice_sentence_mora_count_and_reading():
     assert [m.pitch for m in moras[:3]] == ["H", "L", "L"]
 
 
+def test_hiragana_loanword_pitch_pattern():
+    """Loanwords written in Hiragana (e.g. ぷろじぇくと for プロジェクト) resolve accent."""
+    moras = pitch_accent_pattern("ぷろじぇくと")
+    assert [m.mora for m in moras] == ["ぷ", "ろ", "じぇ", "く", "と"]
+    pitches = [m.pitch for m in moras]
+    # Should not be all L (contains H)
+    assert "H" in pitches
+    # First mora is L and second is H
+    assert pitches[0] == "L"
+    assert pitches[1] == "H"
+
+
 def test_empty_text_raises():
     with pytest.raises(ValueError):
         pitch_accent_pattern("")
