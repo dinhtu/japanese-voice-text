@@ -45,6 +45,9 @@ const el = {
   customForm: $("custom-form"),
   customInput: $("custom-input"),
   customApply: $("custom-apply"),
+  suggest: $("search-suggest"),
+  searchEmpty: $("search-empty"),
+  targetResult: $("target-result"),
   recorder: $("recorder"),
   dial: $("dial"),
   level: $("level"),
@@ -200,8 +203,9 @@ function encodeWav(samples, sampleRate) {
 
 /* --------------------------------------------------------------- State */
 
+/** Empty until the learner searches a sentence (or picks a sample). */
 let target = {
-  text: el.targetText.textContent.trim(),
+  text: "",
 };
 let status = "idle";
 let audioUrl = null;
@@ -249,6 +253,8 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
   el.targetReading.hidden = !reading;
   el.targetMeaning.textContent = meaning;
   el.targetMeaning.hidden = !meaning;
+  if (el.targetResult) el.targetResult.hidden = false;
+  if (el.searchEmpty) el.searchEmpty.hidden = true;
 
   for (const other of el.chips.children) other.classList.toggle("chip--active", other === chip);
 
@@ -337,8 +343,17 @@ function stopRecording() {
   if (recorder && recorder.state !== "inactive") recorder.stop();
 }
 
+/** Recording/upload need a sentence to score against. */
+function requireTarget() {
+  if (target.text) return true;
+  showError("Hãy nhập câu cần đọc ở bước 1 và bấm Tìm trước khi ghi âm.");
+  el.customInput.focus();
+  return false;
+}
+
 async function startRecording() {
   if (status === "recording" || status === "requesting") return;
+  if (!requireTarget()) return;
 
   if (!navigator.mediaDevices?.getUserMedia) {
     showError("Trình duyệt không hỗ trợ ghi âm. Hãy dùng Chrome hoặc Edge (qua HTTPS hoặc localhost).");
@@ -415,6 +430,7 @@ function showPlayback(wav) {
 /** Re-encode a picked/dropped file and score it like a fresh recording. */
 async function submitFile(file) {
   if (!file || status !== "idle") return;
+  if (!requireTarget()) return;
 
   const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
   // A dropped file bypasses the input's accept filter, so check it here too.
@@ -713,7 +729,7 @@ function resetPitch() {
   referencePattern = null;
   learnerPitch = null;
   el.pitch.hidden = true;
-  el.pitchBtn.setAttribute("aria-expanded", "false");
+  el.pitchBtn?.setAttribute("aria-expanded", "false");
   el.pitchChart.hidden = true;
   el.pitchChart.innerHTML = "";
 }
@@ -937,11 +953,13 @@ async function loadPitchAccent(text) {
       throw new Error(detail || `Y\u00eau c\u1ea7u th\u1ea5t b\u1ea1i (HTTP ${response.status})`);
     }
     const result = await response.json();
+    if (text !== target.text) return;
     referencePattern = result.pattern;
     pitchLoadedFor = text;
     if (document.body.dataset.targetLang === "zh") renderChinesePitch();
     else renderPitchChart();
   } catch (error) {
+    if (text !== target.text) return;
     referencePattern = null;
     pitchLoadedFor = null;
     setPitchStatus(
@@ -955,7 +973,7 @@ async function loadPitchAccent(text) {
  *  F0 curve comes from /evaluate's measured_pitch after scoring. */
 function comparePitch() {
   el.pitch.hidden = false;
-  el.pitchBtn.setAttribute("aria-expanded", "true");
+  el.pitchBtn?.setAttribute("aria-expanded", "true");
   if (pitchLoadedFor !== target.text) return loadPitchAccent(target.text);
   if (document.body.dataset.targetLang === "zh") renderChinesePitch();
   else renderPitchChart();
@@ -968,8 +986,11 @@ el.coachBtn.addEventListener("click", requestCoach);
 
 let textGuideLoadedFor = null;
 let textGuideLoadedLang = null;
+/** Bumped per request so a slow answer for an old search is dropped. */
+let textGuideRequestId = 0;
 
 function resetTextGuide() {
+  textGuideRequestId += 1;
   textGuideLoadedFor = null;
   textGuideLoadedLang = null;
   if (el.guidePanel) el.guidePanel.hidden = true;
@@ -985,19 +1006,22 @@ function resetTextGuide() {
 }
 
 async function requestTextGuide() {
-  if (!el.guidePanel || !el.guideBtn) return;
+  if (!el.guidePanel || !target.text) return;
 
   el.guidePanel.hidden = false;
-  el.guideBtn.setAttribute("aria-expanded", "true");
+  el.guideBtn?.setAttribute("aria-expanded", "true");
   el.guideContent.hidden = true;
   el.guideStatus.hidden = false;
   el.guideStatus.classList.remove("is-error");
   el.guideStatus.textContent = "Đang tạo hướng dẫn đọc từ AI…";
 
   const selectedLang = el.guideLang ? el.guideLang.value : "vi";
+  const requestedText = target.text;
+  const requestId = ++textGuideRequestId;
 
   try {
-    const response = await fetch(`${TEXT_GUIDE_API_URL}?text=${encodeURIComponent(target.text)}&lang=${encodeURIComponent(selectedLang)}`);
+    const response = await fetch(`${TEXT_GUIDE_API_URL}?text=${encodeURIComponent(requestedText)}&lang=${encodeURIComponent(selectedLang)}`);
+    if (requestId !== textGuideRequestId) return;
     if (!response.ok) {
       const detail = await response
         .json()
@@ -1006,12 +1030,14 @@ async function requestTextGuide() {
       throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
     }
     const result = await response.json();
+    if (requestId !== textGuideRequestId) return;
     el.guideContent.textContent = result.guide;
     el.guideContent.hidden = false;
     el.guideStatus.hidden = true;
-    textGuideLoadedFor = target.text;
+    textGuideLoadedFor = requestedText;
     textGuideLoadedLang = selectedLang;
   } catch (error) {
+    if (requestId !== textGuideRequestId) return;
     el.guideStatus.textContent =
       error instanceof Error ? error.message : "Không tạo được hướng dẫn đọc. Hãy thử lại.";
     el.guideStatus.classList.add("is-error");
@@ -1043,7 +1069,7 @@ if (el.guideLang) {
   });
 }
 
-el.pitchBtn.addEventListener("click", () => {
+el.pitchBtn?.addEventListener("click", () => {
   const opening = el.pitch.hidden;
   el.pitch.hidden = !opening;
   el.pitchBtn.setAttribute("aria-expanded", String(opening));
@@ -1088,38 +1114,220 @@ function renderChinesePitch() {
 
 /* --------------------------------------------------------------- Wiring */
 
+/* ------------------------------------------------------ Search + history */
+
+/** One history per practice language, so /en suggestions never show on /. */
+const HISTORY_COOKIE = `pv_search_history_${(TTS_LANG.split("-")[0] || "ja").toLowerCase()}`;
+const HISTORY_MAX_ITEMS = 10;
+const HISTORY_SHOWN = 8;
+/** Cookies cap out near 4 KB; CJK text triples in size once URL-encoded. */
+const HISTORY_MAX_BYTES = 3500;
+
+function readHistory() {
+  try {
+    const raw = document.cookie
+      .split("; ")
+      .find((part) => part.startsWith(`${HISTORY_COOKIE}=`));
+    if (!raw) return [];
+    const list = JSON.parse(decodeURIComponent(raw.slice(HISTORY_COOKIE.length + 1)));
+    return Array.isArray(list) ? list.filter((item) => typeof item === "string" && item) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(list) {
+  let items = list.slice(0, HISTORY_MAX_ITEMS);
+  let value = encodeURIComponent(JSON.stringify(items));
+  while (items.length && value.length > HISTORY_MAX_BYTES) {
+    items = items.slice(0, -1);
+    value = encodeURIComponent(JSON.stringify(items));
+  }
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${HISTORY_COOKIE}=${value}; Max-Age=31536000; Path=/; SameSite=Lax${secure}`;
+}
+
+function addHistory(text) {
+  writeHistory([text, ...readHistory().filter((item) => item !== text)]);
+}
+
+function removeHistory(text) {
+  writeHistory(readHistory().filter((item) => item !== text));
+}
+
+let suggestItems = [];
+let suggestIndex = -1;
+
+function hideSuggest() {
+  if (!el.suggest) return;
+  el.suggest.hidden = true;
+  el.suggest.replaceChildren();
+  el.customInput.setAttribute("aria-expanded", "false");
+  el.customInput.removeAttribute("aria-activedescendant");
+  suggestItems = [];
+  suggestIndex = -1;
+}
+
+/** `text` with the first case-insensitive hit of `query` wrapped in <mark>. */
+function highlighted(text, query) {
+  const span = document.createElement("span");
+  span.className = "search__option-text";
+  const lower = text.toLowerCase();
+  const at = query && lower.length === text.length ? lower.indexOf(query) : -1;
+  if (at < 0) {
+    span.textContent = text;
+    return span;
+  }
+  const mark = document.createElement("mark");
+  mark.textContent = text.slice(at, at + query.length);
+  span.append(text.slice(0, at), mark, text.slice(at + query.length));
+  return span;
+}
+
+function renderSuggest() {
+  if (!el.suggest || el.customInput.disabled) return;
+  const query = el.customInput.value.replace(/\s+/g, " ").trim().toLowerCase();
+  suggestItems = readHistory()
+    .filter((item) => !query || item.toLowerCase().includes(query))
+    .filter((item) => item.toLowerCase() !== query)
+    .slice(0, HISTORY_SHOWN);
+  suggestIndex = -1;
+  el.customInput.removeAttribute("aria-activedescendant");
+
+  if (!suggestItems.length) {
+    hideSuggest();
+    return;
+  }
+
+  const head = document.createElement("li");
+  head.className = "search__suggest-head";
+  head.setAttribute("role", "presentation");
+  head.textContent = "Tìm kiếm gần đây";
+
+  const options = suggestItems.map((item, index) => {
+    const li = document.createElement("li");
+    li.className = "search__option";
+    li.id = `search-option-${index}`;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", "false");
+    li.dataset.index = String(index);
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("class", "icon icon--sm search__option-icon");
+    icon.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#i-history");
+    icon.append(use);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "search__option-remove";
+    remove.title = "Xóa khỏi lịch sử";
+    remove.setAttribute("aria-label", `Xóa "${item}" khỏi lịch sử`);
+    remove.dataset.remove = String(index);
+    remove.textContent = "×";
+
+    li.append(icon, highlighted(item, query), remove);
+    return li;
+  });
+
+  el.suggest.replaceChildren(head, ...options);
+  el.suggest.hidden = false;
+  el.customInput.setAttribute("aria-expanded", "true");
+}
+
+function moveSuggest(step) {
+  if (!suggestItems.length) return;
+  suggestIndex = (suggestIndex + step + suggestItems.length) % suggestItems.length;
+  for (const option of el.suggest.querySelectorAll(".search__option")) {
+    const active = Number(option.dataset.index) === suggestIndex;
+    option.classList.toggle("is-active", active);
+    option.setAttribute("aria-selected", String(active));
+    if (active) option.scrollIntoView({ block: "nearest" });
+  }
+  el.customInput.setAttribute("aria-activedescendant", `search-option-${suggestIndex}`);
+}
+
+/** Show `text` as the sentence to read, then load its AI guide and pitch. */
+function runSearch(text, chip = null) {
+  hideSuggest();
+  const owner = chip || [...el.chips.children].find((item) => item.dataset.text === text) || null;
+  addHistory(text);
+  if (text === target.text) return;
+
+  setTarget({
+    text,
+    reading: owner?.dataset.reading || "",
+    meaning: owner?.dataset.meaning || "",
+    chip: owner,
+  });
+  requestTextGuide();
+  comparePitch();
+}
+
 el.chips.addEventListener("click", (event) => {
   const chip = event.target.closest(".chip");
-  if (!chip || chip.classList.contains("chip--active")) return;
-
-  el.customInput.value = "";
-  setTarget({
-    text: chip.dataset.text,
-    reading: chip.dataset.reading,
-    meaning: chip.dataset.meaning,
-    chip,
-  });
+  if (!chip || chip.disabled) return;
+  el.customInput.value = chip.dataset.text;
+  runSearch(chip.dataset.text, chip);
 });
 
 el.customForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  // Collapse the newlines a textarea allows; the API scores one sentence.
+  // The API scores one sentence, so collapse any pasted newlines/whitespace.
   const text = el.customInput.value.replace(/\s+/g, " ").trim();
   if (!text) {
     el.customInput.focus();
     return;
   }
-  // No preset chip owns this text, so there is no reading or meaning to show.
-  setTarget({ text });
+  el.customInput.value = text;
+  runSearch(text);
 });
 
-// Enter submits, Shift+Enter keeps the newline.
+el.customInput.addEventListener("input", renderSuggest);
+el.customInput.addEventListener("focus", renderSuggest);
+el.customInput.addEventListener("blur", hideSuggest);
+
 el.customInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (el.suggest?.hidden !== false) {
+    if (event.key === "ArrowDown") {
+      renderSuggest();
+      if (suggestItems.length) {
+        event.preventDefault();
+        moveSuggest(1);
+      }
+    }
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
+    moveSuggest(event.key === "ArrowDown" ? 1 : -1);
+  } else if (event.key === "Enter" && suggestIndex >= 0) {
+    event.preventDefault();
+    el.customInput.value = suggestItems[suggestIndex];
     el.customForm.requestSubmit();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    hideSuggest();
   }
 });
+
+if (el.suggest) {
+  // Keep focus in the input, so a click does not blur (and close) the list first.
+  el.suggest.addEventListener("mousedown", (event) => event.preventDefault());
+  el.suggest.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove]");
+    if (remove) {
+      removeHistory(suggestItems[Number(remove.dataset.remove)]);
+      renderSuggest();
+      return;
+    }
+    const option = event.target.closest(".search__option");
+    if (!option) return;
+    el.customInput.value = suggestItems[Number(option.dataset.index)];
+    el.customForm.requestSubmit();
+  });
+}
 
 function pickTtsVoice(lang) {
   const voices = window.speechSynthesis.getVoices();
@@ -1132,7 +1340,7 @@ function pickTtsVoice(lang) {
 }
 
 el.speak.addEventListener("click", () => {
-  if (!window.speechSynthesis) return;
+  if (!window.speechSynthesis || !target.text) return;
   const utterance = new SpeechSynthesisUtterance(target.text);
   utterance.lang = TTS_LANG;
   utterance.rate = TTS_LANG.startsWith("en") ? 0.95 : 0.85;

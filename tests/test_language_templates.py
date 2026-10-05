@@ -18,7 +18,9 @@ def test_language_pages_use_their_own_endpoints():
 
     assert "data-evaluate-url=\"/api/pronunciation-en/evaluate\"" in english
     assert "data-text-guide-url=\"/api/pronunciation-en/text-guide\"" in english
-    assert "id=\"guide-btn\"" in english
+    assert "id=\"custom-input\"" in english
+    assert "id=\"search-suggest\"" in english
+    assert "id=\"guide-btn\"" not in english
     assert "pronunciation-zh" not in english
     assert "data-reading-url" not in english
     assert "data-evaluate-url=\"/api/pronunciation-zh/evaluate\"" in chinese
@@ -34,4 +36,5 @@ def test_language_pages_use_their_own_endpoints():
     assert "data-target-lang=\"ko\"" in korean
     assert "Pitch Accent" not in korean
     assert "data-text-guide-url=\"/api/pronunciation-zh/text-guide\"" in chinese
-    assert "id=\"guide-btn\"" in chinese
+    assert "id=\"custom-input\"" in chinese
+    assert "id=\"guide-btn\"" not in chinese

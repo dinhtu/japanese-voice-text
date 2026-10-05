@@ -25,6 +25,18 @@
   >
     <!-- Icon sprite: only the glyphs this page uses, so no icon library. -->
     <svg hidden xmlns="http://www.w3.org/2000/svg">
+      <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 6 6 18M6 6l12 12" />
+      </symbol>
       <symbol id="i-languages" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="m5 8 6 6M4 14l6-6 3-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" />
@@ -115,29 +127,71 @@
       </header>
 
       <div class="stack">
-        <!-- 1. Target sentence -->
+        <!-- 1. Target sentence: search, then show the AI reading guide + reference pitch -->
         <section class="card">
           <div class="card__head">
             <h2 class="card__title"><span class="step">1</span> Câu cần đọc</h2>
-            <div class="card__actions">
-              <button type="button" class="link-btn" id="guide-btn" title="Hướng dẫn đọc từng cụm từ từ AI" aria-expanded="false">
-                <svg class="icon icon--sm"><use href="#i-chat" /></svg>
-                Hướng dẫn đọc AI
-              </button>
-              <button type="button" class="link-btn" id="pitch-btn" title="Xem cao độ mẫu (H/L) và F0 đo từ bản ghi" aria-expanded="false">
-                <svg class="icon icon--sm"><use href="#i-pitch" /></svg>
-                Cao độ
-              </button>
-              <button type="button" class="link-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
-                <svg class="icon icon--sm"><use href="#i-volume" /></svg>
-                Nghe mẫu
-              </button>
-            </div>
           </div>
           <div class="card__body">
-            <p class="target" id="target-text">{{ default_text.text }}</p>
-            <p class="muted" id="target-reading">{{ default_text.reading }}</p>
-            <p class="muted muted--soft" id="target-meaning">{{ default_text.meaning }}</p>
+            <form class="search" id="custom-form" role="search" autocomplete="off">
+              <div class="search__field">
+                <svg class="icon icon--sm search__icon" aria-hidden="true"><use href="#i-search" /></svg>
+                <input
+                  type="search"
+                  class="search__input"
+                  id="custom-input"
+                  maxlength="200"
+                  placeholder="e.g. How are you today?"
+                  aria-label="Nhập câu cần đọc"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="search-suggest"
+                  enterkeyhint="search"
+                />
+                <ul class="search__suggest" id="search-suggest" role="listbox" aria-label="Lịch sử tìm kiếm" hidden></ul>
+              </div>
+              <button type="submit" class="solid-btn search__btn" id="custom-apply">
+                <svg class="icon icon--sm"><use href="#i-search" /></svg>
+                Tìm
+              </button>
+            </form>
+
+            <div class="search__samples">
+              <p class="label">Hoặc chọn câu mẫu</p>
+              <div class="chips" id="chips">
+                {% for item in texts %}
+                <button
+                  type="button"
+                  class="chip"
+                  data-id="{{ item.id }}"
+                  data-text="{{ item.text }}"
+                  data-reading="{{ item.reading }}"
+                  data-meaning="{{ item.meaning }}"
+                >
+                  <svg class="icon icon--xs chip__check"><use href="#i-check" /></svg>
+                  <span>{{ item.text }}</span>
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+
+            <p class="search__empty" id="search-empty">
+              Nhập câu cần luyện rồi bấm <strong>Tìm</strong> để xem hướng dẫn đọc từ AI và cao độ mẫu.
+            </p>
+
+            <div class="search__result" id="target-result" hidden>
+              <div class="target-row">
+                <div class="target-row__text">
+                  <p class="target" id="target-text"></p>
+                  <p class="muted" id="target-reading" hidden></p>
+                  <p class="muted muted--soft" id="target-meaning" hidden></p>
+                </div>
+                <button type="button" class="outline-btn" id="speak" title="Nghe mẫu (giọng đọc của trình duyệt)">
+                  <svg class="icon icon--sm"><use href="#i-volume" /></svg>
+                  Nghe mẫu
+                </button>
+              </div>
 
             <div class="pitch" id="guide-panel" hidden>
               <div class="pitch__head">
@@ -173,45 +227,6 @@
                 <div class="pitch__chart" id="pitch-chart" hidden></div>
               </div>
             </div>
-
-            <div class="divider">
-              <p class="label">Chọn câu khác</p>
-              <div class="chips" id="chips">
-                {% for item in texts %}
-                <button
-                  type="button"
-                  class="chip{% if item.id == default_text.id %} chip--active{% endif %}"
-                  data-id="{{ item.id }}"
-                  data-text="{{ item.text }}"
-                  data-reading="{{ item.reading }}"
-                  data-meaning="{{ item.meaning }}"
-                >
-                  <svg class="icon icon--xs chip__check"><use href="#i-check" /></svg>
-                  <span>{{ item.text }}</span>
-                </button>
-                {% endfor %}
-              </div>
-            </div>
-
-            <div class="divider">
-              <p class="label">
-                <svg class="icon icon--xs"><use href="#i-pencil" /></svg>
-                Hoặc tự nhập câu
-              </p>
-              <form class="compose" id="custom-form">
-                <textarea
-                  class="compose__input"
-                  id="custom-input"
-                  rows="2"
-                  maxlength="200"
-                  placeholder="e.g. How are you today?"
-                  aria-label="Câu tự nhập"
-                ></textarea>
-                <button type="submit" class="solid-btn" id="custom-apply">
-                  <svg class="icon icon--sm"><use href="#i-check" /></svg>
-                  Dùng câu này
-                </button>
-              </form>
             </div>
           </div>
         </section>
