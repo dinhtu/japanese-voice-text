@@ -253,6 +253,7 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
   el.targetReading.textContent = reading;
   el.targetReading.hidden = !reading;
   el.targetMeaning.textContent = meaning;
+  el.targetMeaning.removeAttribute("title");
   el.targetMeaning.hidden = !meaning;
   if (el.targetResult) el.targetResult.hidden = false;
   if (el.searchEmpty) el.searchEmpty.hidden = true;
@@ -995,7 +996,8 @@ let textGuideRequestId = 0;
  * language, keyed by sentence + guide language. Least-recently-used first
  * out. Storage can be missing or full (private mode, quota), so every
  * access is guarded and the page still works without it. */
-const GUIDE_CACHE_KEY = `pv_guide_cache_${(TTS_LANG.split("-")[0] || "ja").toLowerCase()}`;
+// v2: entries also carry the AI `meaning`; v1 entries (guide only) are ignored.
+const GUIDE_CACHE_KEY = `pv_guide_cache_v2_${(TTS_LANG.split("-")[0] || "ja").toLowerCase()}`;
 const GUIDE_CACHE_MAX = 50;
 
 function guideCacheId(text, lang) {
@@ -1033,12 +1035,22 @@ function getCachedGuide(text, lang) {
   return hit || null;
 }
 
-function saveCachedGuide(text, lang, guide) {
+function saveCachedGuide(text, lang, guide, meaning) {
   const id = guideCacheId(text, lang);
-  writeGuideCache([{ id, guide, savedAt: Date.now() }, ...readGuideCache().filter((item) => item.id !== id)]);
+  writeGuideCache([{ id, guide, meaning, savedAt: Date.now() }, ...readGuideCache().filter((item) => item.id !== id)]);
 }
 
-function showGuide(guide, savedAt = null) {
+/** Meaning of the searched text, shown under it. The AI one (in the guide
+ *  language) replaces a preset sentence's built-in meaning. */
+function showMeaning(meaning) {
+  if (!meaning) return;
+  el.targetMeaning.textContent = meaning;
+  el.targetMeaning.title = "Nghĩa do AI dịch";
+  el.targetMeaning.hidden = false;
+}
+
+function showGuide(guide, savedAt = null, meaning = "") {
+  showMeaning(meaning);
   el.guideContent.textContent = guide;
   el.guideContent.hidden = false;
   el.guideStatus.hidden = true;
@@ -1084,7 +1096,7 @@ async function requestTextGuide({ force = false } = {}) {
   if (!force) {
     const cached = getCachedGuide(requestedText, selectedLang);
     if (cached) {
-      showGuide(cached.guide, cached.savedAt);
+      showGuide(cached.guide, cached.savedAt, cached.meaning || "");
       textGuideLoadedFor = requestedText;
       textGuideLoadedLang = selectedLang;
       return;
@@ -1108,8 +1120,9 @@ async function requestTextGuide({ force = false } = {}) {
     }
     const result = await response.json();
     if (requestId !== textGuideRequestId) return;
-    saveCachedGuide(requestedText, selectedLang, result.guide);
-    showGuide(result.guide, Date.now());
+    const meaning = (result.meaning || "").trim();
+    saveCachedGuide(requestedText, selectedLang, result.guide, meaning);
+    showGuide(result.guide, Date.now(), meaning);
     textGuideLoadedFor = requestedText;
     textGuideLoadedLang = selectedLang;
   } catch (error) {

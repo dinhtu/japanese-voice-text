@@ -251,3 +251,36 @@ def test_text_reading_guide_prompts_support_languages():
         assert len(TEXT_READING_GUIDE_PROMPTS[lang]) > 0
 
 
+
+
+def test_text_guide_prompts_ask_for_meaning_in_every_language():
+    from app.services.coaching import TEXT_GUIDE_MEANING_RULES
+    for lang in ("vi", "en", "jp", "ja", "ko", "tw", "zh"):
+        assert '"meaning"' in TEXT_GUIDE_MEANING_RULES[lang]
+        assert '"guide"' in TEXT_GUIDE_MEANING_RULES[lang]
+
+
+def test_parse_text_guide_reads_meaning_and_guide():
+    from app.services.coaching import _parse_text_guide
+    result = _parse_text_guide(
+        '{"meaning": "Xin  chào,\\n bạn khỏe không?", "guide": "Hướng dẫn:\\n• How are you"}'
+    )
+    assert result.meaning == "Xin chào, bạn khỏe không?"
+    assert result.guide == "Hướng dẫn:\n• How are you"
+
+
+def test_parse_text_guide_accepts_fenced_json():
+    from app.services.coaching import _parse_text_guide
+    result = _parse_text_guide('```json\n{"meaning": "Trường cấp 3", "guide": "• 高校"}\n```')
+    assert result.meaning == "Trường cấp 3"
+    assert result.guide == "• 高校"
+
+
+def test_parse_text_guide_falls_back_to_plain_text():
+    from app.services.coaching import _parse_text_guide
+    result = _parse_text_guide('Sure! Here it is\n• 高校で (Kou-kou de): Đọc là "Cô-cô đê".')
+    assert result.meaning == ""
+    assert result.guide.startswith("• 高校で")
+    cut_off = _parse_text_guide('{"meaning": "Trường cấp 3", "guide": "• 高校で\\n• 英語を (Ei')
+    assert cut_off.meaning == "Trường cấp 3"
+    assert cut_off.guide == "• 高校で\n• 英語を (Ei"

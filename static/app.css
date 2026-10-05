@@ -1373,3 +1373,13 @@ html[lang="en"] .pitch__label {
 }
 
 .guide__refresh { margin-left: 0.25rem; }
+
+/* AI meaning of the searched text (set by showMeaning in app.js). */
+#target-meaning[title] {
+  color: var(--ink);
+}
+#target-meaning[title]::before {
+  content: "Nghĩa: ";
+  color: var(--ink-muted);
+  font-weight: 600;
+}

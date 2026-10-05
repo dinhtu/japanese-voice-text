@@ -188,8 +188,8 @@ async def get_korean_text_guide(
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
     try:
-        guide = await generate_text_reading_guide(text, settings, lang=lang, target_lang="ko")
-        return TextGuideResponse(text=text, lang=lang, guide=guide)
+        result = await generate_text_reading_guide(text, settings, lang=lang, target_lang="ko")
+        return TextGuideResponse(text=text, lang=lang, meaning=result.meaning, guide=result.guide)
     except CoachingUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001

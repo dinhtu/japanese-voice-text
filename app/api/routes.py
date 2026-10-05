@@ -438,11 +438,12 @@ async def get_text_guide(
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
     try:
-        guide = await generate_text_reading_guide(text, settings, lang=lang)
+        result = await generate_text_reading_guide(text, settings, lang=lang)
         return TextGuideResponse(
             text=text,
             lang=lang,
-            guide=guide,
+            meaning=result.meaning,
+            guide=result.guide,
         )
     except CoachingUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

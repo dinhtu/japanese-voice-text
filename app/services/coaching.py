@@ -1153,13 +1153,114 @@ KOREAN_TEXT_READING_GUIDE_PROMPTS["zh"] = KOREAN_TEXT_READING_GUIDE_PROMPTS["tw"
 KOREAN_TEXT_READING_GUIDE_PROMPTS["zh-tw"] = KOREAN_TEXT_READING_GUIDE_PROMPTS["tw"]
 
 
+# Appended to every TEXT_READING_GUIDE prompt (all practice languages): the
+# model also returns the meaning of the searched text, and the two parts come
+# back as JSON (enforced by TEXT_GUIDE_JSON_SCHEMA) so the UI can show the
+# meaning on its own line instead of parsing it out of free text.
+TEXT_GUIDE_MEANING_RULES: dict[str, str] = {
+    "vi": """
+
+ĐỊNH DẠNG TRẢ VỀ (BẮT BUỘC): Chỉ trả về JSON với 2 trường:
+- "meaning": Nghĩa của từ/câu đang tìm, dịch tự nhiên sang tiếng Việt (1 câu ngắn). Nếu là một từ đơn có nhiều nghĩa, ghi nghĩa phổ biến nhất trước, các nghĩa khác cách nhau bằng dấu "; ".
+- "guide": Toàn bộ hướng dẫn phát âm theo các quy tắc ở trên (văn bản thuần, giữ xuống dòng). KHÔNG lặp lại phần nghĩa trong "guide".""",
+    "en": """
+
+OUTPUT FORMAT (MANDATORY): Return only JSON with 2 fields:
+- "meaning": The meaning of the searched word/sentence, translated naturally into English (one short sentence). For a single word with several senses, put the most common first and separate the others with "; ".
+- "guide": The full pronunciation guide following the rules above (plain text, keep line breaks). DO NOT repeat the meaning inside "guide".""",
+    "jp": """
+
+出力形式（必須）: 次の2つのフィールドを持つJSONのみを返してください:
+- "meaning": 検索された単語・文の意味を自然な日本語で（短い1文）。テキストが日本語の場合は、やさしい言葉で意味を説明してください。複数の意味がある単語は、最も一般的な意味を先に書き、他の意味は「; 」で区切ってください。
+- "guide": 上記ルールに従った発音ガイド全体（プレーンテキスト、改行を保持）。"guide" の中で意味を繰り返さないでください。""",
+    "ko": """
+
+출력 형식(필수): 다음 2개 필드를 가진 JSON만 반환하세요:
+- "meaning": 검색한 단어/문장의 뜻을 자연스러운 한국어로 번역 (짧은 1문장). 입력이 한국어이면 쉬운 말로 뜻을 설명하세요. 뜻이 여러 개인 단어는 가장 일반적인 뜻을 먼저 쓰고 나머지는 "; "로 구분하세요.
+- "guide": 위 규칙에 따른 발음 가이드 전체 (일반 텍스트, 줄바꿈 유지). "guide" 안에서 뜻을 반복하지 마세요.""",
+    "tw": """
+
+輸出格式（必填）：只回傳包含 2 個欄位的 JSON：
+- "meaning": 所搜尋詞語/句子的意思，以自然的繁體中文翻譯（一句簡短的話）。若輸入本身是中文，請用淺白的話解釋意思。若單字有多個意思，先寫最常用的，其餘以「; 」分隔。
+- "guide": 依上述規則撰寫的完整發音指導（純文字，保留換行）。不要在 "guide" 中重複意思。""",
+}
+TEXT_GUIDE_MEANING_RULES["ja"] = TEXT_GUIDE_MEANING_RULES["jp"]
+TEXT_GUIDE_MEANING_RULES["zh"] = TEXT_GUIDE_MEANING_RULES["tw"]
+TEXT_GUIDE_MEANING_RULES["zh-tw"] = TEXT_GUIDE_MEANING_RULES["tw"]
+
+TEXT_GUIDE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "meaning": {"type": "string"},
+        "guide": {"type": "string"},
+    },
+    "required": ["meaning", "guide"],
+}
+
+
+@dataclass
+class TextReadingGuide:
+    """What /text-guide shows: the searched text's meaning (in the guide
+    language; "" when the model gave none) and the pronunciation guide."""
+
+    meaning: str
+    guide: str
+
+
+# Chatty openers the prompt forbids but small models still emit ("Sure! ...").
+_GUIDE_PREAMBLE_RE = re.compile(r"^(?:(?:Sure|Certainly)!|Here['’]s\b|Here is\b)[^\n]*\n+", re.IGNORECASE)
+
+
+def _clean_guide_text(value: str) -> str:
+    return _GUIDE_PREAMBLE_RE.sub("", value.strip()).strip().strip('"`\n ')
+
+
+def _parse_text_guide(content: str) -> TextReadingGuide:
+    """JSON {meaning, guide} from the model; if it is not valid JSON (e.g. the
+    answer was cut off by num_predict), keep the whole text as the guide."""
+    raw = content.strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, re.DOTALL)
+    if fenced:
+        raw = fenced.group(1)
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        data = None
+    if isinstance(data, dict) and str(data.get("guide", "") or "").strip():
+        return TextReadingGuide(
+            meaning=" ".join(str(data.get("meaning", "") or "").split()),
+            guide=_clean_guide_text(str(data["guide"])),
+        )
+    if raw.lstrip().startswith("{"):
+        # Truncated JSON: salvage whatever string values are readable.
+        meaning, guide = _json_string_field(raw, "meaning"), _json_string_field(raw, "guide")
+        if guide:
+            return TextReadingGuide(meaning=" ".join(meaning.split()), guide=_clean_guide_text(guide))
+    return TextReadingGuide(meaning="", guide=_clean_guide_text(content))
+
+
+def _json_string_field(raw: str, name: str) -> str:
+    """Value of `"name": "..."` in possibly unterminated JSON ("" if absent)."""
+    match = re.search(rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)', raw, re.DOTALL)
+    if not match:
+        return ""
+    body = match.group(1)
+    if body.endswith("\\") and not body.endswith("\\\\"):
+        body = body[:-1]
+    try:
+        return json.loads(f'"{body}"')
+    except ValueError:
+        return body.replace("\\n", "\n")
+
+
 async def generate_text_reading_guide(
     text: str,
     settings: "Settings",
     lang: str = "vi",
     target_lang: str = "ja",
-) -> str:
-    """Generate phrase-by-phrase reading and pronunciation guide for `text` in `lang` via Ollama.
+) -> TextReadingGuide:
+    """Generate the meaning of `text` plus a phrase-by-phrase reading and
+    pronunciation guide, both in `lang`, via Ollama.
 
     `target_lang` is the language of `text` itself: "ja" (default), "en", "zh" or "ko".
     """
@@ -1169,7 +1270,9 @@ async def generate_text_reading_guide(
         "zh": CHINESE_TEXT_READING_GUIDE_PROMPTS,
         "ko": KOREAN_TEXT_READING_GUIDE_PROMPTS,
     }.get(target_lang, TEXT_READING_GUIDE_PROMPTS)
-    system_prompt = table.get(key, table["vi"])
+    system_prompt = table.get(key, table["vi"]) + TEXT_GUIDE_MEANING_RULES.get(
+        key, TEXT_GUIDE_MEANING_RULES["vi"]
+    )
 
     try:
         from ollama import AsyncClient, ResponseError
@@ -1188,7 +1291,11 @@ async def generate_text_reading_guide(
             ],
             think=False,
             stream=False,
-            options={"temperature": 0.3, "num_predict": 500},
+            format=TEXT_GUIDE_JSON_SCHEMA,
+            # JSON escaping + the extra meaning field need more room than the
+            # old plain-text guide (500); a cut-off answer falls back in
+            # _parse_text_guide.
+            options={"temperature": 0.3, "num_predict": 900},
         )
     except ResponseError as e:
         if e.status_code == 404:
@@ -1209,7 +1316,6 @@ async def generate_text_reading_guide(
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
 
-    content = re.sub(r"^(?:Sure!|Here['’]s|Here is|Certainly!)\b[^\n]*\n+", "", content, flags=re.IGNORECASE).strip()
-    return content.strip('"`\n ')
+    return _parse_text_guide(content)
 
 
