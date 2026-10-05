@@ -22,6 +22,11 @@ def test_fluency_plateau_for_careful_reading_pace():
     assert score_fluency(3.2, 16, pronunciation=100.0) == 100.0
 
 
+def test_fluency_short_isolated_word():
+    # 2 morae (e.g. きゃく) in 0.88s = 2.27 mora/s, inside the adapted short-word band (1.8--7.2).
+    assert score_fluency(0.88, 2, pronunciation=100.0) == 100.0
+
+
 def test_fluency_drops_when_rushed_or_dragged():
     rushed = score_fluency(1.0, 16, pronunciation=100.0)  # 16 mora/s
     dragged = score_fluency(12.0, 16, pronunciation=100.0)  # 1.33 mora/s

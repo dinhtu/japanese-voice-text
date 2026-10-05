@@ -90,10 +90,19 @@ def score_fluency(
         return 0.0
 
     rate = n_morae / duration_s
-    if _FLUENCY_LO <= rate <= _FLUENCY_HI:
+    # For isolated words / short targets (<= 3 morae), audio naturally has
+    # relative leading/trailing silence (effective rate 1.5 - 3.0 mora/s).
+    if n_morae <= 3:
+        fluency_lo = 1.8
+        fluency_too_slow = 0.8
+    else:
+        fluency_lo = _FLUENCY_LO
+        fluency_too_slow = _FLUENCY_TOO_SLOW
+
+    if fluency_lo <= rate <= _FLUENCY_HI:
         pace = 100.0
-    elif rate < _FLUENCY_LO:
-        pace = _lerp(rate, _FLUENCY_TOO_SLOW, _FLUENCY_LO, 25.0, 100.0)
+    elif rate < fluency_lo:
+        pace = _lerp(rate, fluency_too_slow, fluency_lo, 25.0, 100.0)
     else:
         pace = _lerp(rate, _FLUENCY_HI, _FLUENCY_TOO_FAST, 100.0, 20.0)
 

@@ -189,7 +189,12 @@ def _ctc_collapse_with_onsets(
 
 
 def _char_spans_from_pred_ids(
-    pred_ids: list[int], kana: str, num_frames: int, duration: float
+    pred_ids: list[int],
+    kana: str,
+    num_frames: int,
+    duration: float,
+    pad_offset: float = 0.0,
+    max_duration: float | None = None,
 ) -> list[tuple[float, float]] | None:
     """(start_sec, end_sec) per character of `kana`, from CTC onset frames.
 
@@ -212,10 +217,11 @@ def _char_spans_from_pred_ids(
     if len(tokens) != len(kana):
         return None
     frame_time = duration / num_frames
-    onset_times = [idx * frame_time for idx in onset_frames]
+    limit = max_duration if max_duration is not None else duration
+    onset_times = [max(0.0, min(limit, idx * frame_time - pad_offset)) for idx in onset_frames]
     spans: list[tuple[float, float]] = []
     for i, start in enumerate(onset_times):
-        end = onset_times[i + 1] if i + 1 < len(onset_times) else duration
+        end = onset_times[i + 1] if i + 1 < len(onset_times) else limit
         spans.append((start, max(end, start)))
     return spans
 
@@ -300,8 +306,24 @@ class KanaRecognizer:
 
         duration = len(audio_array) / sr
 
+        # Silence padding for short audio (< 1.2s) so Wav2Vec2 conv + attention
+        # receptive fields are not truncated by audio boundaries.
+        min_duration_s = 1.2
+        if duration < min_duration_s:
+            pad_left_s = 0.25
+            pad_right_s = max(0.25, min_duration_s - duration - pad_left_s)
+            pad_left = int(pad_left_s * sr)
+            pad_right = int(pad_right_s * sr)
+            model_audio = np.pad(audio_array, (pad_left, pad_right), mode="constant")
+            pad_offset = pad_left / sr
+            model_duration = len(model_audio) / sr
+        else:
+            model_audio = audio_array
+            pad_offset = 0.0
+            model_duration = duration
+
         inputs = self.feature_extractor(
-            audio_array,
+            model_audio,
             sampling_rate=sr,
             return_tensors="pt",
             return_attention_mask=True,
@@ -336,16 +358,29 @@ class KanaRecognizer:
         char_spans = None
         if with_timing:
             char_spans = _char_spans_from_pred_ids(
-                kana_ids_list, kana, kana_logits.shape[1], duration
+                kana_ids_list,
+                kana,
+                kana_logits.shape[1],
+                model_duration,
+                pad_offset=pad_offset,
+                max_duration=duration,
             )
 
         aligned_char_spans = None
         if align_to:
             from src.asr.force_align import align_kana
 
-            aligned_char_spans = align_kana(
-                kana_logits, self.kana_vocab, align_to, duration
+            aligned = align_kana(
+                kana_logits, self.kana_vocab, align_to, model_duration
             )
+            if aligned is not None:
+                aligned_char_spans = [
+                    (
+                        max(0.0, min(duration, s - pad_offset)),
+                        max(0.0, min(duration, e - pad_offset)),
+                    )
+                    for s, e in aligned
+                ]
 
         del outputs, kana_logits, kana_pred_ids, input_values, attention_mask
         return RecognitionResult(
