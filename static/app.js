@@ -105,6 +105,7 @@ const el = {
   guideLang: $("guide-lang"),
   guideStatus: $("guide-status"),
   guideContent: $("guide-content"),
+  guideRefresh: $("guide-refresh"),
 };
 
 const STATUS_LABEL = {
@@ -989,6 +990,67 @@ let textGuideLoadedLang = null;
 /** Bumped per request so a slow answer for an old search is dropped. */
 let textGuideRequestId = 0;
 
+/* AI guides are a few KB each — too big for a cookie (≈4 KB, and sent with
+ * every request) — so they are cached in localStorage, per practice
+ * language, keyed by sentence + guide language. Least-recently-used first
+ * out. Storage can be missing or full (private mode, quota), so every
+ * access is guarded and the page still works without it. */
+const GUIDE_CACHE_KEY = `pv_guide_cache_${(TTS_LANG.split("-")[0] || "ja").toLowerCase()}`;
+const GUIDE_CACHE_MAX = 50;
+
+function guideCacheId(text, lang) {
+  return `${lang}\u0000${text}`;
+}
+
+function readGuideCache() {
+  try {
+    const data = JSON.parse(localStorage.getItem(GUIDE_CACHE_KEY) || "[]");
+    return Array.isArray(data) ? data.filter((item) => item && item.id && typeof item.guide === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeGuideCache(entries) {
+  let list = entries.slice(0, GUIDE_CACHE_MAX);
+  while (list.length) {
+    try {
+      localStorage.setItem(GUIDE_CACHE_KEY, JSON.stringify(list));
+      return;
+    } catch {
+      // Quota exceeded: drop the older half and retry.
+      list = list.slice(0, Math.floor(list.length / 2));
+    }
+  }
+  try { localStorage.removeItem(GUIDE_CACHE_KEY); } catch { /* storage unavailable */ }
+}
+
+function getCachedGuide(text, lang) {
+  const id = guideCacheId(text, lang);
+  const entries = readGuideCache();
+  const hit = entries.find((item) => item.id === id);
+  if (hit) writeGuideCache([hit, ...entries.filter((item) => item.id !== id)]);
+  return hit || null;
+}
+
+function saveCachedGuide(text, lang, guide) {
+  const id = guideCacheId(text, lang);
+  writeGuideCache([{ id, guide, savedAt: Date.now() }, ...readGuideCache().filter((item) => item.id !== id)]);
+}
+
+function showGuide(guide, savedAt = null) {
+  el.guideContent.textContent = guide;
+  el.guideContent.hidden = false;
+  el.guideStatus.hidden = true;
+  if (el.guideRefresh) {
+    el.guideRefresh.hidden = false;
+    el.guideRefresh.disabled = false;
+    el.guideRefresh.title = savedAt
+      ? `Đã lưu lúc ${new Date(savedAt).toLocaleString("vi-VN")} — bấm để AI tạo lại`
+      : "Bấm để AI tạo lại hướng dẫn";
+  }
+}
+
 function resetTextGuide() {
   textGuideRequestId += 1;
   textGuideLoadedFor = null;
@@ -1003,21 +1065,36 @@ function resetTextGuide() {
     el.guideContent.hidden = true;
     el.guideContent.textContent = "";
   }
+  if (el.guideRefresh) el.guideRefresh.hidden = true;
 }
 
-async function requestTextGuide() {
+/** Show the AI guide for the current sentence: from the local cache when
+ *  saved earlier, else from the API (then saved). `force` skips the cache. */
+async function requestTextGuide({ force = false } = {}) {
   if (!el.guidePanel || !target.text) return;
-
-  el.guidePanel.hidden = false;
-  el.guideBtn?.setAttribute("aria-expanded", "true");
-  el.guideContent.hidden = true;
-  el.guideStatus.hidden = false;
-  el.guideStatus.classList.remove("is-error");
-  el.guideStatus.textContent = "Đang tạo hướng dẫn đọc từ AI…";
 
   const selectedLang = el.guideLang ? el.guideLang.value : "vi";
   const requestedText = target.text;
   const requestId = ++textGuideRequestId;
+
+  el.guidePanel.hidden = false;
+  el.guideBtn?.setAttribute("aria-expanded", "true");
+  el.guideStatus.classList.remove("is-error");
+
+  if (!force) {
+    const cached = getCachedGuide(requestedText, selectedLang);
+    if (cached) {
+      showGuide(cached.guide, cached.savedAt);
+      textGuideLoadedFor = requestedText;
+      textGuideLoadedLang = selectedLang;
+      return;
+    }
+  }
+
+  el.guideContent.hidden = true;
+  el.guideStatus.hidden = false;
+  el.guideStatus.textContent = "Đang tạo hướng dẫn đọc từ AI…";
+  if (el.guideRefresh) el.guideRefresh.disabled = true;
 
   try {
     const response = await fetch(`${TEXT_GUIDE_API_URL}?text=${encodeURIComponent(requestedText)}&lang=${encodeURIComponent(selectedLang)}`);
@@ -1031,9 +1108,8 @@ async function requestTextGuide() {
     }
     const result = await response.json();
     if (requestId !== textGuideRequestId) return;
-    el.guideContent.textContent = result.guide;
-    el.guideContent.hidden = false;
-    el.guideStatus.hidden = true;
+    saveCachedGuide(requestedText, selectedLang, result.guide);
+    showGuide(result.guide, Date.now());
     textGuideLoadedFor = requestedText;
     textGuideLoadedLang = selectedLang;
   } catch (error) {
@@ -1041,8 +1117,14 @@ async function requestTextGuide() {
     el.guideStatus.textContent =
       error instanceof Error ? error.message : "Không tạo được hướng dẫn đọc. Hãy thử lại.";
     el.guideStatus.classList.add("is-error");
+    if (el.guideRefresh) {
+      el.guideRefresh.hidden = false;
+      el.guideRefresh.disabled = false;
+    }
   }
 }
+
+el.guideRefresh?.addEventListener("click", () => requestTextGuide({ force: true }));
 
 if (el.guideBtn) {
   el.guideBtn.addEventListener("click", () => {

@@ -1371,3 +1371,5 @@ html[lang="en"] .pitch__label {
 @media (min-width: 640px) {
   .target-row { flex-direction: row; align-items: flex-start; justify-content: space-between; }
 }
+
+.guide__refresh { margin-left: 0.25rem; }
