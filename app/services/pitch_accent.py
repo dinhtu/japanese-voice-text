@@ -51,8 +51,8 @@ def _is_kana(ch: str) -> bool:
     return (0x3040 <= cp <= 0x309F) or (0x30A0 <= cp <= 0x30FF) or ch == "ー"
 
 
-def pitch_accent_pattern(text: str) -> list[MoraPitch]:
-    """Generate pitch accent pattern directly from UniDic aType features."""
+def pitch_accent_patterns(text: str) -> list[list[MoraPitch]]:
+    """Generate all valid pitch accent pattern variants directly from UniDic aType features."""
     if not text or not text.strip():
         raise ValueError("Text is empty; nothing to analyze.")
 
@@ -67,10 +67,10 @@ def pitch_accent_pattern(text: str) -> list[MoraPitch]:
         raise ValueError("No pronounceable Japanese content found.")
 
     nodes = list(_fugashi_tagger(text))
-    hl_list: list[tuple[str, int]] = []
-    downstep_occurred = False
-    in_high = False
     phrase_idx = 0
+
+    # Collect variants per node: list of list of (pitch, phrase_idx)
+    node_variants: list[list[list[tuple[str, int]]]] = []
 
     for w in nodes:
         pos = getattr(w.feature, "pos1", "")
@@ -80,57 +80,80 @@ def pitch_accent_pattern(text: str) -> list[MoraPitch]:
             continue
 
         atype_str = getattr(w.feature, "aType", "*")
+        candidate_atypes: list[int | None] = []
         if atype_str and atype_str != "*":
-            first_atype = atype_str.split(",")[0].strip()
-            atype = int(first_atype) if first_atype.isdigit() else None
-        else:
-            atype = None
+            candidate_atypes = [int(x.strip()) for x in atype_str.split(",") if x.strip().isdigit()]
 
         # Fallback: if hiragana-written loanword (e.g. ぷろじぇくと), try looking up Katakana in UniDic
-        if atype is None and w.surface:
+        if not candidate_atypes and w.surface:
             kata_surface = _hira_to_kata(w.surface)
             if kata_surface != w.surface:
                 kata_nodes = list(_fugashi_tagger(kata_surface))
                 if kata_nodes:
                     k_atype_str = getattr(kata_nodes[0].feature, "aType", "*")
                     if k_atype_str and k_atype_str != "*":
-                        k_first = k_atype_str.split(",")[0].strip()
-                        if k_first.isdigit():
-                            atype = int(k_first)
+                        candidate_atypes = [
+                            int(x.strip()) for x in k_atype_str.split(",") if x.strip().isdigit()
+                        ]
 
-        if pos in ("助詞", "助動詞") and atype is None:
-            for _ in token_morae:
-                hl_list.append(("L" if downstep_occurred or not in_high else "H", phrase_idx))
-        else:
-            downstep_occurred = False
-            if atype == 1:
-                in_high = False
-                downstep_occurred = True
+        if not candidate_atypes:
+            candidate_atypes = [None]
+
+        w_options: list[list[tuple[str, int]]] = []
+        for atype in candidate_atypes:
+            hl: list[tuple[str, int]] = []
+            if pos in ("助詞", "助動詞") and atype is None:
+                for _ in token_morae:
+                    hl.append(("L", phrase_idx))
+            elif atype == 1:
                 for idx, _ in enumerate(token_morae):
-                    hl_list.append(("H" if idx == 0 else "L", phrase_idx))
+                    hl.append(("H" if idx == 0 else "L", phrase_idx))
             elif atype == 0:
-                in_high = True
                 for idx, _ in enumerate(token_morae):
-                    hl_list.append(("L" if idx == 0 and len(token_morae) > 1 else "H", phrase_idx))
+                    hl.append(("L" if idx == 0 and len(token_morae) > 1 else "H", phrase_idx))
             elif atype and atype >= 2:
                 for idx, _ in enumerate(token_morae):
                     m_idx = idx + 1
                     if m_idx == 1:
-                        hl_list.append(("L", phrase_idx))
+                        hl.append(("L", phrase_idx))
                     elif m_idx <= atype:
-                        hl_list.append(("H", phrase_idx))
+                        hl.append(("H", phrase_idx))
                     else:
-                        downstep_occurred = True
-                        in_high = False
-                        hl_list.append(("L", phrase_idx))
+                        hl.append(("L", phrase_idx))
             else:
                 # Standard Japanese default for unknown content words: Heiban (L H H H...)
-                in_high = True
                 for idx, _ in enumerate(token_morae):
-                    hl_list.append(("L" if idx == 0 and len(token_morae) > 1 else "H", phrase_idx))
+                    hl.append(("L" if idx == 0 and len(token_morae) > 1 else "H", phrase_idx))
+            w_options.append(hl)
 
-    res: list[MoraPitch] = []
-    for i, mora in enumerate(full_morae):
-        pitch, phrase = hl_list[i] if i < len(hl_list) else ("L", 0)
-        res.append(MoraPitch(mora=mora, pitch=pitch, phrase=phrase))
-    return res
+        node_variants.append(w_options)
+
+    # Cartesion product of node options (limit up to 5 unique combinations)
+    combos: list[list[tuple[str, int]]] = [[]]
+    for w_opts in node_variants:
+        next_combos: list[list[tuple[str, int]]] = []
+        for c in combos:
+            for opt in w_opts:
+                next_combos.append(c + opt)
+        combos = next_combos[:5]
+
+    all_patterns: list[list[MoraPitch]] = []
+    seen: set[tuple[str, ...]] = set()
+
+    for hl_list in combos:
+        mora_pitches: list[MoraPitch] = []
+        for i, mora in enumerate(full_morae):
+            pitch, p_idx = hl_list[i] if i < len(hl_list) else ("L", 0)
+            mora_pitches.append(MoraPitch(mora=mora, pitch=pitch, phrase=p_idx))
+        key = tuple(m.pitch for m in mora_pitches)
+        if key not in seen:
+            seen.add(key)
+            all_patterns.append(mora_pitches)
+
+    return all_patterns or [[MoraPitch(mora=m, pitch="L", phrase=0) for m in full_morae]]
+
+
+def pitch_accent_pattern(text: str) -> list[MoraPitch]:
+    """Generate primary pitch accent pattern directly from UniDic aType features."""
+    patterns = pitch_accent_patterns(text)
+    return patterns[0]
