@@ -92,6 +92,26 @@ class Settings:
         self.ollama_timeout_s = float(os.getenv("OLLAMA_TIMEOUT_S", "30"))
         self.ollama_temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.4"))
 
+        # "Nghe mẫu": reference audio from the Qwen3-TTS service. The key stays
+        # server-side -- the browser only calls /api/tts on this app.
+        self.tts_api_url = os.getenv(
+            "TTS_API_URL", "https://text-to-audio.commude-vietnam.work"
+        ).strip().rstrip("/")
+        self.tts_api_key = os.getenv("TTS_API_KEY", "").strip()
+        self.tts_timeout_s = float(os.getenv("TTS_TIMEOUT_S", "120"))
+        # Practice language -> the service's `language` / `speaker` fields.
+        # Empty speaker = let the service pick its default voice.
+        self.tts_languages = {
+            code: os.getenv(f"TTS_LANGUAGE_{code.upper()}", default).strip()
+            for code, default in (
+                ("ja", "Japanese"), ("en", "English"), ("zh", "Chinese"), ("ko", "Korean"),
+            )
+        }
+        self.tts_speakers = {
+            code: os.getenv(f"TTS_SPEAKER_{code.upper()}", "").strip()
+            for code in ("ja", "en", "zh", "ko")
+        }
+
         # PASQA: empty env uses the downloaded default if present.
         pasqa = os.getenv("PASQA_CHECKPOINT", "").strip()
         if pasqa:

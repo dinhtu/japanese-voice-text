@@ -1383,3 +1383,10 @@ html[lang="en"] .pitch__label {
   color: var(--ink-muted);
   font-weight: 600;
 }
+
+/* "Nghe mẫu" while the AI audio is being generated. */
+#speak.is-busy { cursor: progress; opacity: 0.8; }
+#speak.is-busy #speak-icon { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  #speak.is-busy #speak-icon { animation: none; }
+}

@@ -18,6 +18,8 @@ const COACH_API_URL = document.body.dataset.coachUrl
 const TEXT_GUIDE_API_URL = document.body.dataset.textGuideUrl
   || `${API_BASE}/api/pronunciation/text-guide`;
 const TTS_LANG = document.body.dataset.ttsLang || "ja-JP";
+/** "Nghe mẫu": server-side proxy to the Qwen3-TTS service (app/api/tts_routes.py). */
+const SPEAK_API_URL = document.body.dataset.speakUrl || `${API_BASE}/api/tts`;
 const TARGET_LANG = document.body.dataset.targetLang || "ja";
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
@@ -42,6 +44,8 @@ const el = {
   targetReading: $("target-reading"),
   targetMeaning: $("target-meaning"),
   speak: $("speak"),
+  speakIcon: $("speak-icon"),
+  speakLabel: $("speak-label"),
   customForm: $("custom-form"),
   customInput: $("custom-input"),
   customApply: $("custom-apply"),
@@ -264,6 +268,7 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
   clearPlayback();
   resetPitch();
   resetTextGuide();
+  if (speakState !== "idle") stopSpeak();
   if (document.body.dataset.readingUrl && !reading) {
     fetch(`${document.body.dataset.readingUrl}?text=${encodeURIComponent(text)}`)
       .then((response) => response.ok ? response.json() : null)
@@ -1441,16 +1446,122 @@ function pickTtsVoice(lang) {
   );
 }
 
-el.speak.addEventListener("click", () => {
-  if (!window.speechSynthesis || !target.text) return;
-  const utterance = new SpeechSynthesisUtterance(target.text);
+/* ------------------------------------------------------ Reference audio */
+
+/** Generated audio URL per sentence for this page visit, so a second click
+ *  replays instead of generating again. */
+const speakUrls = new Map();
+const speakPlayer = new Audio();
+speakPlayer.preload = "auto";
+let speakState = "idle"; // idle | loading | playing
+let speakRequestId = 0;
+
+function setSpeakState(next) {
+  speakState = next;
+  el.speak.classList.toggle("is-busy", next === "loading");
+  el.speak.setAttribute("aria-busy", String(next === "loading"));
+  el.speakIcon?.firstElementChild?.setAttribute(
+    "href",
+    next === "loading" ? "#i-loader" : next === "playing" ? "#i-stop" : "#i-volume",
+  );
+  if (el.speakLabel) {
+    el.speakLabel.textContent = next === "loading" ? "Đang tạo…" : next === "playing" ? "Dừng" : "Nghe mẫu";
+  }
+}
+
+function stopSpeak() {
+  speakRequestId += 1;
+  speakPlayer.pause();
+  window.speechSynthesis?.cancel();
+  setSpeakState("idle");
+}
+
+/** Fallback when the TTS service is not configured or fails. */
+function speakWithBrowser(text) {
+  if (!window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = TTS_LANG;
   utterance.rate = TTS_LANG.startsWith("en") ? 0.95 : 0.85;
   const voice = pickTtsVoice(TTS_LANG);
   if (voice) utterance.voice = voice;
+  utterance.onend = () => setSpeakState("idle");
+  utterance.onerror = () => setSpeakState("idle");
   window.speechSynthesis.cancel();
+  setSpeakState("playing");
   window.speechSynthesis.speak(utterance);
+}
+
+async function fetchSpeakUrl(text) {
+  const formData = new FormData();
+  formData.append("text", text);
+  formData.append("lang", (TTS_LANG.split("-")[0] || "ja").toLowerCase());
+  const response = await fetch(SPEAK_API_URL, { method: "POST", body: formData });
+  if (!response.ok) {
+    const detail = await response.json().then((body) => body.detail).catch(() => undefined);
+    throw new Error(typeof detail === "string" ? detail : `Yêu cầu thất bại (HTTP ${response.status})`);
+  }
+  const result = await response.json();
+  if (!result.audio_url) throw new Error("Không nhận được audio mẫu.");
+  return result.audio_url;
+}
+
+async function playSpeakUrl(url) {
+  speakPlayer.src = url;
+  setSpeakState("playing");
+  await speakPlayer.play();
+}
+
+async function speakTarget() {
+  const text = target.text;
+  if (!text) return;
+  const requestId = ++speakRequestId;
+  window.speechSynthesis?.cancel();
+
+  let url = speakUrls.get(text);
+  try {
+    if (!url) {
+      setSpeakState("loading");
+      url = await fetchSpeakUrl(text);
+      if (requestId !== speakRequestId) return;
+      speakUrls.set(text, url);
+    }
+    try {
+      await playSpeakUrl(url);
+    } catch (playError) {
+      // A replayed file may have been removed from the service: regenerate once.
+      if (requestId !== speakRequestId || !speakUrls.has(text) || playError?.name === "NotAllowedError") throw playError;
+      speakUrls.delete(text);
+      setSpeakState("loading");
+      url = await fetchSpeakUrl(text);
+      if (requestId !== speakRequestId) return;
+      speakUrls.set(text, url);
+      await playSpeakUrl(url);
+    }
+    el.speak.title = "Nghe giọng đọc mẫu (AI tạo audio)";
+  } catch (error) {
+    if (requestId !== speakRequestId) return;
+    setSpeakState("idle");
+    const message = error instanceof Error ? error.message : "Không tạo được audio mẫu.";
+    console.warn("[Nghe mẫu] AI audio unavailable, using browser voice:", message);
+    el.speak.title = `${message} — đang dùng giọng đọc của trình duyệt.`;
+    speakWithBrowser(text);
+  }
+}
+
+speakPlayer.addEventListener("ended", () => setSpeakState("idle"));
+speakPlayer.addEventListener("pause", () => {
+  if (speakState === "playing") setSpeakState("idle");
 });
+
+el.speak.addEventListener("click", () => {
+  if (speakState === "loading") return;
+  if (speakState === "playing") {
+    stopSpeak();
+    return;
+  }
+  speakTarget();
+});
+
 
 el.mic.addEventListener("click", () => {
   if (status === "recording") stopRecording();
