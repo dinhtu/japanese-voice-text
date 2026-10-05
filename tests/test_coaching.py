@@ -284,3 +284,17 @@ def test_parse_text_guide_falls_back_to_plain_text():
     cut_off = _parse_text_guide('{"meaning": "Trường cấp 3", "guide": "• 高校で\\n• 英語を (Ei')
     assert cut_off.meaning == "Trường cấp 3"
     assert cut_off.guide == "• 高校で\n• 英語を (Ei"
+
+
+def test_parse_text_guide_survives_unescaped_quotes():
+    from app.services.coaching import _parse_text_guide
+    raw = (
+        '{"meaning": "Bằng đũa", "guide": "• はしで (Hashi de): Đọc là "Ha-shi đê". '
+        '(Lưu ý: "shi" đọc nhẹ).\n\n🎯 Từ cần chú trọng:\n- はし: trọng âm"}'
+    )
+    result = _parse_text_guide(raw)
+    assert result.meaning == "Bằng đũa"
+    assert result.guide.startswith('• はしで (Hashi de): Đọc là "Ha-shi đê".')
+    assert '"shi" đọc nhẹ' in result.guide
+    assert result.guide.endswith("- はし: trọng âm")
+    assert "\n🎯" in result.guide

@@ -1162,12 +1162,14 @@ TEXT_GUIDE_MEANING_RULES: dict[str, str] = {
 
 ĐỊNH DẠNG TRẢ VỀ (BẮT BUỘC): Chỉ trả về JSON với 2 trường:
 - "meaning": Nghĩa của từ/câu đang tìm, dịch tự nhiên sang tiếng Việt (1 câu ngắn). Nếu là một từ đơn có nhiều nghĩa, ghi nghĩa phổ biến nhất trước, các nghĩa khác cách nhau bằng dấu "; ".
-- "guide": Toàn bộ hướng dẫn phát âm theo các quy tắc ở trên (văn bản thuần, giữ xuống dòng). KHÔNG lặp lại phần nghĩa trong "guide".""",
+- "guide": Toàn bộ hướng dẫn phát âm theo các quy tắc ở trên (văn bản thuần, giữ xuống dòng). KHÔNG lặp lại phần nghĩa trong "guide".
+Bên trong giá trị JSON, mọi dấu ngoặc kép phải được escape thành \\" (hoặc dùng “ ” thay cho ").""",
     "en": """
 
 OUTPUT FORMAT (MANDATORY): Return only JSON with 2 fields:
 - "meaning": The meaning of the searched word/sentence, translated naturally into English (one short sentence). For a single word with several senses, put the most common first and separate the others with "; ".
-- "guide": The full pronunciation guide following the rules above (plain text, keep line breaks). DO NOT repeat the meaning inside "guide".""",
+- "guide": The full pronunciation guide following the rules above (plain text, keep line breaks). DO NOT repeat the meaning inside "guide".
+Inside JSON values, every double quote must be escaped as \\" (or use “ ” instead of ").""",
     "jp": """
 
 出力形式（必須）: 次の2つのフィールドを持つJSONのみを返してください:
@@ -1232,25 +1234,46 @@ def _parse_text_guide(content: str) -> TextReadingGuide:
             guide=_clean_guide_text(str(data["guide"])),
         )
     if raw.lstrip().startswith("{"):
-        # Truncated JSON: salvage whatever string values are readable.
-        meaning, guide = _json_string_field(raw, "meaning"), _json_string_field(raw, "guide")
-        if guide:
-            return TextReadingGuide(meaning=" ".join(meaning.split()), guide=_clean_guide_text(guide))
+        # Invalid JSON — usually unescaped quotes inside the guide (the prompt
+        # examples quote readings: Đọc là "Cô-cô đê") or an answer cut off by
+        # num_predict. Split on the field keys instead of trusting the quotes.
+        lenient = _lenient_text_guide(raw)
+        if lenient is not None:
+            return lenient
     return TextReadingGuide(meaning="", guide=_clean_guide_text(content))
 
 
-def _json_string_field(raw: str, name: str) -> str:
-    """Value of `"name": "..."` in possibly unterminated JSON ("" if absent)."""
-    match = re.search(rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)', raw, re.DOTALL)
-    if not match:
-        return ""
-    body = match.group(1)
-    if body.endswith("\\") and not body.endswith("\\\\"):
-        body = body[:-1]
-    try:
-        return json.loads(f'"{body}"')
-    except ValueError:
-        return body.replace("\\n", "\n")
+_JSON_ESCAPE_RE = re.compile(r'\\(u[0-9a-fA-F]{4}|["\\/bfnrt])')
+_JSON_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+
+
+def _unescape_json_fragment(body: str) -> str:
+    """Decode JSON string escapes in `body`, leaving stray quotes as they are."""
+    body = re.sub(r"(?<!\\)\\$", "", body)  # lone backslash left by a cut-off answer
+    return _JSON_ESCAPE_RE.sub(
+        lambda m: chr(int(m.group(1)[1:], 16)) if m.group(1)[0] == "u" else _JSON_ESCAPES[m.group(1)],
+        body,
+    )
+
+
+def _lenient_text_guide(raw: str) -> "TextReadingGuide | None":
+    """Read {"meaning": ..., "guide": ...} from JSON that json.loads rejects:
+    each value runs from its key to the next key / the closing brace, so
+    unescaped quotes inside a value no longer cut it short."""
+    key = re.compile(r'"(meaning|guide)"\s*:\s*"')
+    hits = list(key.finditer(raw))
+    if not any(h.group(1) == "guide" for h in hits):
+        return None
+    values: dict[str, str] = {}
+    for i, hit in enumerate(hits):
+        end = hits[i + 1].start() if i + 1 < len(hits) else len(raw)
+        body = raw[hit.end():end]
+        body = re.sub(r'"\s*,\s*$', "", body) if i + 1 < len(hits) else re.sub(r'"\s*\}?\s*$', "", body)
+        values.setdefault(hit.group(1), _unescape_json_fragment(body))
+    guide = _clean_guide_text(values.get("guide", ""))
+    if not guide:
+        return None
+    return TextReadingGuide(meaning=" ".join(values.get("meaning", "").split()), guide=guide)
 
 
 async def generate_text_reading_guide(
