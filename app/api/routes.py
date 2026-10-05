@@ -19,7 +19,7 @@ from app.services.coaching import (
 )
 from app.services.mora_timing import resolve_mora_windows
 from app.services.normalization import to_hiragana
-from app.services.pitch_accent import pitch_accent_pattern
+from app.services.pitch_accent import pitch_accent_pattern, pitch_accent_patterns
 from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
 from app.services.prosody_issues import detect_duration_issues
 from app.services.scoring import score_pronunciation
@@ -112,9 +112,11 @@ async def evaluate_pronunciation(
             # Dictionary H/L of the recognized kana (API/coach). The practice
             # page plots measured_pitch (WAV F0) from EvaluationResult.
             try:
-                recognized_moras = pitch_accent_pattern(result.recognized_hiragana)
+                recognized_patterns = pitch_accent_patterns(result.recognized_hiragana)
+                recognized_moras = recognized_patterns[0] if recognized_patterns else []
             except ValueError:
                 recognized_moras = []
+                recognized_patterns = []
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Recognized-text pitch pattern failed; "
@@ -122,8 +124,13 @@ async def evaluate_pronunciation(
                     exc_info=True,
                 )
                 recognized_moras = []
+                recognized_patterns = []
 
-            return EvaluateResponse.from_result(result, recognized_moras)
+            return EvaluateResponse.from_result(
+                result,
+                recognized_moras=recognized_moras,
+                recognized_patterns=recognized_patterns,
+            )
 
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -155,7 +162,8 @@ def get_pitch_accent(
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
     try:
-        moras = pitch_accent_pattern(text)
+        patterns = pitch_accent_patterns(text)
+        moras = patterns[0] if patterns else []
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
@@ -164,7 +172,7 @@ def get_pitch_accent(
             status_code=500, detail=f"Pitch accent extraction failed: {e}"
         ) from e
 
-    return PitchAccentResponse.from_result(text, moras)
+    return PitchAccentResponse.from_result(text, moras, all_patterns=patterns)
 
 
 @router.post(

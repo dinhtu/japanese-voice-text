@@ -43,6 +43,18 @@ def test_hiragana_loanword_pitch_pattern():
     assert pitches[1] == "H"
 
 
+def test_multiple_pitch_accent_patterns():
+    from app.services.pitch_accent import pitch_accent_patterns
+
+    pats = pitch_accent_patterns("プロジェクト")
+    assert len(pats) >= 1
+    # Primary is L H L L L
+    assert [m.pitch for m in pats[0]] == ["L", "H", "L", "L", "L"]
+    if len(pats) >= 2:
+        # Second pattern is L H H L L
+        assert [m.pitch for m in pats[1]] == ["L", "H", "H", "L", "L"]
+
+
 def test_empty_text_raises():
     with pytest.raises(ValueError):
         pitch_accent_pattern("")

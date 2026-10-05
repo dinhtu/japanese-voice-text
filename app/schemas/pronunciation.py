@@ -103,6 +103,10 @@ class EvaluateResponse(BaseModel):
         "/pitch-accent). Kept for the coach/API; the practice chart draws "
         "`measured_pitch` instead.",
     )
+    recognized_pitch_patterns: list[list[MoraPitchItem]] = Field(
+        default_factory=list,
+        description="All accepted pitch-accent patterns for the recognized text (primary first, then alternatives)",
+    )
     measured_pitch: list[MeasuredPitchItem] = Field(
         default_factory=list,
         description="F0 measured from the WAV, one point per target mora "
@@ -115,9 +119,24 @@ class EvaluateResponse(BaseModel):
         cls,
         result: EvaluationResult,
         recognized_moras: list[MoraPitch] | None = None,
+        recognized_patterns: list[list[MoraPitch]] | None = None,
     ) -> "EvaluateResponse":
         score = result.score
         aspects = result.aspects
+        primary_moras = [
+            MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase)
+            for m in (recognized_moras or [])
+        ]
+        if recognized_patterns:
+            all_patterns = [
+                [MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase) for m in p]
+                for p in recognized_patterns
+            ]
+        elif primary_moras:
+            all_patterns = [primary_moras]
+        else:
+            all_patterns = []
+
         return cls(
             target_text=result.target_text,
             target_hiragana=result.target_hiragana,
@@ -147,10 +166,8 @@ class EvaluateResponse(BaseModel):
                 MoraStatusItem(mora=m.mora, ok=m.ok)
                 for m in mora_status(result.target_hiragana, score.errors)
             ],
-            recognized_pitch_pattern=[
-                MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase)
-                for m in (recognized_moras or [])
-            ],
+            recognized_pitch_pattern=primary_moras,
+            recognized_pitch_patterns=all_patterns,
             measured_pitch=[
                 MeasuredPitchItem(
                     mora=str(p.get("mora", "")),

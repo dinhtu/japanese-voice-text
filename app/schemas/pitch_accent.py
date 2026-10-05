@@ -15,14 +15,32 @@ class PitchAccentResponse(BaseModel):
     success: bool = True
     text: str = Field(description="Text exactly as submitted")
     reading: str = Field(description="Hiragana reading, mora-joined")
-    pattern: list[MoraPitchItem]
+    pattern: list[MoraPitchItem] = Field(description="Primary reference pitch-accent pattern")
+    patterns: list[list[MoraPitchItem]] = Field(
+        default_factory=list,
+        description="All accepted pitch-accent patterns (primary first, then alternatives)",
+    )
 
     @classmethod
-    def from_result(cls, text: str, moras: list[MoraPitch]) -> "PitchAccentResponse":
+    def from_result(
+        cls,
+        text: str,
+        moras: list[MoraPitch],
+        all_patterns: list[list[MoraPitch]] | None = None,
+    ) -> "PitchAccentResponse":
+        primary = [
+            MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase) for m in moras
+        ]
+        if all_patterns:
+            pats = [
+                [MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase) for m in p]
+                for p in all_patterns
+            ]
+        else:
+            pats = [primary]
         return cls(
             text=text,
             reading="".join(m.mora for m in moras),
-            pattern=[
-                MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase) for m in moras
-            ],
+            pattern=primary,
+            patterns=pats,
         )

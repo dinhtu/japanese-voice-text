@@ -499,6 +499,9 @@ async function evaluate(wav) {
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
     learnerPitch = result.measured_pitch ?? [];
+    if (result.recognized_pitch_patterns && result.recognized_pitch_patterns.length) {
+      referencePatterns = result.recognized_pitch_patterns;
+    }
     if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
     else if (referencePattern) renderPitchChart();
   } catch (error) {
@@ -727,6 +730,8 @@ async function requestCoach() {
 let pitchLoadedFor = null;
 /** Reference H/L pattern for `pitchLoadedFor`, from /pitch-accent. */
 let referencePattern = null;
+/** All accepted pitch patterns (primary + alternatives) for `pitchLoadedFor`. */
+let referencePatterns = null;
 /** Measured F0 per target mora from /evaluate's measured_pitch.
  *  null = no take scored yet; [] = scored but no usable F0. */
 let learnerPitch = null;
@@ -734,6 +739,7 @@ let learnerPitch = null;
 function resetPitch() {
   pitchLoadedFor = null;
   referencePattern = null;
+  referencePatterns = null;
   learnerPitch = null;
   el.pitch.hidden = true;
   el.pitchBtn?.setAttribute("aria-expanded", "false");
@@ -927,6 +933,45 @@ function renderPitchChart() {
     hint = `<p class="pitch__hint">Nét xanh bậc vuông là cao độ mẫu (H cao, L thấp, đổi bậc theo ngữ điệu).</p>`;
   }
 
+  let variantsHtml = "";
+  if (referencePatterns && referencePatterns.length > 1) {
+    const alts = referencePatterns.slice(1);
+    const altItems = alts
+      .map((pat, idx) => {
+        const vPoints = patternPoints(pat, width, yHigh, yLow);
+        const vDots = patternDots(pat, vPoints, "ref");
+        return `
+          <div class="pitch__variant" style="padding: 8px 10px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.07); border-radius: 8px; margin-top: 8px;">
+            <div style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted, #64748b); margin-bottom: 4px;">Cách đọc ${idx + 2}:</div>
+            <div class="pitch__scroll">
+              <div class="pitch__plot" style="width: max(100%, ${width}px)">
+                <svg class="pitch__svg" viewBox="0 0 ${width} 94" preserveAspectRatio="none">
+                  <line class="pitch__guide" x1="0" y1="${yLow}" x2="${width}" y2="${yLow}" />
+                  <line class="pitch__guide" x1="0" y1="${yMid}" x2="${width}" y2="${yMid}" />
+                  <path class="pitch__line pitch__line--step" d="${patternStepPath(pat, width, yHigh, yLow)}" />
+                  <polyline class="pitch__line" points="${patternPolyline(vPoints)}" />
+                  ${vDots}
+                </svg>
+                ${patternLabels(pat, "ref")}
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    variantsHtml = `
+      <details class="pitch__accordion" style="margin-top: 12px; border-top: 1px dashed rgba(0,0,0,0.15); padding-top: 10px;">
+        <summary style="cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--text-muted, #64748b); user-select: none;">
+          ▶ Các cách nhấn trọng âm chuẩn khác (${alts.length} biến thể)
+        </summary>
+        <div class="pitch__variants-list" style="margin-top: 6px;">
+          ${altItems}
+        </div>
+      </details>
+    `;
+  }
+
   el.pitchChart.innerHTML = `
     <div class="pitch__scroll">
       <div class="pitch__plot" style="width: max(100%, ${width}px)">
@@ -942,6 +987,7 @@ function renderPitchChart() {
       </div>
     </div>
     ${hint}
+    ${variantsHtml}
   `;
   el.pitchChart.hidden = false;
   el.pitchStatus.hidden = true;
@@ -962,12 +1008,14 @@ async function loadPitchAccent(text) {
     const result = await response.json();
     if (text !== target.text) return;
     referencePattern = result.pattern;
+    referencePatterns = result.patterns || (result.pattern ? [result.pattern] : []);
     pitchLoadedFor = text;
     if (document.body.dataset.targetLang === "zh") renderChinesePitch();
     else renderPitchChart();
   } catch (error) {
     if (text !== target.text) return;
     referencePattern = null;
+    referencePatterns = null;
     pitchLoadedFor = null;
     setPitchStatus(
       error instanceof Error ? error.message : "Kh\u00f4ng l\u1ea5y \u0111\u01b0\u1ee3c cao \u0111\u1ed9 m\u1eabu.",
