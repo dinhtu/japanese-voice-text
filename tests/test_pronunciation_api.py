@@ -262,3 +262,43 @@ def test_chinese_text_guide_uses_chinese_prompt():
 
     for key in ("vi", "en", "jp", "ko", "tw"):
         assert CHINESE_TEXT_READING_GUIDE_PROMPTS[key] != TEXT_READING_GUIDE_PROMPTS[key]
+
+
+def test_pitch_accent_flag_use_ollama_overrides_env(client, monkeypatch):
+    from src.asr import kana_converter
+
+    monkeypatch.setenv("KANA_USE_OLLAMA", "0")
+    seen = []
+
+    def fake_ollama(self, text):
+        seen.append(text)
+        return "きょうは"
+
+    monkeypatch.setattr(kana_converter.JapaneseKanaConverter, "_ollama_to_kana", fake_ollama)
+
+    assert client.get("/api/pronunciation/pitch-accent", params={"text": "今日は"}).status_code == 200
+    assert seen == []  # env says 0 and no flag -> pykakasi only
+
+    response = client.get("/api/pronunciation/pitch-accent", params={"text": "今日は", "flag_use_ollama": 1})
+    assert response.status_code == 200
+    assert seen  # flag=1 -> Ollama used despite KANA_USE_OLLAMA=0
+
+    seen.clear()
+    assert client.get("/api/pronunciation/pitch-accent", params={"text": "今日は"}).status_code == 200
+    assert seen == []  # override does not leak into the next request
+
+    assert client.get("/api/pronunciation/pitch-accent", params={"text": "今日は", "flag_use_ollama": 2}).status_code == 422
+
+
+def test_use_ollama_g2p_context_restores_env_setting(monkeypatch):
+    from src.asr.kana_converter import JapaneseKanaConverter, use_ollama_g2p
+
+    monkeypatch.setenv("KANA_USE_OLLAMA", "0")
+    converter = JapaneseKanaConverter()
+    assert not converter._is_ollama_enabled()
+    with use_ollama_g2p(True):
+        assert converter._is_ollama_enabled()
+    assert not converter._is_ollama_enabled()
+    monkeypatch.setenv("KANA_USE_OLLAMA", "1")
+    with use_ollama_g2p(None):
+        assert converter._is_ollama_enabled()

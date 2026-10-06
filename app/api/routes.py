@@ -28,6 +28,7 @@ from app.services.use_cases import (
     EvaluatePronunciationUseCase,
 )
 from app.core.config import Settings, get_settings
+from src.asr.kana_converter import use_ollama_g2p
 from app.core.vram import gpu_session
 from app.schemas.coaching import CategoryGuideResponse, CoachResponse, TextGuideResponse
 from app.schemas.pronunciation import EvaluateResponse
@@ -156,13 +157,24 @@ async def evaluate_pronunciation(
 )
 def get_pitch_accent(
     text: str = Query(..., min_length=1, description="Japanese target text (kanji or kana)"),
+    flag_use_ollama: int = Query(
+        0,
+        ge=0,
+        le=1,
+        description=(
+            "1 = đọc kanji -> hiragana bằng Ollama cho request này (dù KANA_USE_OLLAMA=0); "
+            "0 = theo biến môi trường KANA_USE_OLLAMA"
+        ),
+    ),
 ) -> PitchAccentResponse:
     text = text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
     try:
-        patterns = pitch_accent_patterns(text)
+        # flag_use_ollama=1 forces Ollama; 0 leaves KANA_USE_OLLAMA in charge.
+        with use_ollama_g2p(True if flag_use_ollama == 1 else None):
+            patterns = pitch_accent_patterns(text)
         moras = patterns[0] if patterns else []
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

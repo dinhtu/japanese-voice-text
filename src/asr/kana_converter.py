@@ -6,6 +6,9 @@ import os
 import re
 import unicodedata
 import urllib.request
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 
 import pykakasi
 
@@ -23,6 +26,21 @@ _ALPHA_TO_KATA = {
 _DROP_CHARS = str.maketrans("", "", "、。？！,.!?「」『』（）()［］[]{}・…:;\"'`")
 _CLEAN_RE = re.compile(r"[・]+")
 
+# Per-request override of KANA_USE_OLLAMA (e.g. /pitch-accent?flag_use_ollama=1).
+# None = follow the env var. A ContextVar keeps concurrent requests separate.
+_ollama_override: ContextVar[bool | None] = ContextVar("kana_use_ollama_override", default=None)
+
+
+@contextmanager
+def use_ollama_g2p(enabled: bool | None = True) -> Iterator[None]:
+    """Force Ollama kana conversion on (True) / off (False) inside the block;
+    None leaves the KANA_USE_OLLAMA env setting in charge."""
+    token = _ollama_override.set(enabled)
+    try:
+        yield
+    finally:
+        _ollama_override.reset(token)
+
 
 class JapaneseKanaConverter:
     """Convert Japanese text to space-separated hiragana characters.
@@ -32,6 +50,9 @@ class JapaneseKanaConverter:
     """
 
     def _is_ollama_enabled(self) -> bool:
+        override = _ollama_override.get()
+        if override is not None:
+            return override
         flag = os.getenv("KANA_USE_OLLAMA") or os.getenv("USE_OLLAMA_G2P") or "0"
         return flag.strip().lower() in ("1", "true", "yes", "on")
 
@@ -90,7 +111,8 @@ class JapaneseKanaConverter:
             return ""
 
         hira = ""
-        # 1. Try local Ollama if enabled via env (KANA_USE_OLLAMA=1)
+        # 1. Try local Ollama if enabled via env (KANA_USE_OLLAMA=1) or per request
+        #    (use_ollama_g2p / flag_use_ollama=1 on /pitch-accent)
         if self._is_ollama_enabled():
             try:
                 hira = self._ollama_to_kana(text)
