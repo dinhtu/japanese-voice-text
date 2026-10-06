@@ -42,8 +42,21 @@ class JapaneseKanaConverter:
         timeout = float(os.getenv("OLLAMA_TIMEOUT_S", "5"))
 
         prompt = (
-            "Convert the following Japanese sentence into pure Hiragana reading according to natural pronunciation.\n"
-            "Output ONLY the Hiragana text without spaces, Romaji, punctuation, or explanations.\n\n"
+            "You are an expert native Japanese phonetic converter (Furigana / G2P engine).\n"
+            "Convert the Japanese sentence into natural, spoken-accurate pure Hiragana (実際の口語・発音通りのひらがな).\n\n"
+            "Key pronunciation rules:\n"
+            "1. '何' reading:\n"
+            "   - Read as 'なん' before counters, numbers, and /t, d, n, s, z/ sounds (e.g., 何時 -> なんじ, 何人 -> なんにん, 何年 -> なんねん, 何ですか -> なんですか, 何で -> なんで, 何個 -> なんこ, 何曜日 -> なんようび).\n"
+            "   - Read as 'なに' before particles を, が, も, から, まで, or standalone (e.g., 何を食べますか -> なにをたべますか, 何が好きですか -> なにがすきですか, 何も -> なにも).\n"
+            "2. '今日' reading:\n"
+            "   - In sentences, read as 'きょう' (e.g., 今日は教室で -> きょうはきょうしつで), NEVER as 'こんにちは'.\n"
+            "3. Compound words & Counters:\n"
+            "   - 'お母さん' -> 'おかあさん', '時計' -> 'とけい', '一日' -> 'ついたち' (1st of month) or 'いちにち' (1 full day).\n\n"
+            "Examples:\n"
+            "- Input: 今日は教室で日本語を勉強します\n  Hiragana: きょうはきょうしつでにほんごをべんきょうします\n"
+            "- Input: 何時に何を食べますか？何人で行きますか？\n  Hiragana: なんじになにをたべますかなんにんでいきますか\n"
+            "- Input: お母さんは時計を買いました。\n  Hiragana: おかあさんはとけいをかいました\n\n"
+            "Format: Output ONLY the Hiragana text without spaces, Romaji, punctuation, markdown, or explanations.\n\n"
             f"Input: {text}\n"
             "Hiragana:"
         )
