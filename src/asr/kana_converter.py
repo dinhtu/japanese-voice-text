@@ -31,9 +31,13 @@ class JapaneseKanaConverter:
     Fallback engine: pykakasi (with regex preprocessing).
     """
 
+    def _is_ollama_enabled(self) -> bool:
+        flag = os.getenv("KANA_USE_OLLAMA") or os.getenv("USE_OLLAMA_G2P") or "0"
+        return flag.strip().lower() in ("1", "true", "yes", "on")
+
     @property
     def engine(self) -> str:
-        return "ollama+pykakasi"
+        return "ollama+pykakasi" if self._is_ollama_enabled() else "pykakasi"
 
     def _ollama_to_kana(self, text: str) -> str:
         """Call local Ollama to convert Japanese text to accurate Hiragana."""
@@ -86,14 +90,15 @@ class JapaneseKanaConverter:
             return ""
 
         hira = ""
-        # 1. Try local Ollama first for 100% context-aware accurate G2P
-        try:
-            hira = self._ollama_to_kana(text)
-        except Exception:  # noqa: BLE001
-            logger.debug("Ollama G2P unavailable or failed; falling back to pykakasi", exc_info=True)
-            hira = ""
+        # 1. Try local Ollama if enabled via env (KANA_USE_OLLAMA=1)
+        if self._is_ollama_enabled():
+            try:
+                hira = self._ollama_to_kana(text)
+            except Exception:  # noqa: BLE001
+                logger.debug("Ollama G2P unavailable or failed; falling back to pykakasi", exc_info=True)
+                hira = ""
 
-        # 2. Fallback to pykakasi if Ollama is offline or timed out
+        # 2. Fallback to pykakasi (or default if KANA_USE_OLLAMA=0)
         if not hira:
             # Preprocessing: separate '今日' and 'は' to prevent pykakasi from mapping
             # the noun '今日' (kyou) + particle 'は' (wa) into the greeting 'こんにちは'.
