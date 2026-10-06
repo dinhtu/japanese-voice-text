@@ -1,14 +1,22 @@
-"""Japanese text to kana (hiragana) conversion using pykakasi."""
+"""Japanese text to kana (hiragana) conversion using pyopenjtalk."""
 
 import logging
 import re
 import unicodedata
 
-import pykakasi
+try:
+    import pyopenjtalk
+except Exception:  # noqa: BLE001
+    pyopenjtalk = None
+
+try:
+    import pykakasi
+
+    _kakasi = pykakasi.kakasi()
+except Exception:  # noqa: BLE001
+    _kakasi = None
 
 logger = logging.getLogger(__name__)
-
-_kakasi = pykakasi.kakasi()
 
 _ALPHA_TO_KATA = {
     "A": "エー", "B": "ビー", "C": "シー", "D": "ディー", "E": "イー", "F": "エフ",
@@ -26,7 +34,7 @@ class JapaneseKanaConverter:
 
     @property
     def engine(self) -> str:
-        return "pykakasi"
+        return "pyopenjtalk" if pyopenjtalk is not None else "pykakasi"
 
     def text_to_kana(self, text: str) -> str:
         text = _CLEAN_RE.sub(" ", text)
@@ -34,23 +42,36 @@ class JapaneseKanaConverter:
         if not text:
             return ""
 
-        # pykakasi converts Japanese text into natural compound hiragana readings
-        res = _kakasi.convert(text)
-        hira = "".join(item["hira"] for item in res)
-        if not hira:
+        katakana = ""
+        # 1. Primary engine: pyopenjtalk (accurate context-aware G2P)
+        if pyopenjtalk is not None:
+            try:
+                katakana = pyopenjtalk.g2p(text, kana=True)
+            except Exception:  # noqa: BLE001
+                logger.debug("pyopenjtalk failed, falling back to pykakasi", exc_info=True)
+                katakana = ""
+
+        # 2. Fallback engine: pykakasi
+        if not katakana and _kakasi is not None:
+            # Preprocessing rule to prevent pykakasi from converting '今日は' into 'こんにちは'
+            preprocessed = re.sub(r"今日(?=は)", "今日 ", text)
+            res = _kakasi.convert(preprocessed)
+            katakana = "".join(item["kana"] for item in res)
+
+        if not katakana:
             return ""
 
         # NFKC normalization
-        hira = unicodedata.normalize("NFKC", hira)
-        hira = "".join(_ALPHA_TO_KATA.get(ch.upper(), ch) for ch in hira)
-        hira = hira.translate(_DROP_CHARS)
-        hira = "".join(ch for ch in self._kata_to_hira(hira) if self._is_kana(ch))
+        katakana = unicodedata.normalize("NFKC", katakana)
+        katakana = "".join(_ALPHA_TO_KATA.get(ch.upper(), ch) for ch in katakana)
+        katakana = katakana.translate(_DROP_CHARS)
+        hiragana = "".join(ch for ch in self._kata_to_hira(katakana) if self._is_kana(ch))
 
-        if not hira:
+        if not hiragana:
             return ""
 
         # Deliberately drop <sp> to avoid brittle word-boundary supervision.
-        return " ".join(list(hira))
+        return " ".join(list(hiragana))
 
     def _kata_to_hira(self, text: str) -> str:
         """Convert katakana to hiragana."""

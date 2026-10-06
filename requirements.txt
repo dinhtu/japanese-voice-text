@@ -33,7 +33,8 @@ transformers>=4.47.0
 pypinyin>=0.53.0
 numpy>=1.26.0
 soundfile>=0.12.0
-# Japanese morphological analysis & accurate reading (pykakasi / UniDic)
+# Japanese morphological analysis & accurate reading (pyopenjtalk / pykakasi / UniDic)
+pyopenjtalk>=0.4.1
 pykakasi>=2.3.0
 fugashi>=1.3.0
 unidic-lite>=1.0.8
