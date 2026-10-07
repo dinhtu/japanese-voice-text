@@ -91,6 +91,9 @@ class Settings:
         self.ollama_model = os.getenv("OLLAMA_MODEL", "qwen3:8b").strip()
         self.ollama_timeout_s = float(os.getenv("OLLAMA_TIMEOUT_S", "30"))
         self.ollama_temperature = float(os.getenv("OLLAMA_TEMPERATURE", "0.4"))
+        # /text-guide writes a long phrase-by-phrase guide (minutes for long
+        # sentences on a local GPU), so it gets its own, larger timeout.
+        self.text_guide_timeout_s = float(os.getenv("TEXT_GUIDE_TIMEOUT_S", "180"))
 
         # "Nghe mẫu": reference audio from the ComfyUIVoice service
         # (POST {TTS_API_URL}/tts). The browser only calls /api/tts on this app.

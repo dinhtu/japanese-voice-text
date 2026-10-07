@@ -256,8 +256,8 @@ def test_text_reading_guide_prompts_support_languages():
 def test_text_guide_prompts_ask_for_meaning_in_every_language():
     from app.services.coaching import TEXT_GUIDE_MEANING_RULES
     for lang in ("vi", "en", "jp", "ja", "ko", "tw", "zh"):
-        assert '"meaning"' in TEXT_GUIDE_MEANING_RULES[lang]
-        assert '"guide"' in TEXT_GUIDE_MEANING_RULES[lang]
+        assert "<meaning>" in TEXT_GUIDE_MEANING_RULES[lang]
+        assert "</meaning>" in TEXT_GUIDE_MEANING_RULES[lang]
 
 
 def test_parse_text_guide_reads_meaning_and_guide():
@@ -298,3 +298,36 @@ def test_parse_text_guide_survives_unescaped_quotes():
     assert '"shi" đọc nhẹ' in result.guide
     assert result.guide.endswith("- はし: trọng âm")
     assert "\n🎯" in result.guide
+
+
+def test_parse_text_guide_meaning_tag_keeps_quotes():
+    from app.services.coaching import _parse_text_guide
+    content = (
+        "<meaning>Điều quan trọng nhất bà dạy tôi</meaning>\n"
+        '• 私が (Watashi ga): Đọc là "Oa-ta-shi ga". (Lưu ý: "ga" đọc nhẹ).\n'
+        '• 子供の頃に (Kodomo no koro ni): Đọc là "Cô-đô-mô nô cô-rô ni".'
+    )
+    result = _parse_text_guide(content)
+    assert result.meaning == "Điều quan trọng nhất bà dạy tôi"
+    assert result.guide.startswith('• 私が (Watashi ga): Đọc là "Oa-ta-shi ga".')
+    assert result.guide.endswith('"Cô-đô-mô nô cô-rô ni".')
+    assert "<meaning>" not in result.guide
+
+
+def test_parse_text_guide_meaning_tag_without_closing_tag():
+    from app.services.coaching import _parse_text_guide
+    result = _parse_text_guide("<meaning>Bằng đũa\n• はしで (Hashi de): Đọc là \"Ha-shi đê\".")
+    assert result.meaning == "Bằng đũa"
+    assert result.guide == '• はしで (Hashi de): Đọc là "Ha-shi đê".'
+
+
+def test_text_guide_token_budget_grows_with_text():
+    from app.services.coaching import (
+        TEXT_GUIDE_MAX_TOKENS,
+        TEXT_GUIDE_MIN_TOKENS,
+        text_guide_token_budget,
+    )
+    long_text = "私が子供の頃に祖母から教わった、人生で最も大切な教えは、どんなに辛いことがあっても決して諦めず、明日への希望を胸に抱きながら一歩ずつ進んでいくことでした。"
+    assert text_guide_token_budget("はし") == TEXT_GUIDE_MIN_TOKENS
+    assert text_guide_token_budget(long_text) > 3000
+    assert text_guide_token_budget(long_text * 3) == TEXT_GUIDE_MAX_TOKENS

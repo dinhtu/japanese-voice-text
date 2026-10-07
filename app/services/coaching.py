@@ -55,6 +55,7 @@ verified report on its own.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -65,6 +66,8 @@ if TYPE_CHECKING:
     from app.core.config import Settings
     from app.services.pitch_accent import MoraPitch
     from app.services.scoring import PronunciationError
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LANG = "vi"
 
@@ -1154,50 +1157,61 @@ KOREAN_TEXT_READING_GUIDE_PROMPTS["zh-tw"] = KOREAN_TEXT_READING_GUIDE_PROMPTS["
 
 
 # Appended to every TEXT_READING_GUIDE prompt (all practice languages): the
-# model also returns the meaning of the searched text, and the two parts come
-# back as JSON (enforced by TEXT_GUIDE_JSON_SCHEMA) so the UI can show the
-# meaning on its own line instead of parsing it out of free text.
+# model also returns the meaning of the searched text, on the first line inside
+# <meaning>...</meaning>, then the guide as plain text.
+#
+# Deliberately NOT a JSON `format` schema: with constrained JSON decoding the
+# first unescaped quote the model writes (Đọc là "Wa-ta-shi") is taken as the
+# end of the string, so the guide was silently cut at 「Đọc là」. Plain text +
+# a tag has nothing to escape.
 TEXT_GUIDE_MEANING_RULES: dict[str, str] = {
     "vi": """
 
-ĐỊNH DẠNG TRẢ VỀ (BẮT BUỘC): Chỉ trả về JSON với 2 trường:
-- "meaning": Nghĩa của từ/câu đang tìm, dịch tự nhiên sang tiếng Việt (1 câu ngắn). Nếu là một từ đơn có nhiều nghĩa, ghi nghĩa phổ biến nhất trước, các nghĩa khác cách nhau bằng dấu "; ".
-- "guide": Toàn bộ hướng dẫn phát âm theo các quy tắc ở trên (văn bản thuần, giữ xuống dòng). KHÔNG lặp lại phần nghĩa trong "guide".
-Bên trong giá trị JSON, mọi dấu ngoặc kép phải được escape thành \\" (hoặc dùng “ ” thay cho ").""",
+ĐỊNH DẠNG TRẢ VỀ (BẮT BUỘC):
+- Dòng đầu tiên: <meaning>Nghĩa của từ/câu đang tìm, dịch tự nhiên sang tiếng Việt (1 câu ngắn)</meaning>. Nếu là một từ đơn có nhiều nghĩa, ghi nghĩa phổ biến nhất trước, các nghĩa khác cách nhau bằng dấu "; ".
+- Từ dòng thứ hai: toàn bộ hướng dẫn phát âm theo các quy tắc ở trên (văn bản thuần). KHÔNG lặp lại phần nghĩa.
+- PHẢI hướng dẫn HẾT toàn bộ câu, từ cụm đầu tiên đến dấu câu cuối cùng, không được dừng giữa chừng. Câu dài thì gộp thành các cụm lớn hơn và mỗi lưu ý chỉ 1 câu ngắn để đủ chỗ.""",
     "en": """
 
-OUTPUT FORMAT (MANDATORY): Return only JSON with 2 fields:
-- "meaning": The meaning of the searched word/sentence, translated naturally into English (one short sentence). For a single word with several senses, put the most common first and separate the others with "; ".
-- "guide": The full pronunciation guide following the rules above (plain text, keep line breaks). DO NOT repeat the meaning inside "guide".
-Inside JSON values, every double quote must be escaped as \\" (or use “ ” instead of ").""",
+OUTPUT FORMAT (MANDATORY):
+- First line: <meaning>The meaning of the searched word/sentence, translated naturally into English (one short sentence)</meaning>. For a single word with several senses, put the most common first and separate the others with "; ".
+- From the second line: the full pronunciation guide following the rules above (plain text). DO NOT repeat the meaning.
+- You MUST cover the WHOLE text, from the first phrase to the final punctuation, never stopping halfway. For long text, use bigger chunks and keep each note to one short sentence so everything fits.""",
     "jp": """
 
-出力形式（必須）: 次の2つのフィールドを持つJSONのみを返してください:
-- "meaning": 検索された単語・文の意味を自然な日本語で（短い1文）。テキストが日本語の場合は、やさしい言葉で意味を説明してください。複数の意味がある単語は、最も一般的な意味を先に書き、他の意味は「; 」で区切ってください。
-- "guide": 上記ルールに従った発音ガイド全体（プレーンテキスト、改行を保持）。"guide" の中で意味を繰り返さないでください。""",
+出力形式（必須）:
+- 1行目: <meaning>検索された単語・文の意味を自然な日本語で（短い1文）</meaning>。テキストが日本語の場合は、やさしい言葉で意味を説明してください。複数の意味がある単語は、最も一般的な意味を先に書き、他の意味は「; 」で区切ってください。
+- 2行目以降: 上記ルールに従った発音ガイド全体（プレーンテキスト）。意味を繰り返さないでください。
+- 最初のフレーズから最後の句読点まで、テキスト全体を必ず最後まで解説してください。長い文はフレーズを大きめにまとめ、各注意点は短い1文にしてください。""",
     "ko": """
 
-출력 형식(필수): 다음 2개 필드를 가진 JSON만 반환하세요:
-- "meaning": 검색한 단어/문장의 뜻을 자연스러운 한국어로 번역 (짧은 1문장). 입력이 한국어이면 쉬운 말로 뜻을 설명하세요. 뜻이 여러 개인 단어는 가장 일반적인 뜻을 먼저 쓰고 나머지는 "; "로 구분하세요.
-- "guide": 위 규칙에 따른 발음 가이드 전체 (일반 텍스트, 줄바꿈 유지). "guide" 안에서 뜻을 반복하지 마세요.""",
+출력 형식(필수):
+- 첫 줄: <meaning>검색한 단어/문장의 뜻을 자연스러운 한국어로 번역 (짧은 1문장)</meaning>. 입력이 한국어이면 쉬운 말로 뜻을 설명하세요. 뜻이 여러 개인 단어는 가장 일반적인 뜻을 먼저 쓰고 나머지는 "; "로 구분하세요.
+- 둘째 줄부터: 위 규칙에 따른 발음 가이드 전체 (일반 텍스트). 뜻을 반복하지 마세요.
+- 첫 구절부터 마지막 문장 부호까지 문장 전체를 반드시 끝까지 설명하세요. 긴 문장은 구절을 크게 묶고 각 주의사항은 짧은 1문장으로 쓰세요.""",
     "tw": """
 
-輸出格式（必填）：只回傳包含 2 個欄位的 JSON：
-- "meaning": 所搜尋詞語/句子的意思，以自然的繁體中文翻譯（一句簡短的話）。若輸入本身是中文，請用淺白的話解釋意思。若單字有多個意思，先寫最常用的，其餘以「; 」分隔。
-- "guide": 依上述規則撰寫的完整發音指導（純文字，保留換行）。不要在 "guide" 中重複意思。""",
+輸出格式（必填）：
+- 第一行：<meaning>所搜尋詞語/句子的意思，以自然的繁體中文翻譯（一句簡短的話）</meaning>。若輸入本身是中文，請用淺白的話解釋意思。若單字有多個意思，先寫最常用的，其餘以「; 」分隔。
+- 第二行起：依上述規則撰寫的完整發音指導（純文字）。不要重複意思。
+- 必須從第一個詞組講解到最後一個標點，涵蓋整段文字，不可中途停止。句子較長時請合併成較大的詞組，每條注意事項只寫一句短句。""",
 }
 TEXT_GUIDE_MEANING_RULES["ja"] = TEXT_GUIDE_MEANING_RULES["jp"]
 TEXT_GUIDE_MEANING_RULES["zh"] = TEXT_GUIDE_MEANING_RULES["tw"]
 TEXT_GUIDE_MEANING_RULES["zh-tw"] = TEXT_GUIDE_MEANING_RULES["tw"]
 
-TEXT_GUIDE_JSON_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "meaning": {"type": "string"},
-        "guide": {"type": "string"},
-    },
-    "required": ["meaning", "guide"],
-}
+# Output budget grows with the text: a 70-character sentence needs several
+# thousand tokens of phrase-by-phrase guide, far more than the old fixed 900.
+TEXT_GUIDE_MIN_TOKENS = 900
+TEXT_GUIDE_TOKENS_PER_CHAR = 45
+TEXT_GUIDE_MAX_TOKENS = 4096
+
+
+def text_guide_token_budget(text: str) -> int:
+    return max(
+        TEXT_GUIDE_MIN_TOKENS,
+        min(TEXT_GUIDE_MAX_TOKENS, 600 + TEXT_GUIDE_TOKENS_PER_CHAR * len(text.strip())),
+    )
 
 
 @dataclass
@@ -1217,9 +1231,21 @@ def _clean_guide_text(value: str) -> str:
     return _GUIDE_PREAMBLE_RE.sub("", value.strip()).strip().strip('"`\n ')
 
 
+_MEANING_TAG_RE = re.compile(r"<meaning>(.*?)(?:</meaning>|\n|$)", re.DOTALL | re.IGNORECASE)
+
+
 def _parse_text_guide(content: str) -> TextReadingGuide:
-    """JSON {meaning, guide} from the model; if it is not valid JSON (e.g. the
-    answer was cut off by num_predict), keep the whole text as the guide."""
+    """`<meaning>…</meaning>` + plain-text guide (current prompt). Older JSON
+    {meaning, guide} answers are still understood; anything else becomes the
+    guide as-is."""
+    tagged = _MEANING_TAG_RE.search(content)
+    if tagged:
+        meaning = " ".join(tagged.group(1).split())
+        rest = (content[: tagged.start()] + content[tagged.end():]).strip()
+        rest = re.sub(r"</?meaning>", "", rest, flags=re.IGNORECASE)
+        guide = _clean_guide_text(rest)
+        if guide:
+            return TextReadingGuide(meaning=meaning, guide=guide)
     raw = content.strip()
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, re.DOTALL)
     if fenced:
@@ -1304,7 +1330,11 @@ async def generate_text_reading_guide(
             "Thiếu package 'ollama'. Cài bằng: pip install ollama"
         ) from e
 
-    client = AsyncClient(host=settings.ollama_host, timeout=settings.ollama_timeout_s)
+    num_predict = text_guide_token_budget(text)
+    # A long guide takes minutes on a local GPU; OLLAMA_TIMEOUT_S (30s, sized
+    # for the short /coach comment) would abort it, so use the larger of the two.
+    timeout = max(settings.ollama_timeout_s, getattr(settings, "text_guide_timeout_s", 180.0))
+    client = AsyncClient(host=settings.ollama_host, timeout=timeout)
     try:
         response = await client.chat(
             model=settings.ollama_model,
@@ -1314,11 +1344,7 @@ async def generate_text_reading_guide(
             ],
             think=False,
             stream=False,
-            format=TEXT_GUIDE_JSON_SCHEMA,
-            # JSON escaping + the extra meaning field need more room than the
-            # old plain-text guide (500); a cut-off answer falls back in
-            # _parse_text_guide.
-            options={"temperature": 0.3, "num_predict": 900},
+            options={"temperature": 0.3, "num_predict": num_predict},
         )
     except ResponseError as e:
         if e.status_code == 404:
@@ -1339,6 +1365,13 @@ async def generate_text_reading_guide(
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
 
-    return _parse_text_guide(content)
+    result = _parse_text_guide(content)
+    if response.get("done_reason") == "length":
+        # Still hit the budget: say so instead of ending mid-phrase silently.
+        logger.warning(
+            "Text guide cut at num_predict=%s for %d-char text", num_predict, len(text)
+        )
+        result.guide = result.guide.rstrip() + " …"
+    return result
 
 

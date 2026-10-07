@@ -1049,13 +1049,13 @@ let textGuideRequestId = 0;
  * language, keyed by sentence + guide language. Least-recently-used first
  * out. Storage can be missing or full (private mode, quota), so every
  * access is guarded and the page still works without it. */
-// v3: entries carry the AI `meaning`. Older keys (v1 guide-only, v2 saved
-// while the JSON parser cut guides at the first quote) are ignored.
-const GUIDE_CACHE_KEY = `pv_guide_cache_v3_${(TTS_LANG.split("-")[0] || "ja").toLowerCase()}`;
+// v4: entries carry the AI `meaning`. Older keys (v1 guide-only, v2/v3 saved
+// while guides could be cut at the first quote / at 900 tokens) are dropped.
+const GUIDE_CACHE_KEY = `pv_guide_cache_v4_${(TTS_LANG.split("-")[0] || "ja").toLowerCase()}`;
 try {
   // Drop caches written by older versions of this page.
   for (const key of Object.keys(localStorage)) {
-    if (key.startsWith("pv_guide_cache_") && !key.startsWith("pv_guide_cache_v3_")) localStorage.removeItem(key);
+    if (key.startsWith("pv_guide_cache_") && !key.startsWith("pv_guide_cache_v4_")) localStorage.removeItem(key);
   }
 } catch { /* storage unavailable */ }
 const GUIDE_CACHE_MAX = 50;
