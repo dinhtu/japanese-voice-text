@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from app.api import chinese_routes, english_routes, korean_routes, pages, routes, tts_routes
+from app.api import chinese_routes, english_routes, korean_routes, lab_routes, pages, routes, tts_routes
 from app.core.config import STATIC_DIR, get_settings
 from app.services.asr_service import ASRService
 from app.services.english_asr import get_english_asr_service
@@ -89,6 +89,7 @@ app.include_router(
     korean_routes.router, prefix="/api/pronunciation-ko", tags=["pronunciation-ko"]
 )
 app.include_router(tts_routes.router, prefix="/api/tts", tags=["tts"])
+app.include_router(lab_routes.router, prefix="/api/lab", tags=["lab-experiment"])
 app.include_router(pages.router, tags=["web"])
 
 

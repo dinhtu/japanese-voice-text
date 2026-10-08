@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>🧪 Lab Test | Romaji (romkan2) & MADLAD-400 Translation</title>
+    <link rel="stylesheet" href="{{ asset_url('app.css') }}" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧪</text></svg>"
+    />
+    <style>
+      .lab-container {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 1.5rem;
+      }
+      .lab-nav {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 0.5rem;
+      }
+      .lab-tab-btn {
+        background: transparent;
+        border: none;
+        padding: 0.6rem 1.2rem;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--ink-muted);
+        cursor: pointer;
+        border-radius: 8px;
+        transition: all 0.2s ease;
+      }
+      .lab-tab-btn:hover {
+        background: var(--brand-50);
+        color: var(--brand-700);
+      }
+      .lab-tab-btn.active {
+        background: var(--brand-600);
+        color: #fff;
+      }
+      .lab-card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      }
+      .lab-input-group {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+      .lab-input {
+        flex: 1;
+        padding: 0.75rem 1rem;
+        font-size: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        outline: none;
+      }
+      .lab-input:focus {
+        border-color: var(--brand-500);
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+      }
+      .lab-btn {
+        background: var(--brand-600);
+        color: #fff;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .lab-btn:hover {
+        background: var(--brand-700);
+      }
+      .lab-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .preset-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+      }
+      .preset-chip {
+        background: var(--canvas);
+        border: 1px solid var(--line);
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        color: var(--ink);
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .preset-chip:hover {
+        background: var(--brand-100);
+        border-color: var(--brand-300);
+        color: var(--brand-900);
+      }
+      .result-box {
+        background: var(--canvas);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1.25rem;
+        margin-top: 1rem;
+      }
+      .result-box__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+      }
+      .result-box__title {
+        font-weight: 700;
+        font-size: 1rem;
+        color: var(--ink);
+      }
+      .result-box__badge {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        background: #e2e8f0;
+        color: #475569;
+        font-family: monospace;
+      }
+      .result-box__output {
+        font-family: var(--font-jp);
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: var(--brand-700);
+        margin-bottom: 0.75rem;
+        word-break: break-all;
+      }
+      .pitch-pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 0.5rem;
+      }
+      .pitch-mora-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 4px 8px;
+        background: #fff;
+        min-width: 36px;
+      }
+      .pitch-mora-item.pitch-H {
+        border-top: 3px solid #ef4444;
+        background: #fef2f2;
+      }
+      .pitch-mora-item.pitch-L {
+        border-bottom: 3px solid #3b82f6;
+        background: #eff6ff;
+      }
+      .pitch-mora-item__pitch {
+        font-size: 0.7rem;
+        font-weight: 700;
+      }
+      .pitch-mora-item__mora {
+        font-size: 1.2rem;
+        font-family: var(--font-jp);
+        font-weight: 600;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0.25rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+      .status-pill.online {
+        background: #dcfce7;
+        color: #15803d;
+      }
+      .status-pill.offline {
+        background: #fee2e2;
+        color: #b91c1c;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+      .status-pill.online .status-dot { background: #22c55e; }
+      .status-pill.offline .status-dot { background: #ef4444; }
+      .notes-box {
+        margin-top: 1rem;
+        padding: 0.85rem;
+        background: #fffbeb;
+        border: 1px solid #fef3c7;
+        border-radius: 8px;
+        font-size: 0.88rem;
+        color: #92400e;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="lab-container">
+      <header class="page__header" style="margin-bottom: 1.5rem;">
+        <span class="badge">🧪 Test Lab · Isolated API Sandbox</span>
+        <nav class="lang-switch" aria-label="Ngôn ngữ luyện">
+          <a href="/">Tiếng Nhật</a>
+          <a href="/en">English</a>
+          <a href="/zh">Tiếng Trung</a>
+          <a href="/ko">Tiếng Hàn</a>
+          <a href="/lab" aria-current="page">🧪 Lab Test</a>
+        </nav>
+        <h1>Thử nghiệm Romaji (romkan2) & MADLAD-400</h1>
+        <p class="lead">
+          Dùng thư viện <code>romkan2</code> để chuyển Romaji ➔ Hiragana, sau đó trích xuất Pitch Accent bằng engine hiện có của dự án.
+        </p>
+      </header>
+
+      <!-- Tab Switcher -->
+      <div class="lab-nav">
+        <button class="lab-tab-btn active" onclick="switchLabTab('tab-romaji')">🔤 Thử nghiệm: Romaji ➔ romkan2 ➔ Pitch Accent</button>
+        <button class="lab-tab-btn" onclick="switchLabTab('tab-madlad')">🇻🇳 Thử nghiệm: MADLAD-400 (Dịch VI ➔ JA ➔ Pitch Accent)</button>
+      </div>
+
+      <!-- TAB 1: ROMAJI TO KANA VIA ROMKAN2 -->
+      <section id="tab-romaji" class="lab-tab-content">
+        <div class="lab-card">
+          <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">Chuyển đổi Romaji bằng <code>romkan2</code></h2>
+          <p style="color: var(--ink-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+            Nhập chuỗi Romaji bất kỳ, hệ thống sẽ gọi <code>romkan2.to_hiragana()</code> để đổi sang Hiragana, sau đó đưa chuỗi Hiragana này vào pipeline UniDic hiện có để tạo biểu đồ cao độ.
+          </p>
+
+          <div class="lab-input-group">
+            <input
+              type="text"
+              id="romajiInput"
+              class="lab-input"
+              placeholder="Nhập Romaji (vd: watashi wa gakusei desu, arigatou, chotto matte...)"
+              value="arigatou gozaimasu"
+            />
+            <button class="lab-btn" id="btnTestRomaji" onclick="testRomkan2()">Chuyển đổi ➔</button>
+          </div>
+
+          <div class="preset-chips">
+            <span style="font-size: 0.85rem; color: var(--ink-muted); align-self: center;">Mẫu thử:</span>
+            <button class="preset-chip" onclick="setRomaji('arigatou gozaimasu')">arigatou gozaimasu</button>
+            <button class="preset-chip" onclick="setRomaji('watashi wa gakusei desu')">watashi wa gakusei desu</button>
+            <button class="preset-chip" onclick="setRomaji('konnichiwa')">konnichiwa</button>
+            <button class="preset-chip" onclick="setRomaji('chotto matte kudasai')">chotto matte kudasai</button>
+            <button class="preset-chip" onclick="setRomaji('toukyou')">toukyou</button>
+            <button class="preset-chip" onclick="setRomaji('shin\'ya')">shin'ya</button>
+          </div>
+
+          <div id="romkan2ResultBox" class="result-box" style="display: none;">
+            <div class="result-box__header">
+              <span class="result-box__title">📦 Kết quả Hiragana từ <code>romkan2</code></span>
+              <span class="result-box__badge" id="romkan2Elapsed">0 ms</span>
+            </div>
+            <div class="result-box__output" id="romkan2Hiragana">-</div>
+            <div style="font-size: 0.85rem; color: var(--ink-muted); margin-bottom: 0.75rem;">
+              Katakana: <strong id="romkan2Katakana" style="color: var(--ink); font-family: var(--font-jp);">-</strong>
+            </div>
+
+            <div style="font-size: 0.9rem; font-weight: 700; color: var(--ink); margin-bottom: 4px;">
+              Biểu đồ Pitch Accent (UniDic từ Hiragana của romkan2):
+            </div>
+            <div class="pitch-pill-row" id="romkan2PitchPills"></div>
+          </div>
+
+          <div class="notes-box">
+            💡 <strong>Quy trình xử lý:</strong><br/>
+            <code>Text Romaji</code> ➔ <code>romkan2.to_hiragana(text)</code> ➔ <code>pitch_accent_patterns(hiragana)</code> (UniDic).
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: MADLAD-400 TRANSLATION -->
+      <section id="tab-madlad" class="lab-tab-content" style="display: none;">
+        <div class="lab-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h2 style="font-size: 1.2rem; margin: 0;">Kiểm tra Dịch thuật MADLAD-400 (Google MT)</h2>
+            <div id="madladStatusBadge" class="status-pill offline">
+              <span class="status-dot"></span>
+              <span id="madladStatusText">Đang kiểm tra server...</span>
+            </div>
+          </div>
+
+          <div style="background: var(--canvas); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--line);">
+            <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--ink);">Cấu hình MADLAD-400 API:</div>
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+              <input
+                type="text"
+                id="madladApiUrl"
+                class="lab-input"
+                style="max-width: 320px; font-family: monospace; font-size: 0.9rem;"
+                placeholder="http://localhost:8001"
+                value="http://localhost:8001"
+              />
+              <input
+                type="password"
+                id="madladApiKey"
+                class="lab-input"
+                style="max-width: 200px; font-size: 0.9rem;"
+                placeholder="API Key (nếu có)"
+              />
+              <button class="lab-btn" style="background: #475569;" onclick="checkMadladHealth()">Kiểm tra kết nối</button>
+            </div>
+          </div>
+
+          <div class="lab-input-group">
+            <input
+              type="text"
+              id="viInput"
+              class="lab-input"
+              placeholder="Nhập câu Tiếng Việt (vd: xin chào, tôi là sinh viên, hôm nay thời tiết đẹp...)"
+              value="tôi là sinh viên"
+            />
+            <button class="lab-btn" id="btnTestMadlad" onclick="testMadlad()">Dịch sang Tiếng Nhật ➔</button>
+          </div>
+
+          <div class="preset-chips">
+            <span style="font-size: 0.85rem; color: var(--ink-muted); align-self: center;">Mẫu thử:</span>
+            <button class="preset-chip" onclick="setVietnamese('xin chào các bạn')">xin chào các bạn</button>
+            <button class="preset-chip" onclick="setVietnamese('tôi là sinh viên')">tôi là sinh viên</button>
+            <button class="preset-chip" onclick="setVietnamese('cảm ơn bạn nhiều nhé')">cảm ơn bạn nhiều nhé</button>
+            <button class="preset-chip" onclick="setVietnamese('hôm nay trời đẹp quá')">hôm nay trời đẹp quá</button>
+            <button class="preset-chip" onclick="setVietnamese('nhà vệ sinh ở đâu')">nhà vệ sinh ở đâu</button>
+            <button class="preset-chip" onclick="setVietnamese('món ăn này rất ngon')">món ăn này rất ngon</button>
+          </div>
+
+          <div id="madladResultBox" class="result-box" style="display: none;">
+            <div class="result-box__header">
+              <span class="result-box__title">🇯🇵 Kết quả Tiếng Nhật từ MADLAD-400</span>
+              <span class="result-box__badge" id="madladElapsed">0 ms</span>
+            </div>
+            <div class="result-box__output" id="madladTranslation">-</div>
+            <div style="font-size: 0.85rem; font-weight: 600; color: var(--ink-muted); margin-bottom: 4px;">Biểu đồ Pitch Accent (UniDic):</div>
+            <div class="pitch-pill-row" id="madladPitchPills"></div>
+          </div>
+
+          <div id="madladErrorBox" class="notes-box" style="display: none; background: #fef2f2; border-color: #fee2e2; color: #b91c1c;">
+            <strong>⚠️ Lỗi kết nối MADLAD-400:</strong> <span id="madladErrorMsg"></span>
+            <div style="margin-top: 6px; font-size: 0.82rem; color: #64748b;">
+              Hãy đảm bảo bạn đã khởi chạy project <code>madlad400-mt-api</code> (trong thư mục <code>c:\Users\ADMIN\Documents\madlad400-mt-api</code>) bằng lệnh <code>python run.py</code> trên cổng 8001.
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      function switchLabTab(tabId) {
+        document.querySelectorAll('.lab-tab-content').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('.lab-tab-btn').forEach(el => el.classList.remove('active'));
+        document.getElementById(tabId).style.display = 'block';
+        event.target.classList.add('active');
+      }
+
+      function setRomaji(text) {
+        document.getElementById('romajiInput').value = text;
+        testRomkan2();
+      }
+
+      function setVietnamese(text) {
+        document.getElementById('viInput').value = text;
+        testMadlad();
+      }
+
+      function renderPitchPills(containerId, pitchData) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = '';
+        if (!pitchData || !pitchData.pattern || pitchData.pattern.length === 0) {
+          container.innerHTML = '<span style="color:#94a3b8; font-size:0.8rem;">(Chưa có biểu đồ cao độ)</span>';
+          return;
+        }
+        pitchData.pattern.forEach(item => {
+          const div = document.createElement('div');
+          div.className = `pitch-mora-item pitch-${item.pitch}`;
+          div.innerHTML = `
+            <span class="pitch-mora-item__pitch">${item.pitch}</span>
+            <span class="pitch-mora-item__mora">${item.mora}</span>
+          `;
+          container.appendChild(div);
+        });
+      }
+
+      async function testRomkan2() {
+        const text = document.getElementById('romajiInput').value.trim();
+        if (!text) return;
+        const btn = document.getElementById('btnTestRomaji');
+        btn.disabled = true;
+        btn.textContent = 'Đang chuyển đổi...';
+
+        try {
+          const formData = new FormData();
+          formData.append('text', text);
+          const res = await fetch('/api/lab/romaji-to-kana', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await res.json();
+          document.getElementById('romkan2ResultBox').style.display = 'block';
+
+          if (data.success) {
+            document.getElementById('romkan2Hiragana').textContent = data.hiragana;
+            document.getElementById('romkan2Katakana').textContent = data.katakana;
+            document.getElementById('romkan2Elapsed').textContent = `${data.elapsed_ms} ms`;
+            renderPitchPills('romkan2PitchPills', data.pitch_accent);
+          } else {
+            alert('Lỗi: ' + data.error);
+          }
+        } catch (e) {
+          alert('Lỗi kết nối: ' + e.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Chuyển đổi ➔';
+        }
+      }
+
+      async function checkMadladHealth() {
+        const badge = document.getElementById('madladStatusBadge');
+        const textEl = document.getElementById('madladStatusText');
+        textEl.textContent = 'Đang kiểm tra...';
+        try {
+          const res = await fetch('/api/lab/status');
+          const data = await res.json();
+          if (data.madlad_online) {
+            badge.className = 'status-pill online';
+            textEl.textContent = 'MADLAD-400 Online (Port 8001)';
+          } else {
+            badge.className = 'status-pill offline';
+            textEl.textContent = 'MADLAD-400 Offline (Chưa chạy port 8001)';
+          }
+        } catch (e) {
+          badge.className = 'status-pill offline';
+          textEl.textContent = 'Không thể kiểm tra status';
+        }
+      }
+
+      async function testMadlad() {
+        const text = document.getElementById('viInput').value.trim();
+        const apiUrl = document.getElementById('madladApiUrl').value.trim();
+        const apiKey = document.getElementById('madladApiKey').value.trim();
+        if (!text) return;
+
+        const btn = document.getElementById('btnTestMadlad');
+        btn.disabled = true;
+        btn.textContent = 'Đang gọi MADLAD-400...';
+
+        document.getElementById('madladResultBox').style.display = 'none';
+        document.getElementById('madladErrorBox').style.display = 'none';
+
+        try {
+          const formData = new FormData();
+          formData.append('text', text);
+          formData.append('api_url', apiUrl);
+          formData.append('api_key', apiKey);
+
+          const res = await fetch('/api/lab/madlad-translate', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await res.json();
+
+          if (data.madlad_result && data.madlad_result.success) {
+            document.getElementById('madladResultBox').style.display = 'block';
+            document.getElementById('madladTranslation').textContent = data.madlad_result.translation;
+            document.getElementById('madladElapsed').textContent = `${data.madlad_result.elapsed_seconds * 1000} ms`;
+            renderPitchPills('madladPitchPills', data.pitch_accent);
+          } else {
+            document.getElementById('madladErrorBox').style.display = 'block';
+            document.getElementById('madladErrorMsg').textContent = data.madlad_result ? data.madlad_result.error : 'Lỗi không xác định';
+          }
+        } catch (e) {
+          document.getElementById('madladErrorBox').style.display = 'block';
+          document.getElementById('madladErrorMsg').textContent = e.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Dịch sang Tiếng Nhật ➔';
+        }
+      }
+
+      // Auto check status on load
+      checkMadladHealth();
+    </script>
+  </body>
+</html>

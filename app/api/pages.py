@@ -75,3 +75,15 @@ def korean_practice_page(request: Request) -> HTMLResponse:
         request, "ko.html",
         {"texts": KO_TEXTS, "default_text": KO_DEFAULT, "api_base_url": settings.api_base_url},
     )
+
+
+@router.get("/lab", response_class=HTMLResponse, include_in_schema=False)
+def lab_test_page(request: Request) -> HTMLResponse:
+    """Sandbox testing UI for Romaji (romkan2) and MADLAD-400 translation."""
+    return templates.TemplateResponse(
+        request,
+        "lab.html",
+        {
+            "api_base_url": settings.api_base_url,
+        },
+    )
