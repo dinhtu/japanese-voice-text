@@ -66,16 +66,34 @@ def _get_pitch_pattern_safe(text: str) -> dict[str, Any]:
     }
 
 
+def _normalize_madlad_urls(input_url: str) -> tuple[str, str]:
+    """Normalize input URL to get both the base URL and the /api/v1/translate endpoint URL."""
+    url = str(input_url).strip().rstrip("/")
+    if not url:
+        url = "http://localhost:8001"
+
+    if url.endswith("/api/v1/translate"):
+        base_url = url[:-len("/api/v1/translate")]
+        translate_url = url
+    elif url.endswith("/api/v1"):
+        base_url = url[:-len("/api/v1")]
+        translate_url = f"{url}/translate"
+    else:
+        base_url = url
+        translate_url = f"{url}/api/v1/translate"
+
+    return base_url, translate_url
+
+
 def _call_madlad400_api(
     text: str,
     base_url: str = "http://localhost:8001",
     api_key: str = "",
-    timeout: float = 3.0,
+    timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """Call local MADLAD-400 MT API (/api/v1/translate)."""
-    url_str = str(base_url).strip() if base_url else "http://localhost:8001"
+    """Call MADLAD-400 MT API (/api/v1/translate)."""
+    base_url_clean, clean_url = _normalize_madlad_urls(base_url)
     key_str = str(api_key).strip() if api_key else ""
-    clean_url = url_str.rstrip("/") + "/api/v1/translate"
 
     data = urllib.parse.urlencode({
         "text": text,
@@ -84,8 +102,12 @@ def _call_madlad400_api(
         "wait": "true",
     }).encode("utf-8")
 
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JapaneseVoiceText/1.0",
+    }
     if key_str:
+        headers["api-key"] = key_str
         headers["X-API-Key"] = key_str
 
     start_time = time.time()
@@ -103,13 +125,32 @@ def _call_madlad400_api(
                 "raw_response": res_json,
                 "error": None,
             }
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8")
+        except Exception:
+            pass
+        if e.code == 401:
+            err_msg = f"HTTP 401 Unauthorized: Thiếu hoặc sai API Key (bắt buộc nhập api-key header). Chi tiết: {body}"
+        elif e.code == 404:
+            err_msg = f"HTTP 404 Not Found tại URL {clean_url}. Hãy kiểm tra lại đường dẫn."
+        else:
+            err_msg = f"HTTP {e.code} {e.reason}: {body}"
+        return {
+            "success": False,
+            "translation": "",
+            "elapsed_seconds": round(time.time() - start_time, 3),
+            "raw_response": None,
+            "error": err_msg,
+        }
     except urllib.error.URLError as e:
         return {
             "success": False,
             "translation": "",
             "elapsed_seconds": round(time.time() - start_time, 3),
             "raw_response": None,
-            "error": f"Connection to MADLAD-400 failed ({clean_url}): {e.reason}",
+            "error": f"Không thể kết nối đến MADLAD-400 ({clean_url}): {e.reason}",
         }
     except Exception as e:
         return {
@@ -126,23 +167,34 @@ def _call_madlad400_api(
 # ==============================================================================
 
 @router.get("/status")
-def get_lab_status() -> dict[str, Any]:
+def get_lab_status(url: str = "") -> dict[str, Any]:
     """Check availability of testing services (romkan2, MADLAD-400)."""
-    madlad_url = os.getenv("MADLAD_API_URL", "http://localhost:8001").rstrip("/")
+    check_url = url or os.getenv("MADLAD_API_URL", "https://translate-text.commude-vietnam.work")
+    base_url_clean, _ = _normalize_madlad_urls(check_url)
+    health_url = f"{base_url_clean}/health"
+
     madlad_online = False
+    madlad_info = {}
     try:
-        req = urllib.request.Request(f"{madlad_url}/health", headers={"User-Agent": "LabCheck/1.0"})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
+        req = urllib.request.Request(
+            health_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
             if resp.status == 200:
                 madlad_online = True
-    except Exception:
+                raw = resp.read().decode("utf-8")
+                madlad_info = json.loads(raw)
+    except Exception as e:
         madlad_online = False
+        madlad_info = {"error": str(e)}
 
     return {
         "status": "ok",
         "romkan2_installed": romkan2 is not None,
-        "madlad_url": madlad_url,
+        "madlad_url": base_url_clean,
         "madlad_online": madlad_online,
+        "madlad_info": madlad_info,
     }
 
 
