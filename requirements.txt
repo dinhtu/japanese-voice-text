@@ -38,6 +38,7 @@ pyopenjtalk>=0.4.1
 pykakasi>=2.3.0
 fugashi>=1.3.0
 unidic-lite>=1.0.8
+romkan2>=0.1.1
 # Same extra as `pip install pyopenjtalk[marine]` — DNN accent for
 # /pitch-accent (jp-pitch-accent-analyzer). Falls back to NAIST dict
 # if this is missing.

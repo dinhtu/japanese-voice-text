@@ -25,6 +25,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "jinja2>=3.1.4",
     "python-dotenv>=1.0.0",
+    "romkan2>=0.1.1",
 ]
 
 [project.optional-dependencies]

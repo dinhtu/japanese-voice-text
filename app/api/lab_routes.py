@@ -15,7 +15,11 @@ from typing import Any
 
 from fastapi import APIRouter, Form, HTTPException
 
-import romkan2
+try:
+    import romkan2
+except ImportError:
+    romkan2 = None
+
 from app.services.pitch_accent import pitch_accent_patterns
 
 logger = logging.getLogger(__name__)
@@ -136,7 +140,7 @@ def get_lab_status() -> dict[str, Any]:
 
     return {
         "status": "ok",
-        "romkan2_installed": True,
+        "romkan2_installed": romkan2 is not None,
         "madlad_url": madlad_url,
         "madlad_online": madlad_online,
     }
@@ -148,6 +152,12 @@ def test_romkan2_conversion(text: str = Form(..., min_length=1)) -> dict[str, An
     text_clean = text.strip()
     if not text_clean:
         raise HTTPException(status_code=400, detail="Text is empty")
+
+    if romkan2 is None:
+        raise HTTPException(
+            status_code=503,
+            detail="romkan2 library is not installed. Run: pip install romkan2",
+        )
 
     t0 = time.time()
     try:
