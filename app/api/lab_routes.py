@@ -21,7 +21,7 @@ try:
 except ImportError:
     romkan2 = None
 
-from app.services.pitch_accent import pitch_accent_patterns
+from app.services.pitch_accent import _fugashi_tagger, pitch_accent_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,55 @@ def _romaji_to_hiragana(text: str) -> str:
 
 def _hira_to_kata(text: str) -> str:
     return "".join(chr(ord(ch) + 0x60) if "ぁ" <= ch <= "ゖ" else ch for ch in text)
+
+
+_KATA_VOWEL = {
+    ch: vowel
+    for vowel, row in {
+        "ア": "アカサタナハマヤラワガザダバパァャヮ",
+        "イ": "イキシチニヒミリギジヂビピィ",
+        "ウ": "ウクスツヌフムユルグズヅブプゥュヴ",
+        "エ": "エケセテネヘメレゲゼデベペェ",
+        "オ": "オコソトノホモヨロヲゴゾドボポォョ",
+    }.items()
+    for ch in row
+}
+
+
+def _with_choonpu(kata: str) -> str:
+    """Write a vowel that lengthens the previous mora's vowel as ー (タクシイ -> タクシー)."""
+    out: list[str] = []
+    prev_vowel = None
+    for ch in kata:
+        if ch in "アイウエオ" and ch == prev_vowel:
+            out.append("ー")
+            continue
+        out.append(ch)
+        prev_vowel = _KATA_VOWEL.get(ch)
+    return "".join(out)
+
+
+def _word_to_katakana(hira_word: str) -> str:
+    """Katakana for one word, using ー for long vowels only in loanwords (タクシー, but カワイイ)."""
+    plain = _hira_to_kata(hira_word)
+    long_form = _with_choonpu(plain)
+    if long_form == plain:
+        return plain
+
+    # A word UniDic already knows as one native/Sino-Japanese token keeps kana-by-kana spelling.
+    hira_nodes = list(_fugashi_tagger(hira_word))
+    if len(hira_nodes) == 1 and not hira_nodes[0].is_unk and hira_nodes[0].feature.goshu != "外":
+        return plain
+
+    # Otherwise accept ー only if every segment carrying it is a known loanword.
+    for node in _fugashi_tagger(long_form):
+        if "ー" in node.surface and (node.is_unk or node.feature.goshu != "外"):
+            return plain
+    return long_form
+
+
+def _hiragana_to_display_katakana(hiragana: str) -> str:
+    return re.sub(r"[ぁ-ゖ]+", lambda m: _word_to_katakana(m.group(0)), hiragana)
 
 
 def _get_pitch_pattern_safe(text: str) -> dict[str, Any]:
@@ -252,7 +301,7 @@ def test_romkan2_conversion(text: str = Form(..., min_length=1)) -> dict[str, An
     try:
         # 1. Use romkan2 to convert Romaji into Hiragana & Katakana
         hiragana = _romaji_to_hiragana(text_clean)
-        katakana = _hira_to_kata(hiragana)
+        katakana = _hiragana_to_display_katakana(hiragana)
         elapsed_ms = round((time.time() - t0) * 1000, 2)
 
         # 2. Extract Pitch Accent from the resulting Hiragana using the existing UniDic pitch accent pipeline
