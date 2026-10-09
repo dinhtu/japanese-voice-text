@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -30,6 +31,42 @@ router = APIRouter()
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
+
+# romkan2 follows IME input rules where "nn" is always ん, so Hepburn input like
+# "konnichiwa" / "shinnyuu" loses an "n" (こんいちわ / しんゆう). Before a vowel or
+# "y", split it explicitly into ん + n-row: "kon'nichiwa", "shin'nyuu".
+_HEPBURN_DOUBLE_N_RE = re.compile(r"n(?=n[aiueoy])", re.IGNORECASE)
+
+# Standalone particles written by pronunciation in romaji but by convention in kana.
+_PARTICLE_KANA = {"wa": "は", "e": "へ", "o": "を", "wo": "を"}
+
+# Fixed expressions whose final "wa" is the topic particle は.
+_FIXED_EXPRESSION_KANA = {
+    "こんにちわ": "こんにちは",
+    "こんばんわ": "こんばんは",
+}
+
+_WORD_RE = re.compile(r"[A-Za-z']+")
+
+
+def _romaji_to_hiragana(text: str) -> str:
+    """Convert Hepburn romaji to hiragana, fixing romkan2's "nn" and particle handling."""
+    prepared = _HEPBURN_DOUBLE_N_RE.sub("n'", text)
+
+    def convert_word(match: re.Match[str]) -> str:
+        word = match.group(0)
+        particle = _PARTICLE_KANA.get(word.lower())
+        if particle:
+            return particle
+        kana = romkan2.to_hiragana(word.lower())
+        return _FIXED_EXPRESSION_KANA.get(kana, kana)
+
+    return _WORD_RE.sub(convert_word, prepared)
+
+
+def _hira_to_kata(text: str) -> str:
+    return "".join(chr(ord(ch) + 0x60) if "ぁ" <= ch <= "ゖ" else ch for ch in text)
+
 
 def _get_pitch_pattern_safe(text: str) -> dict[str, Any]:
     """Extracts pitch accent pattern using the existing UniDic pitch accent engine."""
@@ -214,8 +251,8 @@ def test_romkan2_conversion(text: str = Form(..., min_length=1)) -> dict[str, An
     t0 = time.time()
     try:
         # 1. Use romkan2 to convert Romaji into Hiragana & Katakana
-        hiragana = romkan2.to_hiragana(text_clean)
-        katakana = romkan2.to_katakana(text_clean)
+        hiragana = _romaji_to_hiragana(text_clean)
+        katakana = _hira_to_kata(hiragana)
         elapsed_ms = round((time.time() - t0) * 1000, 2)
 
         # 2. Extract Pitch Accent from the resulting Hiragana using the existing UniDic pitch accent pipeline
