@@ -28,7 +28,7 @@ from app.services.use_cases import (
     EvaluatePronunciationUseCase,
 )
 from app.core.config import Settings, get_settings
-from src.asr.kana_converter import use_ollama_g2p
+from src.asr.kana_converter import last_g2p_engine, use_ollama_g2p
 from app.core.vram import gpu_session
 from app.schemas.coaching import CategoryGuideResponse, CoachResponse, TextGuideResponse
 from app.schemas.pronunciation import EvaluateResponse
@@ -175,6 +175,7 @@ def get_pitch_accent(
         # flag_use_ollama=1 forces Ollama; 0 leaves KANA_USE_OLLAMA in charge.
         with use_ollama_g2p(True if flag_use_ollama == 1 else None):
             patterns = pitch_accent_patterns(text)
+            engine = last_g2p_engine()
         moras = patterns[0] if patterns else []
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -184,7 +185,7 @@ def get_pitch_accent(
             status_code=500, detail=f"Pitch accent extraction failed: {e}"
         ) from e
 
-    return PitchAccentResponse.from_result(text, moras, all_patterns=patterns)
+    return PitchAccentResponse.from_result(text, moras, all_patterns=patterns, engine=engine)
 
 
 @router.post(

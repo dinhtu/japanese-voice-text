@@ -290,6 +290,70 @@ def test_pitch_accent_flag_use_ollama_overrides_env(client, monkeypatch):
     assert client.get("/api/pronunciation/pitch-accent", params={"text": "今日は", "flag_use_ollama": 2}).status_code == 422
 
 
+def test_pitch_accent_reports_engine(client, monkeypatch):
+    from src.asr import kana_converter
+
+    monkeypatch.setenv("KANA_USE_OLLAMA", "0")
+    monkeypatch.setattr(
+        kana_converter.JapaneseKanaConverter, "_ollama_to_kana", lambda self, text: "しゅっしん"
+    )
+    body = client.get("/api/pronunciation/pitch-accent", params={"text": "出身"}).json()
+    assert body["engine"] == "pykakasi"
+    assert body["reading"] == "しゅっしん"
+
+    body = client.get(
+        "/api/pronunciation/pitch-accent", params={"text": "出身", "flag_use_ollama": 1}
+    ).json()
+    assert body["engine"] == "ollama"
+
+    def broken_ollama(self, text):
+        raise TimeoutError("ollama down")
+
+    monkeypatch.setattr(kana_converter.JapaneseKanaConverter, "_ollama_to_kana", broken_ollama)
+    body = client.get(
+        "/api/pronunciation/pitch-accent", params={"text": "出身", "flag_use_ollama": 1}
+    ).json()
+    assert body["engine"] == "pykakasi"  # Ollama failed -> fallback is reported, not hidden
+    assert body["reading"] == "しゅっしん"
+
+
+def test_ollama_prompt_carries_unidic_draft():
+    from src.asr.kana_converter import build_ollama_prompt
+
+    prompt = build_ollama_prompt("出身。")
+    assert "<text>出身。</text>" in prompt
+    assert "<draft>出身[しゅっしん] 。</draft>" in prompt
+
+
+def test_ollama_request_is_deterministic(monkeypatch):
+    import json
+
+    from src.asr import kana_converter
+
+    sent = {}
+
+    class FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"response": "<think>しんしゅつ?</think>\nしゅっしん"}).encode()
+
+    def fake_urlopen(req, timeout):
+        sent.update(json.loads(req.data))
+        return FakeResp()
+
+    monkeypatch.setattr(kana_converter.urllib.request, "urlopen", fake_urlopen)
+    assert kana_converter.JapaneseKanaConverter()._ollama_to_kana("出身") == "しゅっしん"
+    assert sent["think"] is False
+    assert sent["options"]["temperature"] == 0.0
+    assert sent["options"]["top_k"] == 1
+    assert "seed" in sent["options"]
+
+
 def test_use_ollama_g2p_context_restores_env_setting(monkeypatch):
     from src.asr.kana_converter import JapaneseKanaConverter, use_ollama_g2p
 

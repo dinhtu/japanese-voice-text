@@ -20,6 +20,10 @@ class PitchAccentResponse(BaseModel):
         default_factory=list,
         description="All accepted pitch-accent patterns (primary first, then alternatives)",
     )
+    engine: str | None = Field(
+        default=None,
+        description='Kanji -> kana engine behind `reading`: "ollama" or "pykakasi"',
+    )
 
     @classmethod
     def from_result(
@@ -27,6 +31,7 @@ class PitchAccentResponse(BaseModel):
         text: str,
         moras: list[MoraPitch],
         all_patterns: list[list[MoraPitch]] | None = None,
+        engine: str | None = None,
     ) -> "PitchAccentResponse":
         primary = [
             MoraPitchItem(mora=m.mora, pitch=m.pitch, phrase=m.phrase) for m in moras
@@ -43,4 +48,5 @@ class PitchAccentResponse(BaseModel):
             reading="".join(m.mora for m in moras),
             pattern=primary,
             patterns=pats,
+            engine=engine,
         )

@@ -30,6 +30,91 @@ _CLEAN_RE = re.compile(r"[・]+")
 # None = follow the env var. A ContextVar keeps concurrent requests separate.
 _ollama_override: ContextVar[bool | None] = ContextVar("kana_use_ollama_override", default=None)
 
+# Engine behind the latest text_to_kana() result in this context ("ollama" /
+# "pykakasi"), so the API can report where a reading came from.
+_last_engine: ContextVar[str | None] = ContextVar("kana_last_engine", default=None)
+
+_unidic_tagger = None
+
+
+def last_g2p_engine() -> str | None:
+    """Engine that produced the latest text_to_kana() result in this context."""
+    return _last_engine.get()
+
+
+def _to_hira(text: str) -> str:
+    return "".join(chr(ord(ch) - 0x60) if 0x30A1 <= ord(ch) <= 0x30F6 else ch for ch in text)
+
+
+def _unidic_draft(text: str) -> str:
+    """Dictionary reading per word, e.g. "出身[しゅっしん] は[は]", used as the
+    Ollama draft. Empty string if fugashi/UniDic is unavailable."""
+    global _unidic_tagger
+    try:
+        if _unidic_tagger is None:
+            import fugashi
+
+            _unidic_tagger = fugashi.Tagger()
+        parts = []
+        for w in _unidic_tagger(text):
+            kana = getattr(w.feature, "kana", None)
+            if kana and kana != "*" and _to_hira(kana) != w.surface:
+                parts.append(f"{w.surface}[{_to_hira(kana)}]")
+            else:
+                parts.append(w.surface)
+        return " ".join(parts)
+    except Exception:  # noqa: BLE001
+        logger.debug("UniDic draft unavailable", exc_info=True)
+        return ""
+
+
+_OLLAMA_PROMPT = """You are an expert Japanese reading engine (furigana / G2P).
+Convert the Japanese text in <text> into pure hiragana exactly as a native speaker reads it aloud.
+
+<draft> is a dictionary reading: each word followed by its reading in [brackets].
+- The draft is usually right. KEEP it, including small っ (促音), ん and long vowels.
+  Example: 出身 is しゅっしん (never しゅつしん, never しんしゅつ).
+- Change a draft reading ONLY when the dictionary picked the wrong reading for this context:
+  - 何: なん before counters and t/d/n sounds (何時 なんじ, 何人 なんにん, 何ですか なんですか, 何で なんで);
+    なに before を/が/も or standalone (何を なにを, 何が なにが, 何も なにも).
+  - 今日 in a sentence is きょう, never こんにち / こんにちは.
+  - お母さん おかあさん, お父さん おとうさん, 日本 にほん, 上手 じょうず, 大人 おとな,
+    一日 ついたち (date) / いちにち (whole day).
+- Keep particles as written: は stays は, を stays を, へ stays へ.
+- Never reorder, drop or add sounds. Ignore punctuation.
+
+Examples:
+<text>出身</text>
+<draft>出身[しゅっしん]</draft>
+Hiragana: しゅっしん
+
+<text>学校に行きます。</text>
+<draft>学校[がっこう] に 行き[いき] ます 。</draft>
+Hiragana: がっこうにいきます
+
+<text>今日は教室で日本語を勉強します</text>
+<draft>今日[きょう] は 教室[きょうしつ] で 日本[にっぽん] 語[ご] を 勉強[べんきょう] し ます</draft>
+Hiragana: きょうはきょうしつでにほんごをべんきょうします
+
+<text>何時に何を食べますか？</text>
+<draft>何[なん] 時[じ] に 何[なん] を 食べ[たべ] ます か ？</draft>
+Hiragana: なんじになにをたべますか
+
+<text>お母さんは時計を買いました。</text>
+<draft>お 母[はは] さん は 時計[とけい] を 買い[かい] まし た 。</draft>
+Hiragana: おかあさんはとけいをかいました
+
+Output ONLY the hiragana: no spaces, romaji, punctuation, markdown or explanation.
+
+<text>{text}</text>
+<draft>{draft}</draft>
+Hiragana:"""
+
+
+def build_ollama_prompt(text: str) -> str:
+    draft = _unidic_draft(text) or text
+    return _OLLAMA_PROMPT.replace("{text}", text).replace("{draft}", draft)
+
 
 @contextmanager
 def use_ollama_g2p(enabled: bool | None = True) -> Iterator[None]:
@@ -66,30 +151,19 @@ class JapaneseKanaConverter:
         model = os.getenv("OLLAMA_MODEL", "qwen3:8b")
         timeout = float(os.getenv("OLLAMA_TIMEOUT_S", "5"))
 
-        prompt = (
-            "You are an expert native Japanese phonetic converter (Furigana / G2P engine).\n"
-            "Convert the Japanese sentence into natural, spoken-accurate pure Hiragana (実際の口語・発音通りのひらがな).\n\n"
-            "Key pronunciation rules:\n"
-            "1. '何' reading:\n"
-            "   - Read as 'なん' before counters, numbers, and /t, d, n, s, z/ sounds (e.g., 何時 -> なんじ, 何人 -> なんにん, 何年 -> なんねん, 何ですか -> なんですか, 何で -> なんで, 何個 -> なんこ, 何曜日 -> なんようび).\n"
-            "   - Read as 'なに' before particles を, が, も, から, まで, or standalone (e.g., 何を食べますか -> なにをたべますか, 何が好きですか -> なにがすきですか, 何も -> なにも).\n"
-            "2. '今日' reading:\n"
-            "   - In sentences, read as 'きょう' (e.g., 今日は教室で -> きょうはきょうしつで), NEVER as 'こんにちは'.\n"
-            "3. Compound words & Counters:\n"
-            "   - 'お母さん' -> 'おかあさん', '時計' -> 'とけい', '一日' -> 'ついたち' (1st of month) or 'いちにち' (1 full day).\n\n"
-            "Examples:\n"
-            "- Input: 今日は教室で日本語を勉強します\n  Hiragana: きょうはきょうしつでにほんごをべんきょうします\n"
-            "- Input: 何時に何を食べますか？何人で行きますか？\n  Hiragana: なんじになにをたべますかなんにんでいきますか\n"
-            "- Input: お母さんは時計を買いました。\n  Hiragana: おかあさんはとけいをかいました\n\n"
-            "Format: Output ONLY the Hiragana text without spaces, Romaji, punctuation, markdown, or explanations.\n\n"
-            f"Input: {text}\n"
-            "Hiragana:"
-        )
         payload = json.dumps({
             "model": model,
-            "prompt": prompt,
+            "prompt": build_ollama_prompt(text),
             "stream": False,
-            "options": {"temperature": 0.0},
+            # qwen3 otherwise "thinks" first; its kana would leak into the reading.
+            "think": False,
+            # Greedy + fixed seed: same text -> same reading on every call.
+            "options": {
+                "temperature": 0.0,
+                "top_k": 1,
+                "seed": 42,
+                "num_predict": max(64, len(text) * 4),
+            },
         }).encode("utf-8")
 
         req = urllib.request.Request(
@@ -100,11 +174,13 @@ class JapaneseKanaConverter:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data.get("response", "").strip()
+            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
             raw = re.sub(r"```.*?```", "", raw, flags=re.DOTALL)
             raw = re.sub(r"[\r\n\t ]+", "", raw)
             return raw
 
     def text_to_kana(self, text: str) -> str:
+        _last_engine.set(None)
         text = _CLEAN_RE.sub(" ", text)
         text = re.sub(r"\s+", " ", text).strip()
         if not text:
@@ -119,9 +195,14 @@ class JapaneseKanaConverter:
             except Exception:  # noqa: BLE001
                 logger.debug("Ollama G2P unavailable or failed; falling back to pykakasi", exc_info=True)
                 hira = ""
+            if not any(self._is_kana(ch) for ch in hira):
+                hira = ""  # romaji/explanation only -> no usable reading
+            if hira:
+                _last_engine.set("ollama")
 
         # 2. Fallback to pykakasi (or default if KANA_USE_OLLAMA=0)
         if not hira:
+            _last_engine.set("pykakasi")
             # Preprocessing: separate '今日' and 'は' to prevent pykakasi from mapping
             # the noun '今日' (kyou) + particle 'は' (wa) into the greeting 'こんにちは'.
             preprocessed = re.sub(r"今日(?=は)", "今日 ", text)
