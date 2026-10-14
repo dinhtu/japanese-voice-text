@@ -31,13 +31,34 @@ class SyllableTiming:
     windows: list[list[tuple[float, float]]]  # per word, per syllable
     word_spans: list[tuple[float, float]] | None  # first..last letter spike
     aligned: bool
+    # Words whose letters the forced path could only place on frames where
+    # the model hears something else: the learner skipped them.
+    missing: frozenset[int] = frozenset()
+    confidence: tuple[float, ...] = ()  # mean best log-prob per word
+
+
+# Mean (over a word's letters) of the best frame log-prob on the forced
+# path. Measured on wav2vec2-base-960h: said words sit at 0 .. -2.2, said
+# but misheard ones ("song" heard as SUM) around -4.3, skipped words at
+# -6.3 .. -13.5.
+MISSING_LOGPROB = -5.0
+# More than this share of missing words: the timing itself is unreliable.
+MAX_MISSING_SHARE = 0.5
 
 
 def _syllable_letter_counts(analysis: SentenceAnalysis) -> list[list[int]]:
-    return [
-        [len(s.text.replace("'", "")) for s in w.pron.syllables]
-        for w in analysis.words
-    ]
+    """Spoken letters per syllable; always sums to the word's spoken letters
+    (display chunks of "café" or "U.S." may not map one-to-one)."""
+    out = []
+    for w in analysis.words:
+        counts = [len(s.text.replace("'", "").replace(".", "")) for s in w.pron.syllables]
+        total = len(w.spoken) or sum(counts)
+        if sum(counts) != total:
+            n = len(counts)
+            edges = [round(total * k / n) for k in range(n + 1)]
+            counts = [edges[k + 1] - edges[k] for k in range(n)]
+        out.append(counts)
+    return out
 
 
 def _letter_targets(analysis: SentenceAnalysis, vocab: list[str]):
@@ -50,8 +71,8 @@ def _letter_targets(analysis: SentenceAnalysis, vocab: list[str]):
         if w_i and sep is not None:
             ids.append(sep)
         positions = []
-        for ch in word.text.upper():
-            if ch in ("'", "’"):
+        for ch in (word.spoken or word.text).upper():
+            if not ch.isalpha():
                 continue
             tok = stoi.get(ch)
             if tok is None:
@@ -79,10 +100,19 @@ def align_syllables(
 
     from src.asr.force_align import _fill_missing, _viterbi_token_frames
 
-    spans = _viterbi_token_frames(log_probs, ids, blank=blank)
-    if spans is None:
+    raw_spans = _viterbi_token_frames(log_probs, ids, blank=blank)
+    if raw_spans is None:
         return None
-    spans = _fill_missing(spans, log_probs.shape[0])
+    confidence = []
+    for pos in letter_pos:
+        best = [
+            float(np.max(log_probs[raw_spans[i][0]:raw_spans[i][1], ids[i]]))
+            if raw_spans[i] is not None else -30.0
+            for i in pos
+        ]
+        confidence.append(round(float(np.mean(best)), 2) if best else -30.0)
+    missing = frozenset(w for w, c in enumerate(confidence) if c < MISSING_LOGPROB)
+    spans = _fill_missing(raw_spans, log_probs.shape[0])
     frame_time = duration / log_probs.shape[0]
     starts = [s * frame_time for s, _e in spans]
     ends = [e * frame_time for _s, e in spans]
@@ -105,7 +135,10 @@ def align_syllables(
             end = firsts[k + 1] if k + 1 < len(firsts) else tail_end
             word_windows.append((start, max(end, start + frame_time)))
         windows.append(word_windows)
-    return SyllableTiming(windows, word_spans, True)
+    aligned = len(missing) <= MAX_MISSING_SHARE * len(letter_pos)
+    return SyllableTiming(
+        windows, word_spans if aligned else None, aligned, missing, tuple(confidence)
+    )
 
 
 def proportional_syllables(analysis: SentenceAnalysis, track: PitchTrack) -> SyllableTiming:

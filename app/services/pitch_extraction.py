@@ -236,22 +236,26 @@ def extract_pitch_for_windows(
     ]
 
 
-def _fix_octave_jumps(semitone: np.ndarray, radius: int = 15, limit: float = 7.0) -> np.ndarray:
-    """Fold frames an octave off their neighbourhood back by 12 st; drop
-    what is still far off. NCCF pitch trackers halve/double on creaky or
-    breathy frames, and a light median filter no longer hides that."""
+def _fix_octave_jumps(semitone: np.ndarray, jump: float = 9.0) -> np.ndarray:
+    """Fold back frames that jump ~an octave from the previous voiced frame.
+
+    NCCF trackers halve/double on creaky or breathy frames, and a light
+    median filter no longer hides that. Only an abrupt frame-to-frame jump
+    (>= 9 st, i.e. near 12) is folded -- a real steep fall or rise moves a
+    few st per 10 ms frame and is left alone. A frame still far off after
+    folding is dropped."""
     out = semitone.copy()
-    voiced = np.flatnonzero(~np.isnan(semitone))
-    for i in voiced:
-        near = semitone[max(0, i - radius):i + radius + 1]
-        near = near[~np.isnan(near)]
-        if near.size < 3:
-            continue
-        ref = float(np.median(near))
+    prev = None
+    for i in np.flatnonzero(~np.isnan(semitone)):
         value = out[i]
-        if abs(value - ref) > limit:
-            folded = value - 12.0 * np.round((value - ref) / 12.0)
-            out[i] = folded if abs(folded - ref) <= limit else np.nan
+        if prev is not None and abs(value - prev) >= jump:
+            folded = value - 12.0 * np.round((value - prev) / 12.0)
+            if abs(folded - prev) < jump:
+                out[i] = value = folded
+            else:
+                out[i] = np.nan
+                continue
+        prev = value
     return out
 
 
@@ -266,7 +270,10 @@ def _pyin_hz(samples: np.ndarray, sample_rate: int) -> np.ndarray | None:
     except Exception:  # noqa: BLE001
         return None
     hop = max(1, round(sample_rate * FRAME_TIME))
-    frame_length = 1 << int(np.ceil(np.log2(sample_rate * 0.064)))  # ~64 ms
+    # ~64 ms: two periods of the 55 Hz floor fit (pYIN needs >= 2 * sr /
+    # fmin samples). 128 ms was tried and lost voicing on short stressed
+    # words; a voice pYIN still loses falls back to NCCF below.
+    frame_length = 1 << int(np.ceil(np.log2(sample_rate * 0.064)))
     if samples.size < frame_length:
         return None
     f0, voiced_flag, _prob = librosa.pyin(
@@ -287,15 +294,16 @@ def frame_features(
 
     Semitones are vs the clip's mean voiced F0, NaN where unvoiced -- the
     same scale as every other function here. Uses pYIN when librosa is
-    installed; otherwise the NCCF detector with 70 ms smoothing (not the
-    300 ms default, so a phrase-final fall or rise survives). Octave jumps
-    are folded back either way. `speech_mask` is an energy gate (unvoiced
+    installed; otherwise (or when pYIN loses the voice) the NCCF detector
+    with 70 ms smoothing (not the 300 ms default, so a phrase-final fall or
+    rise survives) and octave jumps folded back -- pYIN's HMM already
+    tracks octaves. `speech_mask` is an energy gate (unvoiced
     consonants count as speech) for pause detection and syllable length.
     None when there is no voiced speech at all.
     """
     if samples.size == 0:
         return None
-    pitch_hz = None
+    semitone = None
     try:
         pitch_hz = _pyin_hz(samples, sample_rate)
     except Exception:  # noqa: BLE001
@@ -304,20 +312,26 @@ def frame_features(
         energy = _frame_energy(samples, sample_rate, pitch_hz.shape[0])
         # pYIN decides voicing; the loose energy floor only drops hum/noise.
         voiced = ~np.isnan(pitch_hz) & (energy > 0.05 * float(energy.max()))
-        if not np.any(voiced):
-            return None
-        reference_hz = float(np.mean(pitch_hz[voiced]))
-        semitone = np.where(voiced, _semitone(np.nan_to_num(pitch_hz, nan=1.0), reference_hz), np.nan)
-    else:
-        analysis = _analyze(samples, sample_rate, smooth_frames=smooth_frames)
+        speech = energy > 0.1 * float(energy.max())
+        # pYIN hearing almost nothing in clearly spoken audio means it lost
+        # this voice (very low / rough): use the NCCF detector instead.
+        if np.sum(voiced) >= 0.2 * max(1, np.sum(speech)):
+            reference_hz = float(np.mean(pitch_hz[voiced]))
+            semitone = np.where(
+                voiced, _semitone(np.nan_to_num(pitch_hz, nan=1.0), reference_hz), np.nan
+            )
+    if semitone is None:
+        try:
+            analysis = _analyze(samples, sample_rate, smooth_frames=smooth_frames)
+        except Exception:  # noqa: BLE001 -- e.g. clip shorter than the smoothing window
+            analysis = None
         if analysis is None:
             return None
         energy = analysis.energy
         reference_hz = float(np.mean(analysis.pitch_hz[analysis.voiced]))
-        semitone = np.where(
+        semitone = _fix_octave_jumps(np.where(
             analysis.voiced, _semitone(analysis.pitch_hz, reference_hz), np.nan
-        )
-    semitone = _fix_octave_jumps(semitone)
+        ))
     # Re-centre on the cleaned frames so 0 st is still the speaker's mean.
     if np.any(~np.isnan(semitone)):
         semitone = semitone - float(np.nanmean(semitone))

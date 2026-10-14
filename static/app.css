@@ -702,6 +702,11 @@ html[lang="en"] .pitch__label {
   color: var(--ink);
 }
 
+.eni-syl--missing {
+  color: var(--eni-warn);
+  text-decoration: line-through;
+}
+
 .eni-ipa {
   position: relative;
   font-size: 0.85rem;

@@ -480,6 +480,12 @@ async function submitFile(file) {
 async function evaluate(wav) {
   clearOutput();
   setStatus("evaluating");
+  // Never leave the previous take's curve / checks up during (or after a
+  // failed) retake.
+  if (TARGET_LANG === "en" && englishTake) {
+    englishTake = null;
+    if (englishReference) renderPitchChart();
+  }
 
   const formData = new FormData();
   formData.append("text", target.text);
@@ -1340,8 +1346,15 @@ function englishLayout(data, available) {
   const count = data.words.reduce((n, w) => n + w.syllables.length, 0) || 1;
   const gap = 36;
   const breaks = Math.max(0, data.phrase_ends.length - 1);
-  // Fill the panel; below 44 px a column scrolls sideways instead (phones).
-  const col = Math.max(44, (available - EN_LEFT - 12 - breaks * gap) / count);
+  // Wide enough for the longest syllable label (capitals, bold) and for a
+  // one-syllable word's IPA; otherwise fill the panel. Too many columns for
+  // the screen scroll sideways instead of overlapping.
+  let widest = 0;
+  for (const word of data.words) {
+    for (const syl of word.syllables) widest = Math.max(widest, syl.text.length * 9 + 10);
+    if (word.syllables.length === 1 && word.ipa) widest = Math.max(widest, (word.ipa.length + 2) * 7);
+  }
+  const col = Math.max(44, widest, (available - EN_LEFT - 12 - breaks * gap) / count);
   const sylls = [];
   const gaps = [];
   const columns = [`${EN_LEFT}px`];
@@ -1399,34 +1412,72 @@ function englishSentenceHtml(data, layout) {
       .join('<span class="eni-sent__dot">·</span>');
     parts.push(`<span class="eni-sent__word">${html}</span>`);
     const next = data.words[i + 1];
-    if (next && next.phrase !== word.phrase) parts.push('<span class="eni-sent__break">‖</span>');
+    if (!next || next.phrase !== word.phrase) {
+      const ending = data.phrase_ends[word.phrase];
+      if (ending && ending !== "continue") parts.push(`<span class="eni-sent__arrow">${ENDING_ARROW[ending]}</span>`);
+      if (next) parts.push('<span class="eni-sent__break">‖</span>');
+    }
   });
-  const arrow = data.final_tone === "rise" ? "↗" : "↘";
-  return `<p class="eni-sent">${parts.join(" ")} <span class="eni-sent__arrow">${arrow}</span></p>`;
+  return `<p class="eni-sent">${parts.join(" ")}</p>`;
 }
 
-function wordStressedSyllable(data, wordIndex) {
-  const word = data.words[wordIndex];
-  return word ? word.syllables[word.stress_index]?.text.toUpperCase() : "";
+const ENDING_ARROW = { fall: "↘", rise: "↗", either: "↘↗" };
+const ENDING_VERB = { fall: "Xuống giọng", rise: "Lên giọng", either: "Lên/xuống giọng" };
+
+/** Whole word with its stressed syllable in capitals: "AN·na", "NAME". */
+function stressedWordLabel(word) {
+  return word.syllables
+    .map((s, i) => (i === word.stress_index ? s.text.toUpperCase() : s.text.toLowerCase()))
+    .join("·");
+}
+
+function lastWordOfPhrase(data, phrase) {
+  const own = data.words.filter((w) => w.phrase === phrase);
+  return own[own.length - 1];
+}
+
+/** Every sentence end (older payloads only have `final`). */
+function englishEnds(take) {
+  if (take.ends && take.ends.length) return take.ends;
+  return take.final ? [take.final] : [];
+}
+
+function listWords(words, max = 3) {
+  const shown = words.slice(0, max).join(" · ");
+  return words.length > max ? `${shown} +${words.length - max}` : shown;
 }
 
 function englishChipsHtml(take) {
   const chips = [];
-  const known = take.peaks.filter((c) => c.ok !== null);
+  const missing = new Set(take.missing || []);
+  if (missing.size) {
+    chips.push(["bad", `Bỏ sót: ${escapeHtml(listWords([...missing].map((i) => take.words[i]?.text || "")))}`]);
+  }
   if (take.peaks.length) {
-    const hit = take.peaks.filter((c) => c.ok).length;
-    const tone = known.length && hit === known.length ? "ok" : "bad";
-    chips.push([tone, `Đỉnh nhấn khớp: ${hit}/${take.peaks.length}`]);
+    // Only peaks that could be measured count either way.
+    const known = take.peaks.filter((c) => c.ok !== null);
+    const hit = known.filter((c) => c.ok).length;
+    const unknown = take.peaks.length - known.length;
+    if (!known.length) {
+      chips.push(["na", "Đỉnh nhấn: không đo được"]);
+    } else {
+      const extra = unknown ? ` (${unknown} không đo được)` : "";
+      chips.push([hit === known.length ? "ok" : "bad", `Đỉnh nhấn khớp: ${hit}/${known.length}${extra}`]);
+    }
   }
   for (const b of take.breaks) {
     const word = escapeHtml(take.words[b.after_word]?.text || "");
     const state = b.ok === null ? "không đo được" : b.ok ? "rõ" : "chưa rõ";
     chips.push([b.ok === null ? "na" : b.ok ? "ok" : "bad", `Ngắt sau “${word}”: ${state}`]);
   }
-  if (take.final) {
-    const verb = take.final.expected === "rise" ? "Lên giọng" : "Xuống giọng";
-    const state = take.final.ok === null ? "không đo được" : take.final.ok ? "đạt" : "chưa đạt";
-    chips.push([take.final.ok === null ? "na" : take.final.ok ? "ok" : "bad", `${verb} cuối câu: ${state}`]);
+  const ends = englishEnds(take);
+  for (const end of ends) {
+    const verb = ENDING_VERB[end.expected] || ENDING_VERB.fall;
+    const where = ends.length > 1
+      ? `sau “${escapeHtml(lastWordOfPhrase(take, end.phrase)?.text || "")}”`
+      : "cuối câu";
+    const state = end.ok === null ? "không đo được" : end.ok ? "đạt" : "chưa đạt";
+    chips.push([end.ok === null ? "na" : end.ok ? "ok" : "bad", `${verb} ${where}: ${state}`]);
   }
   return `<div class="eni-chips">${chips
     .map(([tone, text]) => `<span class="eni-chip eni-chip--${tone}"><i></i>${text}</span>`)
@@ -1436,38 +1487,48 @@ function englishChipsHtml(take) {
 /** Up to three short, concrete tips from the checks (not an LLM). */
 function englishCardsHtml(take) {
   const cards = [];
-  const missed = take.peaks.filter((c) => c.ok === false);
-  const nucleusMissed = missed.filter((c) => take.words[c.word]?.nucleus);
+  const missing = new Set(take.missing || []);
+  if (missing.size) {
+    cards.push([
+      "Bỏ sót từ",
+      `Bản ghi không có ${listWords([...missing].map((i) => `“${take.words[i]?.text || ""}”`), 4)}. ` +
+        "Đọc đủ cả câu để chấm được ngữ điệu.",
+    ]);
+  }
+  const missed = take.peaks.filter((c) => c.ok === false && !missing.has(c.word));
   const plainMissed = missed.filter((c) => !take.words[c.word]?.nucleus);
   if (plainMissed.length) {
     cards.push([
-      plainMissed.map((c) => wordStressedSyllable(take, c.word)).join(" · "),
+      listWords(plainMissed.map((c) => stressedWordLabel(take.words[c.word]))),
       "Giọng gần như phẳng ở đây. Nâng cao và kéo dài âm tiết nhấn, đọc lướt các từ nhỏ xung quanh.",
     ]);
   }
-  if (take.final) {
-    const last = take.words[take.words.length - 1];
-    const nucleus = [...take.words].reverse().find((w) => w.nucleus) || last;
-    const nucleusLabel = nucleus.syllables
-      .map((s, i) => (i === nucleus.stress_index ? s.text.toUpperCase() : s.text))
-      .join("·");
-    const rise = take.final.expected === "rise";
-    if (take.final.ok === false) {
+  for (const end of englishEnds(take)) {
+    const nucleus = take.words.find((w) => w.phrase === end.phrase && w.nucleus)
+      || lastWordOfPhrase(take, end.phrase);
+    if (!nucleus || missing.has(nucleus.index)) continue;
+    const label = stressedWordLabel(nucleus);
+    const rise = end.expected === "rise";
+    const nucleusMissed = missed.some((c) => c.word === nucleus.index);
+    if (end.ok === false) {
       cards.push([
-        nucleusLabel,
+        label,
         rise
           ? "Câu hỏi Yes/No: hạ giọng ở từ nhấn chính rồi kéo giọng lên rõ ở cuối câu."
-          : "Sau từ nhấn chính, hạ giọng xuống hẳn ở cuối câu thay vì giữ ngang hoặc đi lên.",
+          : end.expected === "either"
+            ? "Câu hỏi đuôi: kết thúc rõ ràng, hoặc hạ hẳn (xác nhận) hoặc lên hẳn (hỏi thật)."
+            : "Sau từ nhấn chính, hạ giọng xuống hẳn ở cuối câu thay vì giữ ngang hoặc đi lên.",
       ]);
-    } else if (nucleusMissed.length && take.final.ok) {
-      const tail = nucleus.syllables.slice(nucleus.stress_index + 1).map((s) => s.text).join("");
+    } else if (nucleusMissed && end.ok) {
+      const tail = nucleus.syllables.slice(nucleus.stress_index + 1).map((s) => s.text).join("·");
+      const stressed = nucleus.syllables[nucleus.stress_index]?.text.toUpperCase() || nucleus.text;
       cards.push([
-        nucleusLabel,
-        `Đã ${rise ? "lên" : "xuống"} giọng ở cuối, nhưng cần một đỉnh rõ ở ${wordStressedSyllable(take, nucleus.index)}` +
+        label,
+        `Đã ${rise ? "lên" : "xuống"} giọng ở cuối, nhưng cần một đỉnh rõ ở ${stressed}` +
           (tail ? ` trước khi ${rise ? "lên" : "rơi xuống"} “${tail}”.` : "."),
       ]);
-    } else if (nucleusMissed.length) {
-      cards.push([nucleusLabel, "Nhấn rõ từ nhấn chính: giọng cao và dài hơn các từ xung quanh."]);
+    } else if (nucleusMissed) {
+      cards.push([label, "Nhấn rõ từ nhấn chính: giọng cao và dài hơn các từ xung quanh."]);
     }
   }
   for (const b of take.breaks.filter((c) => c.ok === false)) {
@@ -1576,20 +1637,32 @@ function englishChartSvg(take, layout) {
       if (seg.length > 1) youSvg.push(`<path class="eni-you" d="${smoothPath(seg)}" />`);
       for (const p of seg) youSvg.push(`<circle class="eni-you__dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4.5" />`);
     }
+    const missing = new Set(take.missing || []);
+    for (const word of missing) {
+      const syl = sylls.find((s) => s.word === word);
+      if (syl) youSvg.push(`<text class="eni-note eni-note--bad" x="${syl.xc.toFixed(1)}" y="${(EN_TOP - 10).toFixed(1)}" text-anchor="middle">bỏ sót</text>`);
+    }
+    let noteRow = 0;
     for (const check of take.peaks) {
-      if (check.ok) continue;
+      if (check.ok || missing.has(check.word)) continue;
       const syl = sylls.find((s) => s.word === check.word && s.syllable === check.syllable);
       if (!syl || !syl.ref) continue;
       const text = check.ok === false ? "thiếu đỉnh" : "không đo được";
       const cls = check.ok === false ? "eni-note eni-note--bad" : "eni-note";
-      youSvg.push(`<text class="${cls}" x="${syl.xc.toFixed(1)}" y="${(enY(syl.ref.semitone) + 36).toFixed(1)}" text-anchor="middle">${text}</text>`);
+      // Alternate two rows so neighbouring notes in narrow columns don't overlap.
+      const y = enY(syl.ref.semitone) + (noteRow++ % 2 ? 50 : 36);
+      youSvg.push(`<text class="${cls}" x="${syl.xc.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="middle">${text}</text>`);
     }
-    if (take.final && take.final.ok !== null && lastSyl) {
-      const rise = take.final.expected === "rise";
-      const text = take.final.ok ? `${rise ? "lên" : "rơi"} ✓` : `chưa ${rise ? "lên" : "rơi"}`;
-      const cls = take.final.ok ? "eni-note eni-note--ok" : "eni-note eni-note--bad";
-      const y = rise ? EN_TOP - 8 : EN_HEIGHT - 2;
-      youSvg.push(`<text class="${cls}" x="${(lastSyl.x1 - 4).toFixed(1)}" y="${y}" text-anchor="end">${text}</text>`);
+    for (const end of englishEnds(take)) {
+      if (end.ok === null) continue;
+      const own = sylls.filter((s) => s.phrase === end.phrase);
+      const last = own[own.length - 1];
+      if (!last) continue;
+      const verb = end.expected === "rise" ? "lên" : end.expected === "either" ? "kết" : "rơi";
+      const text = end.ok ? `${verb} ✓` : `chưa ${verb}`;
+      const cls = end.ok ? "eni-note eni-note--ok" : "eni-note eni-note--bad";
+      const y = end.expected === "rise" ? EN_TOP - 8 : EN_HEIGHT - 2;
+      youSvg.push(`<text class="${cls}" x="${(last.x1 - 4).toFixed(1)}" y="${y}" text-anchor="end">${text}</text>`);
     }
     svg.push(`<g class="eni-layer-you">${youSvg.join("")}</g>`);
   }
@@ -1598,11 +1671,13 @@ function englishChartSvg(take, layout) {
 
 /** Syllable, IPA-per-word and sentence-stress rows under the chart. */
 function englishRowsHtml(data, layout) {
+  const missing = new Set(data.missing || []);
   const cells = [];
   cells.push('<span class="eni-row__label" style="grid-row:2;grid-column:1">Từ</span>');
   cells.push('<span class="eni-row__label" style="grid-row:3;grid-column:1">Câu</span>');
   for (const syl of layout.sylls) {
-    const cls = isAccent(syl.role) ? "eni-syl eni-syl--acc" : "eni-syl";
+    let cls = isAccent(syl.role) ? "eni-syl eni-syl--acc" : "eni-syl";
+    if (missing.has(syl.word)) cls += " eni-syl--missing";
     cells.push(`<span class="${cls}" style="grid-row:1;grid-column:${syl.column}">${escapeHtml(syllableLabel(syl))}</span>`);
     const mark = syl.role === "nucleus" ? "eni-mark--nuc" : syl.role === "stress" ? "eni-mark--acc" : "";
     cells.push(`<span class="eni-mark ${mark}" style="grid-row:3;grid-column:${syl.column}"></span>`);
@@ -1639,7 +1714,9 @@ function englishWordCellHtml(m) {
     .join('<span class="syll__dot">·</span>');
   const ipa = m.ipa ? `<span class="syll__ipa">/${escapeHtml(m.ipa)}/</span>` : "";
   let stress = "";
-  if (multi && m.stress_ok === true) {
+  if (!m.ok) {
+    stress = ""; // not said (or misread): no verdict on its stress
+  } else if (multi && m.stress_ok === true) {
     stress = '<span class="syll__stress syll__stress--ok">✓ trọng âm</span>';
   } else if (multi && m.stress_ok === false) {
     const heard = m.syllables[m.heard_stress_index] || "";
@@ -1673,8 +1750,8 @@ function renderEnglishIntonation() {
     el.pitchChart.clientWidth || (el.pitch.clientWidth ? el.pitch.clientWidth - 34 : 680),
   );
   const layout = englishLayout(data, available);
-  const measuredNote = take && take.learner && !hasLearner
-    ? '<p class="pitch__hint">Không đo được cao độ (F0) trong bản ghi này.</p>'
+  const measuredNote = take && !hasLearner
+    ? '<p class="pitch__hint">Không đo được cao độ (F0) trong bản ghi này — chỉ hiện đường mẫu.</p>'
     : "";
   const roughNote = take && take.aligned === false
     ? '<p class="pitch__hint">Không dóng được thời gian từng âm tiết, đường của bạn chỉ là ước lượng.</p>'

@@ -17,7 +17,12 @@ from app.services.english_intonation import (
     evaluate_intonation,
 )
 from app.services.english_scoring import score_english
-from app.services.english_text import english_words, normalize_english, word_pitch_pattern
+from app.services.english_text import (
+    english_words,
+    expand_for_speech,
+    normalize_english,
+    word_pitch_pattern,
+)
 from app.services.scoring import ScoreResult
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 
@@ -42,21 +47,50 @@ def _intonation(
         analysis, recognition.log_probs, recognition.vocab, recognition.duration
     ) or proportional_syllables(analysis, track)
     return evaluate_intonation(
-        analysis, track, timing.windows, timing.word_spans, timing.aligned
+        analysis, track, timing.windows, timing.word_spans, timing.aligned, timing.missing
     )
 
 
-def _word_pitch(intonation: IntonationResult) -> list[dict]:
-    """Legacy `measured_pitch`: one point per word, at its stressed syllable."""
+def _legacy_owner(target: str, analysis) -> list[int | None]:
+    """For each legacy word (english_words: apostrophes split, digits
+    dropped) the analysis word it is part of, matched letter by letter."""
+    spoken = [w.spoken for w in analysis.words]
+    owners: list[int | None] = []
+    a = c = 0
+    for word in english_words(target):
+        found = None
+        while a < len(spoken):
+            if spoken[a].startswith(word, c):
+                found = a
+                c += len(word)
+                if c >= len(spoken[a]):
+                    a, c = a + 1, 0
+                break
+            a, c = a + 1, 0  # a number word / title the legacy split lacks
+        owners.append(found)
+    return owners
+
+
+def _word_pitch(target: str, intonation: IntonationResult | None) -> list[dict]:
+    """Legacy `measured_pitch`: exactly one point per word_pitch_pattern()
+    word (same split and order as before), measured at the stressed
+    syllable of the word it belongs to; unvoiced when nothing was measured."""
+    legacy = word_pitch_pattern(target)
+    if intonation is None:
+        return [
+            {"mora": w.mora, "semitone": None, "voiced": False, "expected": w.pitch}
+            for w in legacy
+        ]
     by_key = {(m.word, m.syllable): m for m in intonation.syllables}
+    words = intonation.analysis.words
     out = []
-    for w in intonation.analysis.words:
-        m = by_key.get((w.index, w.pron.stress_index))
+    for w, owner in zip(legacy, _legacy_owner(target, intonation.analysis)):
+        m = by_key.get((owner, words[owner].pron.stress_index)) if owner is not None else None
         out.append({
-            "mora": w.text,
+            "mora": w.mora,
             "semitone": m.semitone if m else None,
             "voiced": bool(m and m.voiced),
-            "expected": "H" if w.sentence_stress else "L",
+            "expected": w.pitch,
         })
     return out
 
@@ -69,7 +103,7 @@ def _measure(
 ) -> tuple[AspectScores, list[dict], IntonationResult | None]:
     words = word_pitch_pattern(target)
     n = len(words) or 1
-    measured_pitch: list[dict] = []
+    measured_pitch = _word_pitch(target, None)
     intonation: IntonationResult | None = None
     speech_duration = None
     pause_count = 0
@@ -108,8 +142,7 @@ def _measure(
             intonation = _intonation(target, recognition, samples, sample_rate)
         except Exception:  # noqa: BLE001
             logger.warning("English intonation failed", exc_info=True)
-        if intonation is not None:
-            measured_pitch = _word_pitch(intonation)
+        measured_pitch = _word_pitch(target, intonation)
 
     # ~2 letters-as-mora per English word lands careful speech in the JP pace band.
     aspects = score_aspects(
@@ -198,7 +231,8 @@ class EvaluateEnglishUseCase:
         self.asr = asr
 
     def execute(self, target_text: str, audio_path: str | Path) -> EvaluationResult:
-        target_norm = normalize_english(target_text)
+        # Numbers / titles written out first: "Room 101" has three more words.
+        target_norm = normalize_english(expand_for_speech(target_text))
         if not target_norm:
             raise EmptyTargetError("Target text contains no pronounceable English content.")
 
@@ -218,7 +252,7 @@ class EvaluateEnglishUseCase:
                 audio_duration=recognition.duration,
                 errors=score.errors,
             )
-            measured_pitch = []
+            measured_pitch = _word_pitch(target_text, None)
 
         return EvaluationResult(
             target_text=target_text,

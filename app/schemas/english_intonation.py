@@ -54,6 +54,7 @@ class LearnerSyllableItem(BaseModel):
     energy_db: float | None
     speech_time: float = Field(description="Seconds of speech inside the window")
     voiced_time: float = Field(description="Seconds with a measured F0")
+    missing: bool = Field(default=False, description="Word not found in the recording")
 
 
 class PeakCheckItem(BaseModel):
@@ -71,13 +72,14 @@ class BreakCheckItem(BaseModel):
 
 
 class FinalCheckItem(BaseModel):
-    expected: str = Field(description='"fall" | "rise"')
+    expected: str = Field(description='"fall" | "rise" | "either" (tag question)')
     ok: bool | None
-    delta: float | None = Field(description="End minus nucleus, st (negative = fell)")
+    delta: float | None = Field(description="End minus nucleus / phrase level, st (negative = fell)")
     creaky: bool = Field(
         default=False,
-        description="Statement ended in creak (F0 too low to track) -- counted as a fall",
+        description="Statement ended in creak after falling (F0 too low to track) -- counted as a fall",
     )
+    phrase: int = Field(default=0, description="Phrase whose end this checks")
 
 
 class WordStressItem(BaseModel):
@@ -93,7 +95,9 @@ class WordStressItem(BaseModel):
 
 class EnglishIntonation(BaseModel):
     words: list[IntonationWordItem]
-    phrase_ends: list[str] = Field(description='Per phrase: "continue" | "fall" | "rise"')
+    phrase_ends: list[str] = Field(
+        description='Per phrase: "continue" | "fall" | "rise" | "either" (tag question)',
+    )
     final_tone: str
     reference: list[ReferencePointItem] = Field(description="One point per syllable, in order")
     learner: list[LearnerSyllableItem] | None = None
@@ -102,7 +106,13 @@ class EnglishIntonation(BaseModel):
     )
     peaks: list[PeakCheckItem] = Field(default_factory=list)
     breaks: list[BreakCheckItem] = Field(default_factory=list)
-    final: FinalCheckItem | None = None
+    final: FinalCheckItem | None = Field(default=None, description="End of the last sentence")
+    ends: list[FinalCheckItem] = Field(
+        default_factory=list, description="Every sentence end, in order (last == final)",
+    )
+    missing: list[int] = Field(
+        default_factory=list, description="Words the recording does not contain",
+    )
     word_stress: list[WordStressItem] = Field(default_factory=list)
     score: float | None = Field(default=None, description="0-100 intonation score")
 
@@ -140,6 +150,8 @@ def build_intonation(
         "peaks": [PeakCheckItem(**vars(c)) for c in result.peaks],
         "breaks": [BreakCheckItem(**vars(c)) for c in result.breaks],
         "final": FinalCheckItem(**vars(result.final)) if result.final else None,
+        "ends": [FinalCheckItem(**vars(c)) for c in result.ends],
+        "missing": sorted(result.missing),
         "word_stress": [
             WordStressItem(**{**vars(c), "accepted": list(c.accepted)}) for c in result.word_stress
         ],

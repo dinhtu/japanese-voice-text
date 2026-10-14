@@ -63,7 +63,9 @@ def test_mockup_sentence_roles():
         for w in a.words
     ]
     assert marks == ["·My", "●name", "·is", "◉Anna", "·I", "●work", "·as", "·a", "◉teacher"]
-    assert a.phrase_ends == ("continue", "fall")
+    # Two statements: both fall (a comma would have given "continue").
+    assert a.phrase_ends == ("fall", "fall")
+    assert analyze_sentence("My name is Anna, I work as a teacher.").phrase_ends == ("continue", "fall")
     # Function words carry no stress mark; content monosyllables do.
     assert [w.ipa for w in a.words[:2]] == ["maɪ", "ˈneɪm"]
 
@@ -80,9 +82,68 @@ def test_reference_peaks_on_accents_and_falls_at_the_end():
     ("Do you like coffee?", "rise"),
     ("Where is the station?", "fall"),
     ("I like coffee.", "fall"),
+    ("What's your name?", "fall"),
+    ("So, what do you want?", "fall"),
+    ("Excuse me, where is the station?", "fall"),
+    ("My name is Anna. What is your name?", "fall"),
+    ("What is your name? Are you a student?", "rise"),
+    ("Do you want tea or coffee?", "fall"),
+    ("It's cold, isn't it?", "either"),
+    ('"Are you OK?"', "rise"),
 ])
 def test_final_tone_from_punctuation(text, end):
     assert analyze_sentence(text).final_tone == end
+
+
+def test_every_sentence_gets_its_own_ending():
+    assert analyze_sentence("Are you a student? I am a teacher.").phrase_ends == ("rise", "fall")
+
+
+@pytest.mark.parametrize("text, words, ends", [
+    ("Mr. Smith is a doctor.", ["Mister", "Smith", "is", "a", "doctor"], ("fall",)),
+    ("I like fruit, e.g. apples.", ["I", "like", "fruit", "for", "example", "apples"], ("continue", "fall")),
+    ("I live in the U.S. now.", ["I", "live", "in", "the", "U.S.", "now"], ("fall",)),
+    ("It costs 3.50 dollars.", ["It", "costs", "three", "point", "five", "zero", "dollars"], ("fall",)),
+    ("I have 1,000 cats.", ["I", "have", "one", "thousand", "cats"], ("fall",)),
+])
+def test_abbreviations_and_numbers_do_not_split_phrases(text, words, ends):
+    a = analyze_sentence(text)
+    assert [w.text for w in a.words] == words
+    assert a.phrase_ends == ends
+
+
+def test_nucleus_never_falls_on_a_pronoun():
+    a = analyze_sentence("I can do it.")
+    assert [w.text for w in a.words if w.nucleus] == ["do"]
+
+
+def test_initialism_is_read_letter_by_letter_with_end_stress():
+    us = next(w for w in analyze_sentence("I live in the U.S.").words if w.text == "U.S.")
+    assert [s.text for s in us.pron.syllables] == ["U", "S"]
+    assert us.pron.stress_index == 1
+
+
+def test_accented_letters_stay_one_word():
+    a = analyze_sentence("I like café latte.")
+    assert [w.text for w in a.words] == ["I", "like", "café", "latte"]
+
+
+def test_two_primary_stresses_accept_end_stress():
+    ok = pronounce("OK")
+    assert ok.stress_index == 1 and set(ok.accepted_stress) == {0, 1}
+
+
+@pytest.mark.parametrize("word, sylls", [
+    ("beautiful", ["beau", "ti", "ful"]),
+    ("station", ["sta", "tion"]),
+    ("little", ["lit", "tle"]),
+    ("necessary", ["nec", "es", "sar", "y"]),
+    ("idea", ["i", "de", "a"]),
+    ("worked", ["worked"]),
+    ("W", ["W"]),  # three syllables, one letter: shown whole
+])
+def test_spelling_split_follows_the_phones(word, sylls):
+    assert _syllables(word) == sylls
 
 
 # ------------------------------------------------- checks on synthetic F0
@@ -169,13 +230,23 @@ def test_breaks_are_not_judged_without_real_timing():
     assert [c.ok for c in result.breaks] == [None]
 
 
-def test_creaky_statement_end_counts_as_a_fall():
+def test_creak_after_a_descent_counts_as_a_fall():
     a = analyze_sentence("I work as a teacher.")
     windows, spans, total = _windows(a)
-    flat = lambda w, s, x: 1.0 + 0 * x  # never falls while voiced
-    track = _track(windows, total, flat, silent={(4, 1)})  # "cher" creaks
+    # Voice goes down through "as a tea", then "cher" creaks (no F0).
+    down = lambda w, s, x: {0: 0.0, 1: 3.0, 2: 0.5, 3: -0.5}.get(w, -2.0 + 0 * x) + 0 * x
+    track = _track(windows, total, down, silent={(4, 1)})
     result = evaluate_intonation(a, track, windows, spans, True)
     assert result.final.creaky and result.final.ok
+
+
+def test_creak_does_not_rescue_a_level_or_rising_end():
+    a = analyze_sentence("I work as a teacher.")
+    windows, spans, total = _windows(a)
+    up = lambda w, s, x: (1.0 + 3.0 * x) if w == 4 else 0.0 + 0 * x
+    track = _track(windows, total, up, silent={(4, 1)})
+    result = evaluate_intonation(a, track, windows, spans, True)
+    assert result.final.ok is False and not result.final.creaky
 
 
 def test_rising_question_checked_by_final_rise():
@@ -184,6 +255,27 @@ def test_rising_question_checked_by_final_rise():
     up = lambda w, s, x: (-2.0 + 6.0 * x) if w == 3 and s == 1 else (2.5 if w == 2 else -1.0) + 0 * x
     result = evaluate_intonation(a, _track(windows, total, up), windows, spans, True)
     assert result.final.expected == "rise" and result.final.ok
+
+
+def test_skipped_words_fail_instead_of_passing():
+    a = analyze_sentence("I want to record a song.")
+    windows, spans, total = _windows(a)
+    follow = _follow_reference(a)
+    result = evaluate_intonation(
+        a, _track(windows, total, follow), windows, spans, True, missing={4, 5},
+    )
+    song = next(c for c in result.peaks if c.word == 5)
+    assert song.ok is False
+    assert result.final.ok is False
+    assert all(m.semitone is None and m.missing for m in result.syllables if m.word in (4, 5))
+
+
+def test_peaks_are_not_judged_against_other_accents():
+    # "Good job!" has no weak syllable: no reference, so no verdict.
+    a = analyze_sentence("Good job!")
+    windows, spans, total = _windows(a)
+    result = evaluate_intonation(a, _track(windows, total, lambda w, s, x: 0 * x), windows, spans, True)
+    assert [c.ok for c in result.peaks] == [None, None]
 
 
 def test_proportional_fallback_covers_every_syllable():

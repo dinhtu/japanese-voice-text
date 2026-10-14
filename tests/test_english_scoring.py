@@ -98,4 +98,11 @@ def test_gate_value():
 
 def test_empty_target_rejected():
     with pytest.raises(ValueError):
-        score_english("123 !!", "hello")
+        score_english("!! ?", "hello")
+
+
+def test_numbers_and_titles_are_scored_as_spoken():
+    assert _score("I have 2 cats.", "i have two cats") == 100
+    assert _score("I have 2 cats.", "i have twenty cats") < 100
+    assert _score("Mr. Smith is here.", "mister smith is here") == 100
+    assert _score("It costs $3.50.", "it costs three dollars fifty") == 100

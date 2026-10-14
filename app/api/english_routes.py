@@ -24,7 +24,11 @@ from app.services.coaching import (
     generate_text_reading_guide,
 )
 from app.services.english_asr import EnglishASRService, get_english_asr_service
-from app.services.english_intonation import IntonationResult, analyze_sentence
+from app.services.english_intonation import (
+    IntonationResult,
+    SentenceAnalysis,
+    analyze_sentence,
+)
 from app.services.english_scoring import match_words
 from app.services.english_text import word_pitch_pattern
 from app.services.english_use_cases import EvaluateEnglishUseCase
@@ -41,19 +45,26 @@ def get_en_use_case(
 
 
 def _word_status(
-    target: str, recognized: str, intonation: IntonationResult | None = None
+    target: str,
+    recognized: str,
+    analysis: SentenceAnalysis | None = None,
+    intonation: IntonationResult | None = None,
 ) -> list[MoraStatusItem]:
     """Same letter alignment + gate as the score, so "x/y từ đúng" agrees with
-    it. With `intonation`, each word also carries its syllables, IPA and
-    whether the stress landed on the dictionary syllable."""
+    it. Each word also carries its syllables, IPA and dictionary stress; with
+    `intonation`, whether the learner stressed the right syllable -- only for
+    words that were actually said (a misread word has no stress verdict)."""
     matches = match_words(target, recognized)
-    words = intonation.analysis.words if intonation is not None else ()
+    if intonation is not None:
+        analysis = intonation.analysis
+    words = analysis.words if analysis is not None else ()
+    # Both sides come from english_text.speech_tokens, so they line up.
     if len(words) != len(matches):
         return [MoraStatusItem(mora=w.target, ok=w.ok) for w in matches]
-    stress = {c.word: c for c in intonation.word_stress}
+    stress = {c.word: c for c in intonation.word_stress} if intonation is not None else {}
     items = []
     for match, word in zip(matches, words):
-        check = stress.get(word.index)
+        check = stress.get(word.index) if match.ok else None
         items.append(MoraStatusItem(
             mora=word.text,
             ok=match.ok,
@@ -92,17 +103,14 @@ async def evaluate_english(
             recognized_words = word_pitch_pattern(result.recognized_hiragana)
             response = EvaluateResponse.from_result(result, recognized_words)
             intonation = result.intonation
+            analysis = intonation.analysis if intonation is not None else analyze_sentence(result.target_text)
             update = {
                 "mora_status": _word_status(
-                    result.target_text, result.recognized_hiragana, intonation
+                    result.target_text, result.recognized_hiragana, analysis, intonation
                 ),
             }
-            if intonation is not None:
-                update["intonation"] = build_intonation(intonation.analysis, intonation)
-            else:
-                analysis = analyze_sentence(result.target_text)
-                if analysis.words:
-                    update["intonation"] = build_intonation(analysis)
+            if analysis.words:
+                update["intonation"] = build_intonation(analysis, intonation)
             return response.model_copy(update=update)
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -121,15 +129,15 @@ def english_pitch_accent(text: str = Query(..., min_length=1)) -> PitchAccentRes
     analysis = analyze_sentence(text)
     if not analysis.words:
         raise HTTPException(status_code=400, detail="No pronounceable English words.")
-    # `pattern` stays one H/L item per word for older clients; `intonation`
-    # carries syllables, word / sentence stress and the reference contour.
-    pattern = [
-        MoraPitchItem(mora=w.text, pitch="H" if w.sentence_stress else "L", phrase=w.phrase)
-        for w in analysis.words
-    ]
+    # `pattern` / `reading` are exactly what older clients got (one H/L item
+    # per word_pitch_pattern word, same split as `measured_pitch`);
+    # `intonation` carries syllables, word / sentence stress and the
+    # reference contour.
+    words = word_pitch_pattern(text)
+    pattern = [MoraPitchItem(mora=w.mora, pitch=w.pitch, phrase=w.phrase) for w in words]
     return PitchAccentResponse(
         text=text,
-        reading=" ".join(w.text for w in analysis.words),
+        reading=" ".join(w.mora for w in words),
         pattern=pattern,
         patterns=[pattern],
         intonation=build_intonation(analysis),

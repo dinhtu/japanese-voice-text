@@ -22,16 +22,12 @@ passes the gate the score is exactly the old 1 - CER.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 
-from app.services.english_text import normalize_english
+from app.services.english_text import normalize_english, speech_tokens
 from app.services.scoring import ScoreResult, _feedback, score_pronunciation
 
 WORD_GATE = 0.75
-
-# A word with its contraction kept whole: "don't" is one word, not "don"+"t".
-_WORD = re.compile(r"[a-z]+(?:'[a-z]+)*")
 
 
 @dataclass(frozen=True)
@@ -46,8 +42,9 @@ class WordMatch:
 
 
 def _target_words(text: str) -> list[str]:
-    folded = text.lower().replace("’", "'")
-    return _WORD.findall(folded)
+    """Words as spoken ("3.50" -> three point five zero, "Mr." -> mister),
+    from the same tokenizer as the intonation chart so both line up."""
+    return [t.spoken for t in speech_tokens(text)[1]]
 
 
 def _letters(text: str) -> str:
