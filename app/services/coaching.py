@@ -1345,7 +1345,6 @@ async def generate_text_reading_guide(
             think=False,
             stream=False,
             options={"temperature": 0.3, "num_predict": num_predict},
-            keep_alive="1h"
         )
     except ResponseError as e:
         if e.status_code == 404:
