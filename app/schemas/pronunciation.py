@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, Field
 
+from app.schemas.english_intonation import EnglishIntonation
 from app.schemas.pitch_accent import MoraPitchItem
 from app.services.mora_diff import mora_status
 from app.services.pitch_accent import MoraPitch
@@ -18,10 +19,28 @@ class PronunciationErrorItem(BaseModel):
 
 
 class MoraStatusItem(BaseModel):
-    """One mora of the target sentence, correct or not (see mora_diff.py)."""
+    """One mora of the target sentence, correct or not (see mora_diff.py).
+
+    English fills the optional stress fields: one item per word.
+    """
 
     mora: str
     ok: bool = Field(description="True = matched the target, False = mispronounced")
+    syllables: list[str] | None = Field(
+        default=None, description='English: spelling chunks, e.g. ["TEA", "cher"]',
+    )
+    ipa: str | None = Field(default=None, description='English: "ˈtiː.tʃɚ"')
+    stress_index: int | None = Field(
+        default=None, description="English: dictionary primary-stress syllable",
+    )
+    heard_stress_index: int | None = Field(
+        default=None, description="English: most prominent syllable in the recording",
+    )
+    stress_ok: bool | None = Field(
+        default=None,
+        description="English: stress on the right syllable; null for one-syllable "
+        "words or when it could not be measured",
+    )
 
 
 class MeasuredPitchItem(BaseModel):
@@ -112,6 +131,11 @@ class EvaluateResponse(BaseModel):
         description="F0 measured from the WAV, one point per target mora "
         "(same order as /pitch-accent). This is the learner curve the "
         "practice page should draw -- not recognized_pitch_pattern.",
+    )
+    intonation: EnglishIntonation | None = Field(
+        default=None,
+        description="English only: sentence stress / nucleus / phrase reference, "
+        "learner F0 per syllable, and the peak / break / final / word-stress checks",
     )
 
     @classmethod

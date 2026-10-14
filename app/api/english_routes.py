@@ -13,6 +13,7 @@ from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse, TextGuideResponse
+from app.schemas.english_intonation import build_intonation
 from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
 from app.services.coaching import (
@@ -23,6 +24,7 @@ from app.services.coaching import (
     generate_text_reading_guide,
 )
 from app.services.english_asr import EnglishASRService, get_english_asr_service
+from app.services.english_intonation import IntonationResult, analyze_sentence
 from app.services.english_scoring import match_words
 from app.services.english_text import word_pitch_pattern
 from app.services.english_use_cases import EvaluateEnglishUseCase
@@ -38,9 +40,31 @@ def get_en_use_case(
     return EvaluateEnglishUseCase(asr)
 
 
-def _word_status(target: str, recognized: str) -> list[MoraStatusItem]:
-    """Same letter alignment + gate as the score, so "x/y từ đúng" agrees with it."""
-    return [MoraStatusItem(mora=w.target, ok=w.ok) for w in match_words(target, recognized)]
+def _word_status(
+    target: str, recognized: str, intonation: IntonationResult | None = None
+) -> list[MoraStatusItem]:
+    """Same letter alignment + gate as the score, so "x/y từ đúng" agrees with
+    it. With `intonation`, each word also carries its syllables, IPA and
+    whether the stress landed on the dictionary syllable."""
+    matches = match_words(target, recognized)
+    words = intonation.analysis.words if intonation is not None else ()
+    if len(words) != len(matches):
+        return [MoraStatusItem(mora=w.target, ok=w.ok) for w in matches]
+    stress = {c.word: c for c in intonation.word_stress}
+    items = []
+    for match, word in zip(matches, words):
+        check = stress.get(word.index)
+        items.append(MoraStatusItem(
+            mora=word.text,
+            ok=match.ok,
+            syllables=[s.text for s in word.pron.syllables],
+            ipa=word.ipa,
+            # A heteronym shows the dictionary reading the learner used.
+            stress_index=check.expected if check else word.pron.stress_index,
+            heard_stress_index=check.heard if check else None,
+            stress_ok=check.ok if check else None,
+        ))
+    return items
 
 
 @router.post("/evaluate", response_model=EvaluateResponse)
@@ -67,9 +91,19 @@ async def evaluate_english(
             result = use_case.execute(text.strip(), tmp_path)
             recognized_words = word_pitch_pattern(result.recognized_hiragana)
             response = EvaluateResponse.from_result(result, recognized_words)
-            return response.model_copy(
-                update={"mora_status": _word_status(result.target_text, result.recognized_hiragana)}
-            )
+            intonation = result.intonation
+            update = {
+                "mora_status": _word_status(
+                    result.target_text, result.recognized_hiragana, intonation
+                ),
+            }
+            if intonation is not None:
+                update["intonation"] = build_intonation(intonation.analysis, intonation)
+            else:
+                analysis = analyze_sentence(result.target_text)
+                if analysis.words:
+                    update["intonation"] = build_intonation(analysis)
+            return response.model_copy(update=update)
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
@@ -84,13 +118,21 @@ async def evaluate_english(
 @router.get("/pitch-accent", response_model=PitchAccentResponse)
 def english_pitch_accent(text: str = Query(..., min_length=1)) -> PitchAccentResponse:
     text = text.strip()
-    words = word_pitch_pattern(text)
-    if not words:
+    analysis = analyze_sentence(text)
+    if not analysis.words:
         raise HTTPException(status_code=400, detail="No pronounceable English words.")
+    # `pattern` stays one H/L item per word for older clients; `intonation`
+    # carries syllables, word / sentence stress and the reference contour.
+    pattern = [
+        MoraPitchItem(mora=w.text, pitch="H" if w.sentence_stress else "L", phrase=w.phrase)
+        for w in analysis.words
+    ]
     return PitchAccentResponse(
         text=text,
-        reading=" ".join(w.mora for w in words),
-        pattern=[MoraPitchItem(mora=w.mora, pitch=w.pitch, phrase=w.phrase) for w in words],
+        reading=" ".join(w.text for w in analysis.words),
+        pattern=pattern,
+        patterns=[pattern],
+        intonation=build_intonation(analysis),
     )
 
 

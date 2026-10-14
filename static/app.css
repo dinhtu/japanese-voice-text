@@ -511,6 +511,365 @@ html[lang="en"] .pitch__label {
   );
 }
 
+/* ---------- English sentence intonation (/en) ---------- */
+
+.eni {
+  display: grid;
+  gap: 0.75rem;
+  --eni-warn: #c2410c;
+  --eni-warn-bg: #fff1e6;
+  --eni-soft: #cbd5e1;
+}
+
+/* Grid items default to min-width:auto, which would let the wide chart
+   stretch the whole page on a phone instead of scrolling in its box. */
+.eni > * {
+  min-width: 0;
+}
+
+.eni-sent {
+  margin: 0.25rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.eni-sent__acc {
+  color: var(--brand-600);
+  font-weight: 800;
+}
+
+.eni-sent__nuc {
+  text-decoration: underline;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 5px;
+}
+
+.eni-sent__dot,
+.eni-sent__arrow {
+  color: var(--ink-muted);
+}
+
+.eni-sent__break {
+  margin: 0 0.3rem;
+  color: var(--ink-muted);
+  font-weight: 300;
+}
+
+.eni-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.eni-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.eni-chip i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.eni-chip--ok {
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+
+.eni-chip--bad {
+  background: var(--eni-warn-bg);
+  color: var(--eni-warn);
+}
+
+.eni-chip--na {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-muted);
+}
+
+.eni-svg {
+  display: block;
+  overflow: visible;
+}
+
+.eni-col {
+  fill: var(--brand-50);
+}
+
+.eni-guide {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.eni-axis {
+  font-size: 11px;
+  fill: var(--ink-muted);
+}
+
+.eni-break {
+  stroke: var(--ink-muted);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 4;
+}
+
+.eni-break__label {
+  font-size: 10px;
+  fill: var(--ink-muted);
+}
+
+.eni-band {
+  fill: var(--brand-100);
+  opacity: 0.75;
+}
+
+.eni-ref {
+  fill: none;
+  stroke: var(--brand-600);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.eni-ref__dot {
+  fill: var(--brand-600);
+  stroke: var(--surface);
+  stroke-width: 2.5;
+}
+
+.eni-you {
+  fill: none;
+  stroke: var(--pitch-you);
+  stroke-width: 2.5;
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+
+.eni-you__dot {
+  fill: var(--pitch-you);
+}
+
+.eni-note {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--ink-muted);
+}
+
+.eni-note--bad {
+  fill: var(--eni-warn);
+}
+
+.eni-note--ok {
+  fill: var(--brand-700);
+}
+
+.eni[data-view="ref"] .eni-layer-you,
+.eni[data-view="you"] .eni-layer-ref {
+  display: none;
+}
+
+.eni-rows {
+  display: grid;
+  row-gap: 0.35rem;
+  margin-top: 0.25rem;
+  align-items: center;
+}
+
+.eni-row__label {
+  padding-right: 0.6rem;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+  color: var(--ink-muted);
+}
+
+.eni-syl {
+  font-size: 0.95rem;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.eni-syl--acc {
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.eni-ipa {
+  position: relative;
+  font-size: 0.85rem;
+  text-align: center;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* Bracket under a multi-syllable word: its IPA spans those columns. */
+.eni-ipa--multi {
+  margin: 0 0.6rem;
+  padding-top: 0.2rem;
+  border-top: 1.5px solid var(--eni-soft);
+}
+
+.eni-ipa--multi::before,
+.eni-ipa--multi::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  width: 1.5px;
+  height: 6px;
+  background: var(--eni-soft);
+}
+
+.eni-ipa--multi::before {
+  left: 0;
+}
+
+.eni-ipa--multi::after {
+  right: 0;
+}
+
+.eni-mark {
+  justify-self: center;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--eni-soft);
+}
+
+.eni-mark--acc {
+  width: 12px;
+  height: 12px;
+  background: var(--ink);
+}
+
+/* ◉ nucleus: dot inside a ring. */
+.eni-mark--nuc {
+  width: 18px;
+  height: 18px;
+  border: 3px solid var(--canvas);
+  background: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+.eni-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.eni-card {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.eni-card__title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--eni-warn);
+}
+
+.eni-card__text {
+  margin: 0.3rem 0 0;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.eni-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.eni-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.eni-legend__end {
+  margin-left: auto;
+}
+
+.eni-legend .eni-mark--nuc {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+  box-shadow: 0 0 0 1.5px var(--ink);
+}
+
+.eni-sw {
+  display: inline-block;
+  width: 1.1rem;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.eni-sw--ref {
+  background: var(--brand-600);
+}
+
+.eni-sw--band {
+  height: 0.7rem;
+  background: var(--brand-100);
+}
+
+.eni-sw--you {
+  background: repeating-linear-gradient(
+    90deg, var(--pitch-you) 0 5px, transparent 5px 8px
+  );
+}
+
+.eni-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 0.6rem;
+  background: var(--line);
+}
+
+.eni-toggle button {
+  padding: 0.25rem 0.65rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.eni-toggle button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+@media (max-width: 480px) {
+  .eni-sent {
+    font-size: 1.1rem;
+  }
+
+  .eni-legend__end {
+    margin-left: 0;
+  }
+}
+
 .divider {
   margin-top: 1.25rem;
   padding-top: 1rem;
@@ -1013,6 +1372,52 @@ html[lang="en"] .pitch__label {
   background: #fde2e2;
   border-color: #f3b4b4;
   color: #b91c1c;
+}
+
+/* English: one cell per word -- TEA·cher, IPA, stress check. */
+.syll__cell--word {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  max-width: 12rem;
+}
+
+.syll__stressed {
+  font-weight: 800;
+  color: var(--brand-700);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.syll__cell--bad .syll__stressed {
+  color: inherit;
+}
+
+.syll__dot {
+  margin: 0 0.05rem;
+  color: var(--ink-muted);
+}
+
+.syll__ipa {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.syll__stress {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.syll__stress--ok {
+  color: var(--score-excellent);
+}
+
+.syll__stress--bad {
+  color: #c2410c;
 }
 
 .syll__legend {

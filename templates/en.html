@@ -22,6 +22,7 @@
     data-coach-url="{{ api_base_url }}/api/pronunciation-en/coach"
     data-text-guide-url="{{ api_base_url }}/api/pronunciation-en/text-guide"
     data-tts-lang="en-US"
+    data-target-lang="en"
   >
     <!-- Icon sprite: only the glyphs this page uses, so no icon library. -->
     <svg hidden xmlns="http://www.w3.org/2000/svg">
@@ -219,7 +220,7 @@
 
             <div class="pitch" id="pitch" hidden>
               <div class="pitch__head">
-                <span class="pitch__title" id="pitch-title">Cao độ mẫu</span>
+                <span class="pitch__title" id="pitch-title">Ngữ điệu câu</span>
                 <div class="pitch__legend" id="pitch-legend">
                   <span class="pitch__legend-item">
                     <i class="pitch__swatch pitch__swatch--ref"></i>Mẫu
@@ -364,6 +365,12 @@
                 <span class="syll__legend-item">
                   <i class="syll__swatch syll__swatch--bad"></i>Cần sửa
                 </span>
+                <span class="syll__legend-item">
+                  <b class="syll__stressed">TEA</b>·cher = âm tiết nhấn (từ điển)
+                </span>
+                <span class="syll__legend-item">
+                  <span class="syll__stress syll__stress--ok">✓</span> nhấn đúng âm tiết
+                </span>
               </div>
             </div>
 
@@ -401,9 +408,10 @@
 
             <p class="note">
               Vòng tròn là CER chữ cái, nhưng từ nào sai quá 25% chữ cái thì
-              mất toàn bộ chữ của từ đó; nói thừa chữ cũng bị trừ. Bốn thanh còn lại từ
-              GOPT (accuracy / completeness / fluency / prosodic). GOP từ
-              wav2vec2-base-960h. Trang Nhật không dùng GOPT.
+              mất toàn bộ chữ của từ đó; nói thừa chữ cũng bị trừ. Ngữ điệu
+              chấm theo đỉnh nhấn câu, trọng âm từ (CMUdict), chỗ ngắt cụm và
+              xuống/lên giọng cuối câu, trên F0 (pYIN) của từng âm tiết đã dóng
+              thời gian bằng wav2vec2. Phát âm / trôi chảy có thêm GOPT.
             </p>
           </div>
         </section>

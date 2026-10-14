@@ -502,8 +502,9 @@ async function evaluate(wav) {
     if (result.recognized_pitch_patterns && result.recognized_pitch_patterns.length) {
       referencePatterns = result.recognized_pitch_patterns;
     }
+    if (TARGET_LANG === "en") englishTake = result.intonation || null;
     if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
-    else if (referencePattern) renderPitchChart();
+    else if (referencePattern || englishTake) renderPitchChart();
   } catch (error) {
     showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
   } finally {
@@ -631,7 +632,12 @@ function renderResult(result) {
       ...moraStatus.map((m) => {
         const cell = document.createElement("span");
         cell.className = m.ok ? "syll__cell" : "syll__cell syll__cell--bad";
-        cell.textContent = m.mora;
+        if (Array.isArray(m.syllables) && m.syllables.length) {
+          cell.classList.add("syll__cell--word");
+          cell.innerHTML = englishWordCellHtml(m);
+        } else {
+          cell.textContent = m.mora;
+        }
         return cell;
       }),
     );
@@ -741,6 +747,8 @@ function resetPitch() {
   referencePattern = null;
   referencePatterns = null;
   learnerPitch = null;
+  englishReference = null;
+  englishTake = null;
   el.pitch.hidden = true;
   el.pitchBtn?.setAttribute("aria-expanded", "false");
   el.pitchChart.hidden = true;
@@ -863,6 +871,10 @@ function directionOk(point, index, reference, means) {
 
 /** Reference H/L (dictionary) + learner F0 measured from the WAV. */
 function renderPitchChart() {
+  if (TARGET_LANG === "en" && (englishTake || englishReference)) {
+    renderEnglishIntonation();
+    return;
+  }
   if (!referencePattern || referencePattern.length === 0) {
     setPitchStatus("Không phân tích được cao độ cho câu này.", true);
     return;
@@ -1009,6 +1021,7 @@ async function loadPitchAccent(text) {
     if (text !== target.text) return;
     referencePattern = result.pattern;
     referencePatterns = result.patterns || (result.pattern ? [result.pattern] : []);
+    englishReference = result.intonation || null;
     pitchLoadedFor = text;
     if (document.body.dataset.targetLang === "zh") renderChinesePitch();
     else renderPitchChart();
@@ -1266,6 +1279,434 @@ function renderChinesePitch() {
   el.pitchChart.hidden = false;
   el.pitchStatus.hidden = true;
 }
+
+/* --------------------------------------------------- English intonation */
+
+/* English is a stress language: the chart is one column per syllable, a
+ * reference contour that peaks on accented syllables (sentence stress, ◉ =
+ * nucleus) and falls/rises at the end, and the learner's F0 per syllable.
+ * Data comes from `intonation` on /pitch-accent (reference) and /evaluate
+ * (reference + learner + checks); see app/schemas/english_intonation.py. */
+
+/** /pitch-accent `intonation` for the current sentence. */
+let englishReference = null;
+/** /evaluate `intonation` for the last take of the current sentence. */
+let englishTake = null;
+/** Chart toggle: "both" | "ref" | "you". Kept across takes. */
+let englishView = "both";
+
+const EN_LEFT = 44;
+const EN_TOP = 30;
+const EN_BOTTOM = 198;
+const EN_HEIGHT = 214;
+const EN_RANGE_ST = 7;
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function enY(semitone) {
+  const t = Math.max(-EN_RANGE_ST, Math.min(EN_RANGE_ST, Number(semitone))) / EN_RANGE_ST;
+  return (EN_TOP + EN_BOTTOM) / 2 - (t * (EN_BOTTOM - EN_TOP)) / 2;
+}
+
+/** Catmull-Rom through the points as cubic Béziers ("M ..." path data). */
+function smoothPath(points, move = true) {
+  if (!points.length) return "";
+  let d = `${move ? "M" : "L"} ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+const isAccent = (role) => role === "stress" || role === "nucleus";
+
+/** One column per syllable, a gap column at each phrase break. */
+function englishLayout(data, available) {
+  const refs = new Map(data.reference.map((r) => [`${r.word}:${r.syllable}`, r]));
+  const count = data.words.reduce((n, w) => n + w.syllables.length, 0) || 1;
+  const gap = 36;
+  const breaks = Math.max(0, data.phrase_ends.length - 1);
+  // Fill the panel; below 44 px a column scrolls sideways instead (phones).
+  const col = Math.max(44, (available - EN_LEFT - 12 - breaks * gap) / count);
+  const sylls = [];
+  const gaps = [];
+  const columns = [`${EN_LEFT}px`];
+  let x = EN_LEFT;
+  let phrase = data.words.length ? data.words[0].phrase : 0;
+  for (const word of data.words) {
+    if (word.phrase !== phrase) {
+      gaps.push({ x: x + gap / 2, afterWord: word.index - 1, column: columns.length + 1 });
+      columns.push(`${gap}px`);
+      x += gap;
+      phrase = word.phrase;
+    }
+    word.syllables.forEach((syl, i) => {
+      const ref = refs.get(`${word.index}:${i}`);
+      sylls.push({
+        word: word.index,
+        syllable: i,
+        phrase: word.phrase,
+        text: syl.text,
+        role: ref ? ref.role : "weak",
+        ref,
+        x0: x,
+        x1: x + col,
+        xc: x + col / 2,
+        column: columns.length + 1,
+      });
+      columns.push(`${col}px`);
+      x += col;
+    });
+  }
+  return { sylls, gaps, width: x + 12, col, columns: columns.join(" ") };
+}
+
+function syllableLabel(syl) {
+  return isAccent(syl.role) ? syl.text.toUpperCase() : syl.text;
+}
+
+/** "my NAME is AN·na ‖ I WORK as a TEA·cher ↘" */
+function englishSentenceHtml(data, layout) {
+  const byWord = new Map();
+  for (const syl of layout.sylls) {
+    if (!byWord.has(syl.word)) byWord.set(syl.word, []);
+    byWord.get(syl.word).push(syl);
+  }
+  const parts = [];
+  data.words.forEach((word, i) => {
+    const sylls = byWord.get(word.index) || [];
+    const html = sylls
+      .map((syl) => {
+        const text = escapeHtml(syllableLabel(syl));
+        if (syl.role === "nucleus") return `<span class="eni-sent__acc eni-sent__nuc">${text}</span>`;
+        if (syl.role === "stress") return `<span class="eni-sent__acc">${text}</span>`;
+        return text;
+      })
+      .join('<span class="eni-sent__dot">·</span>');
+    parts.push(`<span class="eni-sent__word">${html}</span>`);
+    const next = data.words[i + 1];
+    if (next && next.phrase !== word.phrase) parts.push('<span class="eni-sent__break">‖</span>');
+  });
+  const arrow = data.final_tone === "rise" ? "↗" : "↘";
+  return `<p class="eni-sent">${parts.join(" ")} <span class="eni-sent__arrow">${arrow}</span></p>`;
+}
+
+function wordStressedSyllable(data, wordIndex) {
+  const word = data.words[wordIndex];
+  return word ? word.syllables[word.stress_index]?.text.toUpperCase() : "";
+}
+
+function englishChipsHtml(take) {
+  const chips = [];
+  const known = take.peaks.filter((c) => c.ok !== null);
+  if (take.peaks.length) {
+    const hit = take.peaks.filter((c) => c.ok).length;
+    const tone = known.length && hit === known.length ? "ok" : "bad";
+    chips.push([tone, `Đỉnh nhấn khớp: ${hit}/${take.peaks.length}`]);
+  }
+  for (const b of take.breaks) {
+    const word = escapeHtml(take.words[b.after_word]?.text || "");
+    const state = b.ok === null ? "không đo được" : b.ok ? "rõ" : "chưa rõ";
+    chips.push([b.ok === null ? "na" : b.ok ? "ok" : "bad", `Ngắt sau “${word}”: ${state}`]);
+  }
+  if (take.final) {
+    const verb = take.final.expected === "rise" ? "Lên giọng" : "Xuống giọng";
+    const state = take.final.ok === null ? "không đo được" : take.final.ok ? "đạt" : "chưa đạt";
+    chips.push([take.final.ok === null ? "na" : take.final.ok ? "ok" : "bad", `${verb} cuối câu: ${state}`]);
+  }
+  return `<div class="eni-chips">${chips
+    .map(([tone, text]) => `<span class="eni-chip eni-chip--${tone}"><i></i>${text}</span>`)
+    .join("")}</div>`;
+}
+
+/** Up to three short, concrete tips from the checks (not an LLM). */
+function englishCardsHtml(take) {
+  const cards = [];
+  const missed = take.peaks.filter((c) => c.ok === false);
+  const nucleusMissed = missed.filter((c) => take.words[c.word]?.nucleus);
+  const plainMissed = missed.filter((c) => !take.words[c.word]?.nucleus);
+  if (plainMissed.length) {
+    cards.push([
+      plainMissed.map((c) => wordStressedSyllable(take, c.word)).join(" · "),
+      "Giọng gần như phẳng ở đây. Nâng cao và kéo dài âm tiết nhấn, đọc lướt các từ nhỏ xung quanh.",
+    ]);
+  }
+  if (take.final) {
+    const last = take.words[take.words.length - 1];
+    const nucleus = [...take.words].reverse().find((w) => w.nucleus) || last;
+    const nucleusLabel = nucleus.syllables
+      .map((s, i) => (i === nucleus.stress_index ? s.text.toUpperCase() : s.text))
+      .join("·");
+    const rise = take.final.expected === "rise";
+    if (take.final.ok === false) {
+      cards.push([
+        nucleusLabel,
+        rise
+          ? "Câu hỏi Yes/No: hạ giọng ở từ nhấn chính rồi kéo giọng lên rõ ở cuối câu."
+          : "Sau từ nhấn chính, hạ giọng xuống hẳn ở cuối câu thay vì giữ ngang hoặc đi lên.",
+      ]);
+    } else if (nucleusMissed.length && take.final.ok) {
+      const tail = nucleus.syllables.slice(nucleus.stress_index + 1).map((s) => s.text).join("");
+      cards.push([
+        nucleusLabel,
+        `Đã ${rise ? "lên" : "xuống"} giọng ở cuối, nhưng cần một đỉnh rõ ở ${wordStressedSyllable(take, nucleus.index)}` +
+          (tail ? ` trước khi ${rise ? "lên" : "rơi xuống"} “${tail}”.` : "."),
+      ]);
+    } else if (nucleusMissed.length) {
+      cards.push([nucleusLabel, "Nhấn rõ từ nhấn chính: giọng cao và dài hơn các từ xung quanh."]);
+    }
+  }
+  for (const b of take.breaks.filter((c) => c.ok === false)) {
+    const word = take.words[b.after_word];
+    if (!word) continue;
+    const lastSyl = word.syllables[word.syllables.length - 1].text;
+    cards.push([
+      `Sau “${word.text}”`,
+      `Dừng ngắn, hạ giọng ở “${lastSyl}”, rồi bắt đầu cụm sau ở mức trung.`,
+    ]);
+  }
+  for (const ws of take.word_stress.filter((c) => c.ok === false && c.heard !== null)) {
+    const word = take.words[ws.word];
+    if (!word) continue;
+    const label = (idx) =>
+      word.syllables.map((s, i) => (i === idx ? s.text.toUpperCase() : s.text.toLowerCase())).join("·");
+    cards.push([
+      `Trọng âm “${word.text}”`,
+      `Nhấn ${label(ws.expected)}, bạn đang nhấn ${label(ws.heard)}.`,
+    ]);
+  }
+  if (!cards.length) {
+    cards.push(["Rất tốt", "Đỉnh nhấn, chỗ ngắt và cuối câu đều đúng mẫu."]);
+  }
+  return `<div class="eni-cards">${cards
+    .slice(0, 3)
+    .map(([title, text]) => `<div class="eni-card"><p class="eni-card__title">${escapeHtml(title)}</p><p class="eni-card__text">${escapeHtml(text)}</p></div>`)
+    .join("")}</div>`;
+}
+
+function englishChartSvg(take, layout) {
+  const { sylls, gaps, width, col } = layout;
+  const yHigh = enY(4);
+  const yMid = enY(0);
+  const yLow = enY(-4);
+  const svg = [];
+
+  // Accented columns, guides, phrase breaks.
+  for (const syl of sylls) {
+    if (isAccent(syl.role)) {
+      svg.push(`<rect class="eni-col" x="${(syl.x0 + 6).toFixed(1)}" y="8" width="${(col - 12).toFixed(1)}" height="${EN_HEIGHT - 14}" rx="10" />`);
+    }
+  }
+  for (const [y, label] of [[yHigh, "Cao"], [yMid, "Trung"], [yLow, "Thấp"]]) {
+    svg.push(`<line class="eni-guide" x1="${EN_LEFT}" y1="${y.toFixed(1)}" x2="${width}" y2="${y.toFixed(1)}" />`);
+    svg.push(`<text class="eni-axis" x="${EN_LEFT - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end">${label}</text>`);
+  }
+  for (const g of gaps) {
+    svg.push(`<line class="eni-break" x1="${g.x}" y1="14" x2="${g.x}" y2="${EN_HEIGHT - 4}" />`);
+    svg.push(`<text class="eni-break__label" x="${g.x}" y="10" text-anchor="middle">ngắt cụm</text>`);
+  }
+
+  // Reference contour + acceptable band, one path per phrase.
+  const phrases = [...new Set(sylls.map((s) => s.phrase))];
+  const refSvg = [];
+  for (const phrase of phrases) {
+    const own = sylls.filter((s) => s.phrase === phrase && s.ref);
+    const mid = [];
+    const hi = [];
+    const lo = [];
+    for (const syl of own) {
+      mid.push({ x: syl.xc, y: enY(syl.ref.semitone) });
+      hi.push({ x: syl.xc, y: enY(syl.ref.hi) });
+      lo.push({ x: syl.xc, y: enY(syl.ref.lo) });
+      if (Math.abs(syl.ref.end - syl.ref.semitone) > 0.01) {
+        const xe = syl.x1 - col * 0.12;
+        mid.push({ x: xe, y: enY(syl.ref.end) });
+        hi.push({ x: xe, y: enY(syl.ref.end + 2.5) });
+        lo.push({ x: xe, y: enY(syl.ref.end - 2.5) });
+      }
+    }
+    if (!mid.length) continue;
+    refSvg.push(`<path class="eni-band" d="${smoothPath(hi)} ${smoothPath([...lo].reverse(), false)} Z" />`);
+    refSvg.push(`<path class="eni-ref" d="${smoothPath(mid)}" />`);
+  }
+  for (const syl of sylls) {
+    if (!syl.ref || !isAccent(syl.role)) continue;
+    const r = syl.role === "nucleus" ? 8 : 6;
+    refSvg.push(`<circle class="eni-ref__dot" cx="${syl.xc.toFixed(1)}" cy="${enY(syl.ref.semitone).toFixed(1)}" r="${r}" />`);
+  }
+  svg.push(`<g class="eni-layer-ref">${refSvg.join("")}</g>`);
+
+  // Learner F0 per syllable (dashed), split at unvoiced syllables / breaks.
+  if (take && take.learner) {
+    const measured = new Map(take.learner.map((m) => [`${m.word}:${m.syllable}`, m]));
+    const lastSyl = sylls[sylls.length - 1];
+    const segments = [];
+    let current = [];
+    let phrase = null;
+    for (const syl of sylls) {
+      const m = measured.get(`${syl.word}:${syl.syllable}`);
+      if (!m || m.semitone === null || syl.phrase !== phrase) {
+        if (current.length) segments.push(current);
+        current = [];
+        phrase = syl.phrase;
+        if (!m || m.semitone === null) continue;
+      }
+      current.push({ x: syl.xc, y: enY(m.semitone), dot: true });
+      if (syl === lastSyl && m.end_semitone !== null && Math.abs(m.end_semitone - m.semitone) > 0.5) {
+        current.push({ x: syl.x1 - col * 0.12, y: enY(m.end_semitone), dot: true });
+      }
+    }
+    if (current.length) segments.push(current);
+    const youSvg = [];
+    for (const seg of segments) {
+      if (seg.length > 1) youSvg.push(`<path class="eni-you" d="${smoothPath(seg)}" />`);
+      for (const p of seg) youSvg.push(`<circle class="eni-you__dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4.5" />`);
+    }
+    for (const check of take.peaks) {
+      if (check.ok) continue;
+      const syl = sylls.find((s) => s.word === check.word && s.syllable === check.syllable);
+      if (!syl || !syl.ref) continue;
+      const text = check.ok === false ? "thiếu đỉnh" : "không đo được";
+      const cls = check.ok === false ? "eni-note eni-note--bad" : "eni-note";
+      youSvg.push(`<text class="${cls}" x="${syl.xc.toFixed(1)}" y="${(enY(syl.ref.semitone) + 36).toFixed(1)}" text-anchor="middle">${text}</text>`);
+    }
+    if (take.final && take.final.ok !== null && lastSyl) {
+      const rise = take.final.expected === "rise";
+      const text = take.final.ok ? `${rise ? "lên" : "rơi"} ✓` : `chưa ${rise ? "lên" : "rơi"}`;
+      const cls = take.final.ok ? "eni-note eni-note--ok" : "eni-note eni-note--bad";
+      const y = rise ? EN_TOP - 8 : EN_HEIGHT - 2;
+      youSvg.push(`<text class="${cls}" x="${(lastSyl.x1 - 4).toFixed(1)}" y="${y}" text-anchor="end">${text}</text>`);
+    }
+    svg.push(`<g class="eni-layer-you">${youSvg.join("")}</g>`);
+  }
+  return `<svg class="eni-svg" width="${width}" height="${EN_HEIGHT}" viewBox="0 0 ${width} ${EN_HEIGHT}" role="img" aria-label="Biểu đồ ngữ điệu câu">${svg.join("")}</svg>`;
+}
+
+/** Syllable, IPA-per-word and sentence-stress rows under the chart. */
+function englishRowsHtml(data, layout) {
+  const cells = [];
+  cells.push('<span class="eni-row__label" style="grid-row:2;grid-column:1">Từ</span>');
+  cells.push('<span class="eni-row__label" style="grid-row:3;grid-column:1">Câu</span>');
+  for (const syl of layout.sylls) {
+    const cls = isAccent(syl.role) ? "eni-syl eni-syl--acc" : "eni-syl";
+    cells.push(`<span class="${cls}" style="grid-row:1;grid-column:${syl.column}">${escapeHtml(syllableLabel(syl))}</span>`);
+    const mark = syl.role === "nucleus" ? "eni-mark--nuc" : syl.role === "stress" ? "eni-mark--acc" : "";
+    cells.push(`<span class="eni-mark ${mark}" style="grid-row:3;grid-column:${syl.column}"></span>`);
+  }
+  for (const word of data.words) {
+    const own = layout.sylls.filter((s) => s.word === word.index);
+    if (!own.length) continue;
+    const span = own[own.length - 1].column - own[0].column + 1;
+    const cls = own.length > 1 ? "eni-ipa eni-ipa--multi" : "eni-ipa";
+    const ipa = word.ipa ? `/${escapeHtml(word.ipa)}/` : "—";
+    cells.push(`<span class="${cls}" style="grid-row:2;grid-column:${own[0].column} / span ${span}">${ipa}</span>`);
+  }
+  return `<div class="eni-rows" style="grid-template-columns:${layout.columns}">${cells.join("")}</div>`;
+}
+
+const ENGLISH_LEGEND = `
+  <div class="eni-legend">
+    <span><i class="eni-sw eni-sw--ref"></i>Mẫu ngữ điệu</span>
+    <span><i class="eni-sw eni-sw--band"></i>Khoảng chấp nhận</span>
+    <span><i class="eni-sw eni-sw--you"></i>Bạn (F0 đo)</span>
+    <span><i class="eni-mark eni-mark--nuc"></i>Nhấn chính (nucleus)</span>
+    <span class="eni-legend__end">ˈ trọng âm từ (từ điển) · ● trọng âm câu</span>
+  </div>`;
+
+/** "Từng từ" cell: TEA·cher, /ˈtiː.tʃɚ/, and whether the stress landed on
+ *  the dictionary syllable (multi-syllable words only). */
+function englishWordCellHtml(m) {
+  const multi = m.syllables.length > 1;
+  const marked = multi || (m.ipa || "").startsWith("ˈ");
+  const word = m.syllables
+    .map((s, i) => (marked && i === m.stress_index
+      ? `<b class="syll__stressed">${escapeHtml(s.toUpperCase())}</b>`
+      : escapeHtml(s)))
+    .join('<span class="syll__dot">·</span>');
+  const ipa = m.ipa ? `<span class="syll__ipa">/${escapeHtml(m.ipa)}/</span>` : "";
+  let stress = "";
+  if (multi && m.stress_ok === true) {
+    stress = '<span class="syll__stress syll__stress--ok">✓ trọng âm</span>';
+  } else if (multi && m.stress_ok === false) {
+    const heard = m.syllables[m.heard_stress_index] || "";
+    stress = `<span class="syll__stress syll__stress--bad">✗ bạn nhấn ${escapeHtml(heard.toUpperCase())}</span>`;
+  } else if (multi) {
+    stress = '<span class="syll__stress">trọng âm: —</span>';
+  }
+  return `<span class="syll__word">${word}</span>${ipa}${stress}`;
+}
+
+function renderEnglishIntonation() {
+  const take = englishTake;
+  const data = take || englishReference;
+  if (!data || !data.words || !data.words.length) {
+    setPitchStatus("Không phân tích được ngữ điệu cho câu này.", true);
+    return;
+  }
+  const hasLearner = Boolean(take && take.learner && take.learner.some((m) => m.semitone !== null));
+  if (!hasLearner && englishView === "you") englishView = "both";
+  el.pitchTitle.textContent = hasLearner ? "Ngữ điệu câu · mẫu và giọng của bạn" : "Ngữ điệu câu · mẫu";
+  el.pitchLegend.innerHTML = hasLearner
+    ? `<div class="eni-toggle" role="group" aria-label="Hiển thị">${[["ref", "Mẫu"], ["you", "Bạn"], ["both", "Cả hai"]]
+        .map(([key, label]) => `<button type="button" data-en-view="${key}" aria-pressed="${englishView === key}">${label}</button>`)
+        .join("")}</div>`
+    : "";
+
+  // The chart box itself when it is on screen; the panel minus its padding
+  // otherwise (first render happens while the chart is still hidden).
+  const available = Math.max(
+    300,
+    el.pitchChart.clientWidth || (el.pitch.clientWidth ? el.pitch.clientWidth - 34 : 680),
+  );
+  const layout = englishLayout(data, available);
+  const measuredNote = take && take.learner && !hasLearner
+    ? '<p class="pitch__hint">Không đo được cao độ (F0) trong bản ghi này.</p>'
+    : "";
+  const roughNote = take && take.aligned === false
+    ? '<p class="pitch__hint">Không dóng được thời gian từng âm tiết, đường của bạn chỉ là ước lượng.</p>'
+    : "";
+  el.pitchChart.innerHTML = `
+    <div class="eni" data-view="${hasLearner ? englishView : "ref"}">
+      ${englishSentenceHtml(data, layout)}
+      ${take && take.peaks ? englishChipsHtml(take) : ""}
+      <div class="pitch__scroll">
+        <div class="eni-plot" style="width:${layout.width}px">
+          ${englishChartSvg(hasLearner ? take : null, layout)}
+          ${englishRowsHtml(data, layout)}
+        </div>
+      </div>
+      ${measuredNote}${roughNote}
+      ${hasLearner ? englishCardsHtml(take) : ""}
+      ${ENGLISH_LEGEND}
+    </div>`;
+  el.pitchChart.hidden = false;
+  el.pitchStatus.hidden = true;
+}
+
+el.pitchLegend.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-en-view]");
+  if (!button) return;
+  englishView = button.dataset.enView;
+  const root = el.pitchChart.querySelector(".eni");
+  if (root) root.dataset.view = englishView;
+  for (const other of el.pitchLegend.querySelectorAll("[data-en-view]")) {
+    other.setAttribute("aria-pressed", String(other === button));
+  }
+});
 
 /* --------------------------------------------------------------- Wiring */
 
@@ -1651,6 +2092,7 @@ el.reset.addEventListener("click", () => {
   clearOutput();
   clearPlayback();
   learnerPitch = null;
+  englishTake = null;
   if (document.body.dataset.targetLang === "zh" && referencePattern) renderChinesePitch();
   else if (referencePattern) renderPitchChart();
 });

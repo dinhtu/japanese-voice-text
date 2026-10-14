@@ -46,6 +46,19 @@ async def lifespan(app: FastAPI):
             logger.info("Japanese ASR ready on CPU (VRAM free until the next /evaluate)")
         except Exception as e:  # noqa: BLE001 — keep serving /health for diagnosis
             logger.error("ASR model failed to load at startup: %s", e)
+        try:
+            # English intonation: load CMUdict and JIT-compile pYIN (numba,
+            # ~2 s) now rather than on the first /en evaluate.
+            import numpy as np
+
+            from app.services.english_lexicon import pronounce
+            from app.services.pitch_extraction import frame_features
+
+            pronounce("teacher")
+            tone = np.arange(16_000, dtype=np.float32) / 16_000
+            frame_features((0.1 * np.sin(2 * np.pi * 120 * tone)).astype(np.float32), 16_000)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("English intonation warm-up failed: %s", e)
     yield
     logger.info("Shutting down pronunciation API")
 

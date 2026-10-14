@@ -55,6 +55,9 @@ import torchaudio
 FRAME_TIME = 0.01  # seconds between analysis frames
 FREQ_LOW = 75.0  # Hz -- below the lowest realistic adult voice
 FREQ_HIGH = 500.0  # Hz -- above the highest realistic adult voice fundamental
+# Male voices drop to ~60-70 Hz at the bottom of a phrase-final fall; pYIN's
+# voicing HMM copes with that range, so it gets a lower floor than NCCF.
+PYIN_FREQ_LOW = 55.0
 
 # How far (as a fraction of a mora's average equal-time width) an interior
 # bucket boundary is allowed to drift while looking for a real pause.
@@ -95,10 +98,16 @@ def _frame_energy(samples: np.ndarray, sample_rate: int, n_frames: int) -> np.nd
     return energy
 
 
-def _analyze(samples: np.ndarray, sample_rate: int) -> _PitchAnalysis | None:
+def _analyze(
+    samples: np.ndarray, sample_rate: int, smooth_frames: int = 30
+) -> _PitchAnalysis | None:
     """Run the pitch detector once and gate it, shared by both extraction
     paths below. Returns None if there's nothing to analyze (no audio, no
-    frames, or no voiced speech detected at all)."""
+    frames, or no voiced speech detected at all).
+
+    `smooth_frames` is torchaudio's median-smoothing window (its default,
+    30 frames = 300 ms). Fine for one value per mora; too wide to keep a
+    final fall/rise, so frame_features() asks for less."""
     if samples.size == 0:
         return None
 
@@ -108,6 +117,7 @@ def _analyze(samples: np.ndarray, sample_rate: int) -> _PitchAnalysis | None:
             waveform,
             sample_rate,
             frame_time=FRAME_TIME,
+            win_length=smooth_frames,
             freq_low=FREQ_LOW,
             freq_high=FREQ_HIGH,
         )
@@ -224,6 +234,98 @@ def extract_pitch_for_windows(
         _aggregate(analysis, lo, hi, reference_hz)
         for lo, hi in frame_windows
     ]
+
+
+def _fix_octave_jumps(semitone: np.ndarray, radius: int = 15, limit: float = 7.0) -> np.ndarray:
+    """Fold frames an octave off their neighbourhood back by 12 st; drop
+    what is still far off. NCCF pitch trackers halve/double on creaky or
+    breathy frames, and a light median filter no longer hides that."""
+    out = semitone.copy()
+    voiced = np.flatnonzero(~np.isnan(semitone))
+    for i in voiced:
+        near = semitone[max(0, i - radius):i + radius + 1]
+        near = near[~np.isnan(near)]
+        if near.size < 3:
+            continue
+        ref = float(np.median(near))
+        value = out[i]
+        if abs(value - ref) > limit:
+            folded = value - 12.0 * np.round((value - ref) / 12.0)
+            out[i] = folded if abs(folded - ref) <= limit else np.nan
+    return out
+
+
+def _pyin_hz(samples: np.ndarray, sample_rate: int) -> np.ndarray | None:
+    """pYIN F0 per FRAME_TIME hop (NaN = unvoiced), or None without librosa.
+
+    pYIN's HMM voicing and octave tracking are far steadier than the NCCF
+    detector on phrase-final creak and quiet syllables, which is exactly
+    where an intonation fall/rise is read."""
+    try:
+        import librosa
+    except Exception:  # noqa: BLE001
+        return None
+    hop = max(1, round(sample_rate * FRAME_TIME))
+    frame_length = 1 << int(np.ceil(np.log2(sample_rate * 0.064)))  # ~64 ms
+    if samples.size < frame_length:
+        return None
+    f0, voiced_flag, _prob = librosa.pyin(
+        samples.astype(np.float32),
+        fmin=PYIN_FREQ_LOW,
+        fmax=FREQ_HIGH,
+        sr=sample_rate,
+        frame_length=frame_length,
+        hop_length=hop,
+    )
+    return np.where(voiced_flag, f0, np.nan)
+
+
+def frame_features(
+    samples: np.ndarray, sample_rate: int, smooth_frames: int = 7
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
+    """Per-frame (semitone, energy_db, speech_mask, frame_time).
+
+    Semitones are vs the clip's mean voiced F0, NaN where unvoiced -- the
+    same scale as every other function here. Uses pYIN when librosa is
+    installed; otherwise the NCCF detector with 70 ms smoothing (not the
+    300 ms default, so a phrase-final fall or rise survives). Octave jumps
+    are folded back either way. `speech_mask` is an energy gate (unvoiced
+    consonants count as speech) for pause detection and syllable length.
+    None when there is no voiced speech at all.
+    """
+    if samples.size == 0:
+        return None
+    pitch_hz = None
+    try:
+        pitch_hz = _pyin_hz(samples, sample_rate)
+    except Exception:  # noqa: BLE001
+        pitch_hz = None
+    if pitch_hz is not None:
+        energy = _frame_energy(samples, sample_rate, pitch_hz.shape[0])
+        # pYIN decides voicing; the loose energy floor only drops hum/noise.
+        voiced = ~np.isnan(pitch_hz) & (energy > 0.05 * float(energy.max()))
+        if not np.any(voiced):
+            return None
+        reference_hz = float(np.mean(pitch_hz[voiced]))
+        semitone = np.where(voiced, _semitone(np.nan_to_num(pitch_hz, nan=1.0), reference_hz), np.nan)
+    else:
+        analysis = _analyze(samples, sample_rate, smooth_frames=smooth_frames)
+        if analysis is None:
+            return None
+        energy = analysis.energy
+        reference_hz = float(np.mean(analysis.pitch_hz[analysis.voiced]))
+        semitone = np.where(
+            analysis.voiced, _semitone(analysis.pitch_hz, reference_hz), np.nan
+        )
+    semitone = _fix_octave_jumps(semitone)
+    # Re-centre on the cleaned frames so 0 st is still the speaker's mean.
+    if np.any(~np.isnan(semitone)):
+        semitone = semitone - float(np.nanmean(semitone))
+    energy_db = 20.0 * np.log10(np.clip(energy, 1e-6, None))
+    # -20 dB under the loudest frame: quiet phrase-final syllables are
+    # still speech, a real pause is not.
+    threshold = max(0.1 * float(energy.max()), 1e-4)
+    return semitone, energy_db, energy > threshold, FRAME_TIME
 
 
 def extract_mandarin_tone_contours(

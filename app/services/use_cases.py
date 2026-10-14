@@ -41,6 +41,8 @@ class EvaluationResult:
     measured_pitch: list[dict] | None = None
     target_reading: str | None = None
     recognized_reading: str | None = None
+    # English only: app.services.english_intonation.IntonationResult
+    intonation: object | None = None
 
 
 def _speech_span(windows: list[tuple[float, float]]) -> float | None:

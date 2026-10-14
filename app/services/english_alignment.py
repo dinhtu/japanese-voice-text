@@ -1,0 +1,128 @@
+"""Word / syllable time windows for the English target, from wav2vec2 CTC.
+
+The target letters (not what ASR decoded) are force-aligned onto the
+wav2vec2-base-960h emissions with the same Viterbi the Japanese page uses
+(src/asr/force_align.py). wav2vec2 letters are spiky -- each fires on one
+or two frames near the start of its sound -- so a syllable window runs
+from its first letter's spike to the next syllable's first spike; the last
+syllable of a word runs to the next word's first spike (capped), which
+covers the vowel and coda where the F0 actually is.
+
+When alignment is impossible (no emissions, clip shorter than the
+target) the speech span is split in proportion to letter counts and the
+result is flagged `aligned=False` so pause-based checks are skipped.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from app.services.english_intonation import PitchTrack, SentenceAnalysis
+
+# Longest stretch after a word's last letter spike still counted as that
+# word's final syllable (a long vowel + coda; anything after is a pause).
+_TAIL_S = 0.35
+
+
+@dataclass(frozen=True)
+class SyllableTiming:
+    windows: list[list[tuple[float, float]]]  # per word, per syllable
+    word_spans: list[tuple[float, float]] | None  # first..last letter spike
+    aligned: bool
+
+
+def _syllable_letter_counts(analysis: SentenceAnalysis) -> list[list[int]]:
+    return [
+        [len(s.text.replace("'", "")) for s in w.pron.syllables]
+        for w in analysis.words
+    ]
+
+
+def _letter_targets(analysis: SentenceAnalysis, vocab: list[str]):
+    """CTC target ids and, per word, the index of each of its letters."""
+    stoi = {tok: i for i, tok in enumerate(vocab)}
+    sep = stoi.get("|")
+    ids: list[int] = []
+    letter_pos: list[list[int]] = []
+    for w_i, word in enumerate(analysis.words):
+        if w_i and sep is not None:
+            ids.append(sep)
+        positions = []
+        for ch in word.text.upper():
+            if ch in ("'", "’"):
+                continue
+            tok = stoi.get(ch)
+            if tok is None:
+                return None
+            positions.append(len(ids))
+            ids.append(tok)
+        letter_pos.append(positions)
+    return ids, letter_pos
+
+
+def align_syllables(
+    analysis: SentenceAnalysis,
+    log_probs: np.ndarray | None,
+    vocab: list[str] | None,
+    duration: float,
+) -> SyllableTiming | None:
+    """Forced-align the target letters; None when it cannot be done."""
+    if log_probs is None or not vocab or duration <= 0 or not analysis.words:
+        return None
+    built = _letter_targets(analysis, vocab)
+    if built is None:
+        return None
+    ids, letter_pos = built
+    blank = vocab.index("<pad>") if "<pad>" in vocab else 0
+
+    from src.asr.force_align import _fill_missing, _viterbi_token_frames
+
+    spans = _viterbi_token_frames(log_probs, ids, blank=blank)
+    if spans is None:
+        return None
+    spans = _fill_missing(spans, log_probs.shape[0])
+    frame_time = duration / log_probs.shape[0]
+    starts = [s * frame_time for s, _e in spans]
+    ends = [e * frame_time for _s, e in spans]
+
+    counts = _syllable_letter_counts(analysis)
+    word_spans = [
+        (starts[pos[0]], ends[pos[-1]]) if pos else (0.0, 0.0) for pos in letter_pos
+    ]
+    windows: list[list[tuple[float, float]]] = []
+    for w_i, pos in enumerate(letter_pos):
+        next_start = word_spans[w_i + 1][0] if w_i + 1 < len(word_spans) else duration
+        tail_end = min(next_start, word_spans[w_i][1] + _TAIL_S)
+        firsts = []
+        offset = 0
+        for n in counts[w_i]:
+            firsts.append(starts[pos[min(offset, len(pos) - 1)]])
+            offset += n
+        word_windows = []
+        for k, start in enumerate(firsts):
+            end = firsts[k + 1] if k + 1 < len(firsts) else tail_end
+            word_windows.append((start, max(end, start + frame_time)))
+        windows.append(word_windows)
+    return SyllableTiming(windows, word_spans, True)
+
+
+def proportional_syllables(analysis: SentenceAnalysis, track: PitchTrack) -> SyllableTiming:
+    """Fallback: split the speech span by letter counts (no pause checks)."""
+    counts = _syllable_letter_counts(analysis)
+    speech = np.flatnonzero(track.speech)
+    if speech.size:
+        start, end = speech[0] * track.frame_time, (speech[-1] + 1) * track.frame_time
+    else:
+        start, end = 0.0, track.speech.shape[0] * track.frame_time
+    total = sum(max(1, n) for word in counts for n in word) or 1
+    step = (end - start) / total
+    windows, t = [], start
+    for word in counts:
+        word_windows = []
+        for n in word:
+            word_windows.append((t, t + max(1, n) * step))
+            t += max(1, n) * step
+        windows.append(word_windows)
+    return SyllableTiming(windows, None, False)

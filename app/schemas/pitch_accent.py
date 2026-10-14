@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, Field
 
+from app.schemas.english_intonation import EnglishIntonation
 from app.services.pitch_accent import MoraPitch
 
 
@@ -23,6 +24,11 @@ class PitchAccentResponse(BaseModel):
     engine: str | None = Field(
         default=None,
         description='Kanji -> kana engine behind `reading`: "ollama" or "pykakasi"',
+    )
+    intonation: EnglishIntonation | None = Field(
+        default=None,
+        description="English only: syllables, word / sentence stress, nucleus, "
+        "phrases and the reference contour",
     )
 
     @classmethod
