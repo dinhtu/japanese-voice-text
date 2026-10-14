@@ -23,7 +23,8 @@ from app.services.coaching import (
     generate_text_reading_guide,
 )
 from app.services.english_asr import EnglishASRService, get_english_asr_service
-from app.services.english_text import english_words, word_pitch_pattern
+from app.services.english_scoring import match_words
+from app.services.english_text import word_pitch_pattern
 from app.services.english_use_cases import EvaluateEnglishUseCase
 from app.services.use_cases import EmptyTargetError
 
@@ -38,12 +39,8 @@ def get_en_use_case(
 
 
 def _word_status(target: str, recognized: str) -> list[MoraStatusItem]:
-    tw, rw = english_words(target), english_words(recognized)
-    items = []
-    for i, w in enumerate(tw):
-        ok = i < len(rw) and rw[i] == w
-        items.append(MoraStatusItem(mora=w, ok=ok))
-    return items
+    """Same letter alignment + gate as the score, so "x/y từ đúng" agrees with it."""
+    return [MoraStatusItem(mora=w.target, ok=w.ok) for w in match_words(target, recognized)]
 
 
 @router.post("/evaluate", response_model=EvaluateResponse)

@@ -1,4 +1,4 @@
-"""English evaluate: wav2vec2 ASR + letter CER + VAD + F0 (same 5 heads as JP)."""
+"""English evaluate: wav2vec2 ASR + word-gated score + VAD + F0 (same 5 heads as JP)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from dataclasses import replace
 from app.services.aspect_scoring import AspectScores, score_aspects
 from app.services.coaching import pitch_direction_match
 from app.services.english_asr import EnglishASRService, EnglishRecognition
+from app.services.english_scoring import score_english
 from app.services.english_text import english_words, normalize_english, word_pitch_pattern
-from app.services.scoring import ScoreResult, score_pronunciation
+from app.services.scoring import ScoreResult
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 
 logger = logging.getLogger(__name__)
@@ -158,7 +159,7 @@ class EvaluateEnglishUseCase:
 
         recognition = self.asr.recognize(audio_path)
         recognized_norm = normalize_english(recognition.text)
-        score = score_pronunciation(target_norm.replace(" ", ""), recognized_norm.replace(" ", ""))
+        score, _words = score_english(target_text, recognition.text)
         try:
             aspects, measured_pitch = _measure(target_text, score, recognition, audio_path)
         except Exception:  # noqa: BLE001
