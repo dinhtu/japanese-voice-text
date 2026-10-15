@@ -330,14 +330,15 @@ pip install ollama
 |-------|------|-------------|
 | `text` | string | Target Japanese text — same one sent to `/evaluate` |
 | `audio` | file | `.wav` recording of the user reading it |
-| `lang` | string | Comment language: `vi` (default) or `en` |
+| `lang` | string | Comment language: `vi` (default), `en`, or `ja` |
 
 ```bash
 curl -X POST "http://localhost:8000/api/pronunciation/coach" \
   -F "text=ちょっとまってください" \
   -F "audio=@test.wav"
-# Same request, comment written in English instead:
+# Same request, comment written in English or Japanese instead:
 #   -F "lang=en"
+#   -F "lang=ja"
 ```
 
 ```json

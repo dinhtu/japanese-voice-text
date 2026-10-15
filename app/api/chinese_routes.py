@@ -85,7 +85,9 @@ async def coach_chinese(
     text = text.strip()
     if not normalize_chinese(text):
         raise HTTPException(400, "Field 'text' must contain Chinese characters.")
-    lang = lang.strip().lower()
+    lang = (lang or "vi").strip().lower()
+    if lang == "jp":
+        lang = "ja"
     if lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(400, f"Unsupported lang '{lang}'.")
     suffix = _validate_upload(audio)

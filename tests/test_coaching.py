@@ -163,19 +163,35 @@ def test_format_facts_reports_pitch_match_when_available():
 # --------------------------------------------------------- resolve_system_prompt
 
 
-def test_supported_languages_include_vi_and_en():
+def test_supported_languages_include_vi_en_and_ja():
     assert "vi" in SUPPORTED_LANGUAGES
     assert "en" in SUPPORTED_LANGUAGES
+    assert "ja" in SUPPORTED_LANGUAGES
 
 
 def test_resolve_system_prompt_returns_different_text_per_language():
     vi_prompt = resolve_system_prompt("vi")
     en_prompt = resolve_system_prompt("en")
+    ja_prompt = resolve_system_prompt("ja")
     assert vi_prompt != en_prompt
-    assert len(vi_prompt) > 0 and len(en_prompt) > 0
+    assert vi_prompt != ja_prompt
+    assert en_prompt != ja_prompt
+    assert len(vi_prompt) > 0 and len(en_prompt) > 0 and len(ja_prompt) > 0
     # Each prompt should at least tell the model to write in that language.
     assert "tiếng Việt" in vi_prompt
     assert "English" in en_prompt
+    assert "日本語" in ja_prompt
+
+
+def test_resolve_system_prompt_aliases_jp_to_ja():
+    assert resolve_system_prompt("jp") == resolve_system_prompt("ja")
+
+
+def test_resolve_system_prompt_supports_ja_for_all_target_languages():
+    for target in ("ja", "en", "zh", "ko"):
+        prompt = resolve_system_prompt("ja", target_lang=target)
+        assert len(prompt) > 0
+        assert "日本語" in prompt
 
 
 def test_resolve_system_prompt_rejects_unsupported_language():
@@ -183,7 +199,7 @@ def test_resolve_system_prompt_rejects_unsupported_language():
         resolve_system_prompt("fr")
     except ValueError as e:
         assert "fr" in str(e)
-        assert "vi" in str(e) and "en" in str(e)
+        assert "vi" in str(e) and "en" in str(e) and "ja" in str(e)
     else:
         raise AssertionError("expected ValueError for unsupported lang")
 

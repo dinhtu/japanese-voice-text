@@ -156,6 +156,8 @@ async def coach_english(
     if not text:
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
     lang = (lang or "vi").strip().lower()
+    if lang == "jp":
+        lang = "ja"
     if lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail=f"Unsupported lang '{lang}'.")
     suffix = _validate_upload(audio)

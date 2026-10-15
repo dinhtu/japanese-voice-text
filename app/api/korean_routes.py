@@ -135,7 +135,9 @@ async def coach_korean(
     settings: Settings = Depends(get_settings),
 ) -> CoachResponse:
     text = _check_text(text)
-    lang = lang.strip().lower()
+    lang = (lang or "vi").strip().lower()
+    if lang == "jp":
+        lang = "ja"
     if lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(400, f"Unsupported lang '{lang}'.")
     path = await _save_upload(audio, settings, "ko_coach_")

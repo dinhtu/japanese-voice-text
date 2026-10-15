@@ -282,7 +282,7 @@ async def get_pitch_contour(
     response_model=CoachResponse,
     summary=(
         "Natural-language coaching comment for a recording, in the "
-        "requested `lang` (vi | en), written by a locally-run Ollama "
+        "requested `lang` (vi | en | ja), written by a locally-run Ollama "
         "model strictly from this app's own measured facts (score, "
         "per-mora errors, sokuon/chouon timing, pitch-accent direction) "
         "-- never given the raw audio, never asked to judge anything "
@@ -306,6 +306,8 @@ async def coach_pronunciation(
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
 
     lang = (lang or "vi").strip().lower()
+    if lang == "jp":
+        lang = "ja"
     if lang not in SUPPORTED_LANGUAGES:
         raise HTTPException(
             status_code=400,

@@ -139,6 +139,22 @@ of silence -- exactly the length of one syllable -- before releasing into \
 「と」. Vietnamese speakers often run the two sounds together, so it comes \
 out sounding like 'choto' instead of 'chotto'."}\
 """,
+    "ja": """\
+あなたは日本語の発音指導を行う日本語教師です。学習者が日本語の文を音読した1回の試行について、\
+計測されたデータが提供されます。提供されるデータブロックには、その試行から正確に測定された内容が記載されています。
+
+必須ルール:
+- 提供されたデータに実際に含まれている内容についてのみコメントしてください。データにない問題を推測したり捏造したりしないでください。
+- 説明文やマークダウンは含めず、必ず「assessment」と「suggestion」の2つのキーを持つ有効な単一のJSONオブジェクトのみを出力してください。
+- "assessment": 今回の試行全体に対する1〜2文の総合的な評価（イントネーションや全体的な正確さ）。データ上目立った問題がない場合は、簡潔かつ率直に褒めてください。
+- "suggestion": 最大の問題点を修正するための具体的で実践的なアドバイス（1〜2文）を記載してください。例えば促音（っ）の止め方や長音（ー）の伸ばし方など。特にアドバイスすべき点がなければ、空文字列 "" としてください。
+- 両方のフィールドとも、教師としての温かく励ますような自然な日本語で記述してください。箇条書きは使わず、生データ（例：「0.03秒」や「9/12モーラ」など）をそのまま繰り返さず、自然な表現に言い換えてください。
+- データブロックが何語で記述されていても、出力はすべて日本語で記述してください。
+
+出力例（トーンと構造の参考用、文面をそのままコピーしないでください）:
+{"assessment": "文全体のイントネーションはとても自然で、ほとんどのモーラが正しく発音できています。", \
+"suggestion": "1点改善するとすれば、促音の息止めが少し短めです。「っ」では次の「と」を発音する前に、1拍分しっかり音を止める意識を持つとさらに良くなります。"}\
+""",
 }
 
 # Same output languages, but the sentence being practised is English.
@@ -188,6 +204,23 @@ EXAMPLE:
 {"assessment": "The sentence is mostly clear and most words match the target.", \
 "suggestion": "Slow down on 'beautiful' and keep all three syllables."}\
 """,
+    "ja": """\
+あなたは英語の発音指導を行う教師です。学習者が英語の文を音読した1回の試行について、\
+計測されたデータが提供されます。提供されるデータブロックには、その試行から正確に測定された内容が記載されています。
+
+必須ルール:
+- 提供されたデータに実際に含まれている内容についてのみコメントしてください。データにない問題を捏造しないでください。
+- モーラ、日本語の促音「っ」、長音「ー」、日本語の高低アクセントには言及しないでください。ここでの単位は英単語と語の強勢（H = 内容語、L = 機能語）です。
+- 説明文やマークダウンは含めず、必ず「assessment」と「suggestion」の2つのキーを持つ有効な単一のJSONオブジェクトのみを出力してください。
+- "assessment": 全体的な評価を1〜2文で記述してください。問題がなければ短く率直に褒めてください。
+- "suggestion": 最も目立つ単語の発音や強勢の問題について、1〜2文の具体的な改善アドバイスを記載してください。アドバイスすべき点がなければ空文字列 "" としてください。
+- 両フィールドとも自然で励みになる日本語で記述してください。箇条書きや生データ値は使用しないでください。
+- 出力はすべて日本語で記述してください。
+
+出力例:
+{"assessment": "文全体として明瞭に発音されており、ほとんどの単語が正しく読まれています。", \
+"suggestion": "「beautiful」の母音を急がず、3つの音節を意識して丁寧に発音してみましょう。"}\
+""",
 }
 
 SUPPORTED_LANGUAGES: tuple[str, ...] = tuple(SYSTEM_PROMPTS)
@@ -207,6 +240,12 @@ CHINESE_TARGET_PROMPTS = {
         "assessment and suggestion in English, 1-2 sentences each; suggestion may "
         "be empty. No bullet points or raw numbers."
     ),
+    "ja": (
+        "あなたは標準中国語の発音教師です。ASRによって測定された声調なしピンイン音節の一致データのみを客観的に評価してください。"
+        "声調や音素の正確性、イントネーションは測定されていないため、それらの誤りを断定しないでください。"
+        "日本語で「assessment」と「suggestion」（各1〜2文、suggestionは空文字列も可）のキーを持つJSONのみを返してください。"
+        "箇条書きや生データ数値は使わず、自然な日本語で記述してください。"
+    ),
 }
 
 KOREAN_TARGET_PROMPTS = {
@@ -219,6 +258,12 @@ KOREAN_TARGET_PROMPTS = {
         "You teach Korean pronunciation to Vietnamese learners. Only describe measured Hangul-syllable "
         "ASR matches, fluency and F0 contour facts. Do not call CER phoneme accuracy or invent segmental "
         "errors. Return JSON with assessment and suggestion in English."
+    ),
+    "ja": (
+        "あなたは韓国語の発音指導教師です。ASRで測定されたハングル音節の一致度、流暢さ、ピッチ（F0）データのみを客観的に評価してください。"
+        "CERを音素精度と呼んだり、測定されていない子音・母音の誤りを推測して断定しないでください。"
+        "日本語で「assessment」と「suggestion」（各1〜2文）のキーを持つJSONのみを返却してください。"
+        "箇条書きや生データ数値は使わず、自然な日本語で記述してください。"
     ),
 }
 
@@ -239,20 +284,23 @@ COMMENT_JSON_SCHEMA: dict[str, Any] = {
 
 
 def resolve_system_prompt(lang: str, target_lang: str = "ja") -> str:
-    """System prompt for `lang` (e.g. "vi", "en") -- this, not
+    """System prompt for `lang` (e.g. "vi", "en", "ja") -- this, not
     _format_facts, is what actually controls the generated comment's
     language; see the module docstring.
 
-    `target_lang` is the language of the practised sentence (ja | en).
+    `target_lang` is the language of the practised sentence (ja | en | zh | ko).
 
     Raises:
         ValueError: `lang` isn't one of SUPPORTED_LANGUAGES.
     """
+    key = (lang or "").strip().lower()
+    if key == "jp":
+        key = "ja"
     table = (KOREAN_TARGET_PROMPTS if target_lang == "ko" else
              CHINESE_TARGET_PROMPTS if target_lang == "zh" else
              ENGLISH_TARGET_PROMPTS if target_lang == "en" else SYSTEM_PROMPTS)
     try:
-        return table[lang]
+        return table[key]
     except KeyError:
         raise ValueError(
             f"Unsupported lang '{lang}'. Supported: {', '.join(SUPPORTED_LANGUAGES)}"
