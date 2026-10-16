@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dataclasses import replace
 
+import numpy as np
+
 from app.services.aspect_scoring import AspectScores, score_aspects
 from app.services.english_alignment import (
     SyllableTiming,
@@ -36,6 +38,8 @@ from app.services.english_text import (
 )
 from app.services.scoring import ScoreResult
 from app.services.use_cases import EmptyTargetError, EvaluationResult
+from app.services.vad_fluency import VadResult
+from app.services.voice_presence import VoicePresence, check_voice
 
 logger = logging.getLogger(__name__)
 
@@ -117,12 +121,80 @@ def _word_pitch(target: str, intonation: IntonationResult | None) -> list[dict]:
     return out
 
 
+def _load(audio_path: str | Path) -> tuple[np.ndarray | None, int | None]:
+    try:
+        from src.asr.inference import load_audio
+
+        return load_audio(audio_path)
+    except Exception:  # noqa: BLE001
+        logger.warning("English audio load failed", exc_info=True)
+        return None, None
+
+
+def _vad(samples: np.ndarray | None, sample_rate: int | None) -> VadResult | None:
+    if samples is None or not sample_rate:
+        return None
+    try:
+        from app.services.vad_fluency import analyze_vad
+
+        return analyze_vad(samples, sample_rate)
+    except Exception:  # noqa: BLE001
+        logger.warning("English VAD failed", exc_info=True)
+        return None
+
+
+_NO_VOICE_MESSAGES = {
+    "silent": "No voice was heard. Read the sentence aloud, close to the microphone.",
+    "whisper": "Only whispering was heard. Read the sentence aloud in your normal voice.",
+}
+
+
+def _no_voice(
+    target_text: str,
+    target_norm: str,
+    samples: np.ndarray,
+    sample_rate: int,
+    vad: VadResult,
+    presence: VoicePresence,
+) -> EvaluationResult:
+    """Silence, noise or a whisper: nothing heard, nothing scored."""
+    logger.info(
+        "English evaluate: no voice (%s, speech %.2fs, voiced %.2fs)",
+        presence.verdict, presence.speech_s, presence.voiced_s,
+    )
+    letters = len(target_norm.replace(" ", ""))
+    score = ScoreResult(
+        score=0, cer=1.0, distance=letters, target_length=letters,
+        level="mismatch", message=_NO_VOICE_MESSAGES[presence.verdict],
+    )
+    aspects = AspectScores(
+        overall_score=0.0, pronunciation_score=0.0, fluency_score=0.0,
+        rhythm_score=None, intonation_score=None,
+        rhythm_measured=False, intonation_measured=False,
+        method=f"no-voice:{presence.verdict}", vad_method=vad.method,
+        pause_count=0, speech_ratio=vad.speech_ratio,
+    )
+    return EvaluationResult(
+        target_text=target_text,
+        target_hiragana=target_norm,
+        recognized_text="",
+        recognized_hiragana="",
+        score=score,
+        aspects=aspects,
+        audio_duration=round(len(samples) / sample_rate, 2),
+        inference_ms=0.0,
+        measured_pitch=_word_pitch(target_text, None),
+    )
+
+
 def _measure(
     target: str,
     score: ScoreResult,
     recognition: EnglishRecognition,
-    audio_path: str | Path,
     aligned: tuple[SentenceAnalysis, SyllableTiming | None],
+    samples: np.ndarray | None,
+    sample_rate: int | None,
+    vad: VadResult | None,
 ) -> tuple[AspectScores, list[dict], IntonationResult | None]:
     words = word_pitch_pattern(target)
     n = len(words) or 1
@@ -134,27 +206,14 @@ def _measure(
     vad_method = None
     windows = None
 
-    samples = sample_rate = None
-    try:
-        from src.asr.inference import load_audio
-
-        samples, sample_rate = load_audio(audio_path)
-    except Exception:  # noqa: BLE001
-        logger.warning("English audio reload failed", exc_info=True)
+    if vad is not None:
+        vad_method = vad.method
+        pause_count = vad.pause_count
+        speech_ratio = vad.speech_ratio
+        if vad.speech_duration > 0:
+            speech_duration = vad.speech_duration
 
     if samples is not None and sample_rate:
-        try:
-            from app.services.vad_fluency import analyze_vad
-
-            vad = analyze_vad(samples, sample_rate)
-            vad_method = vad.method
-            pause_count = vad.pause_count
-            speech_ratio = vad.speech_ratio
-            if vad.speech_duration > 0:
-                speech_duration = vad.speech_duration
-        except Exception:  # noqa: BLE001
-            logger.warning("English VAD failed", exc_info=True)
-
         # Rhythm keeps its old equal word windows; English rhythm is not
         # mora-even, so real word timing would only add noise there.
         duration = len(samples) / sample_rate
@@ -259,6 +318,13 @@ class EvaluateEnglishUseCase:
         if not target_norm:
             raise EmptyTargetError("Target text contains no pronounceable English content.")
 
+        samples, sample_rate = _load(audio_path)
+        vad = _vad(samples, sample_rate)
+        if vad is not None:
+            presence = check_voice(samples, sample_rate, vad)
+            if not presence.voiced:
+                return _no_voice(target_text, target_norm, samples, sample_rate, vad, presence)
+
         recognition = self.asr.recognize(audio_path)
         aligned = _align(target_text, recognition)
         # Greedy CTC spells by ear ("KAT"); a target word the audio itself
@@ -276,7 +342,7 @@ class EvaluateEnglishUseCase:
         intonation = None
         try:
             aspects, measured_pitch, intonation = _measure(
-                target_text, score, recognition, audio_path, aligned
+                target_text, score, recognition, aligned, samples, sample_rate, vad
             )
         except Exception:  # noqa: BLE001
             logger.warning("English aspect scoring failed", exc_info=True)

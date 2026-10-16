@@ -51,6 +51,11 @@ HEARD_LOGPROB = -4.5
 # missing tail ("weekend" read as "week" averages about -4.3).
 HEARD_LETTER_LOGPROB = -6.0
 HEARD_LETTER_SHARE = 0.75
+# ...and some letters must be clear spikes. Under loud noise every target
+# letter scores a vague -2 .. -5 (greedy heard "VALELE" for "nice to meet
+# you"); a real reading, accented or not, has sharp ones (-0.5 .. 0).
+HEARD_STRONG_LOGPROB = -0.5
+HEARD_STRONG_SHARE = 0.25
 # More than this share of missing words: the timing itself is unreliable.
 MAX_MISSING_SHARE = 0.5
 
@@ -62,7 +67,13 @@ def heard_words(timing: SyllableTiming | None) -> frozenset[int]:
     out = set()
     for i, (mean, letters) in enumerate(zip(timing.confidence, timing.letter_confidence)):
         found = sum(1 for v in letters if v >= HEARD_LETTER_LOGPROB)
-        if letters and mean >= HEARD_LOGPROB and found >= HEARD_LETTER_SHARE * len(letters):
+        strong = sum(1 for v in letters if v >= HEARD_STRONG_LOGPROB)
+        if (
+            letters
+            and mean >= HEARD_LOGPROB
+            and found >= HEARD_LETTER_SHARE * len(letters)
+            and strong >= max(1.0, HEARD_STRONG_SHARE * len(letters))
+        ):
             out.add(i)
     return frozenset(out)
 

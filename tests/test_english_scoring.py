@@ -37,7 +37,7 @@ def test_all_words_pass_never_scores_below_old_letter_cer():
             target.lower().replace(" ", ""), heard.replace(" ", "")
         ).score
         assert _score(target, heard) >= old
-    assert _score("Nice to meet you", "uh nice to meet you") == 85  # filler still costs
+    assert 90 <= _score("Nice to meet you", "uh nice to meet you") < 100  # filler costs a little
 
 
 @pytest.mark.parametrize("target, heard", [
@@ -76,7 +76,18 @@ def test_failed_word_loses_all_its_letters():
 def test_extra_words_still_cost_points():
     # A free skip used to make these 100.
     assert _score("I like it", "i dont like it") < 60
-    assert _score("hello", "hello how are you i am fine thank you") == 0
+    # A whole extra sentence costs in full, down to MAX_EXTRA_SHARE.
+    assert _score("hello", "hello how are you i am fine thank you") == 30
+
+
+def test_noise_scraps_around_the_reading_cost_little():
+    # The ASR spelled breath / a click before or after the word.
+    assert _score("cap", "the cap") == 75
+    assert _score("cap", "cap the") == 75
+    assert _score("Nice to meet you", "nice to meet you and") == 88
+    # A word judged right never ends at 0 points ("1/1 từ đúng", 0 điểm).
+    assert _ok("cap", "to happen") == [("cap", True)]
+    assert _score("cap", "to happen") > 0
 
 
 def test_contraction_is_one_word():
@@ -125,10 +136,17 @@ def test_snap_writes_confirmed_words_as_the_target():
 
 def test_snap_keeps_extra_words_and_fills_dropped_ones():
     assert snap_transcript("I like it", "i dont laik it", frozenset({0, 1, 2})) == "i dont like it"
-    assert snap_transcript("Nice to meet you", "uh nice to meat you", frozenset({0, 1, 2, 3})) == (
-        "uh nice to meet you"
-    )
     assert snap_transcript("I like it", "", frozenset({0, 1, 2})) == "i like it"
+    # Extra words keep the ASR's own word breaks.
+    assert snap_transcript("hello", "HELLO HOW ARE YOU", frozenset({0})) == "hello how are you"
+
+
+def test_snap_drops_scraps_left_around_respelled_words():
+    assert snap_transcript("Nice to meet you", "uh nice to meat you", frozenset({0, 1, 2, 3})) == (
+        "nice to meet you"
+    )
+    assert snap_transcript("cap", "GEMPU", frozenset({0})) == "cap"
+    assert snap_transcript("weekend", "WUI GWENDO", frozenset({0})) == "weekend"
     # A snapped transcript scores the extra word like before.
     assert _score("I like it", "i dont like it") == 43
 

@@ -12,8 +12,9 @@ them: "a napple", "to day", "thankyou" all match):
     similarity >= WORD_GATE -> the word keeps len(word) * similarity letters
                                (minus 1 per letter its stretch runs over)
     similarity <  WORD_GATE -> the word keeps 0 (it was not that word)
-    heard letters no word claims (extra / filler words) cost 1 each
-    score = round(max(0, kept - extra) / target letters * 100)
+    heard letters no word claims (extra / filler words) cost 1 each,
+    EDGE_EXTRA_COST before the first / after the last word
+    score = round((kept - min(extra, MAX_EXTRA_SHARE * kept)) / target letters * 100)
 
 The stretches are chosen to maximize that score. Picking per word, not
 per letter, stops a dropped word from bleeding into its neighbour ("it is
@@ -38,6 +39,18 @@ WORD_GATE = 0.65
 # A word this close is shown as the target spells it ("kat" -> "cat"); a
 # passing but rougher one ("cat" for "cats") is shown as heard.
 SNAP_GATE = 0.8
+# A short scrap heard before the first or after the last word is mostly
+# breath, a click or noise the ASR spelled out ("uh", "TO HAPPEN" around
+# "cap"): cheap. A longer one is a real extra word and costs in full.
+EDGE_EXTRA_COST = 0.25
+EDGE_NOISE = 4
+# Extra letters never take more than this share of what the words earned,
+# so words read right never add up to 0.
+MAX_EXTRA_SHARE = 0.7
+# Extra-letter pieces shorter than these are dropped from a re-spelled
+# transcript (see snap_transcript); real extra words are kept.
+EDGE_SCRAP = 4
+SCRAP = 3
 
 _VOWELS = frozenset("aeiou")
 # Spellings of one sound, scanned left to right (C = ch, S = sh, J = j).
@@ -175,9 +188,10 @@ def _prefix_distances(word: str, heard: str) -> list[int]:
 
 def _segment(
     words: list[str], hyp: str, heard: frozenset[int] = frozenset()
-) -> tuple[list[WordMatch], float, list[tuple[int | None, str]]]:
+) -> tuple[list[WordMatch], float, list[tuple[int | None, int, str]]]:
     """Best stretch of `hyp` per word, the score it earns (kept - extra),
-    and the transcript in order as (word index or None for extra, letters).
+    and the transcript in order as (word index or None for extra, start in
+    `hyp`, letters).
 
     Words in `heard` were confirmed from the audio (see snap_transcript):
     they always pass and only pick the stretch that fits them best."""
@@ -222,20 +236,20 @@ def _segment(
                 relax(w + 1, k, base + gain, ("word", j, similarity))
 
     matches: list[WordMatch] = []
-    pieces: list[tuple[int | None, str]] = []
+    pieces: list[tuple[int | None, int, str]] = []
     w, j = n, m
     while w > 0 or j > 0:
         move = back[w][j]
         if move[0] == "extra":
             if pieces and pieces[-1][0] is None:
-                pieces[-1] = (None, hyp[j - 1] + pieces[-1][1])
+                pieces[-1] = (None, j - 1, hyp[j - 1] + pieces[-1][2])
             else:
-                pieces.append((None, hyp[j - 1]))
+                pieces.append((None, j - 1, hyp[j - 1]))
             j -= 1
         else:
             _kind, start, similarity = move
             matches.append(WordMatch(words[w - 1], hyp[start:j], round(similarity, 4)))
-            pieces.append((w - 1, hyp[start:j]))
+            pieces.append((w - 1, start, hyp[start:j]))
             w, j = w - 1, start
     matches.reverse()
     pieces.reverse()
@@ -252,15 +266,33 @@ def snap_transcript(target_text: str, recognized_text: str, heard: frozenset[int
     spoken words that the audio itself confirms, see english_alignment
     HEARD_LOGPROB) written as the target spells it: "SIRBERHAKNOY HEMORICH"
     -> "subarachnoid hemorrhage". Other words and extra letters stay as
-    heard, in lower case."""
+    heard, in lower case, except the scraps a re-spelled word leaves
+    behind ("cap pu", "w weekend o"): extra pieces shorter than
+    EDGE_SCRAP letters at either end, or SCRAP letters inside."""
+    heard_norm = normalize_english(recognized_text)
     if not heard:
-        return normalize_english(recognized_text)
+        return heard_norm
+    # Where the ASR put its word breaks, as offsets into the joined letters.
+    breaks, offset = set(), 0
+    for token in heard_norm.split(" "):
+        breaks.add(offset)
+        offset += len(token)
+
+    def as_heard(start: int, letters: str) -> str:
+        return "".join(
+            (" " + ch) if k and start + k in breaks else ch for k, ch in enumerate(letters)
+        )
+
     words = _target_words(target_text)
-    pieces = _segment(words, _letters(recognized_text), heard)[2]
-    out = [
-        words[index] if index in heard else letters
-        for index, letters in pieces
-    ]
+    pieces = _segment(words, heard_norm.replace(" ", ""), heard)[2]
+    out = []
+    for k, (index, start, letters) in enumerate(pieces):
+        if index is not None:
+            out.append(words[index] if index in heard else as_heard(start, letters))
+            continue
+        edge = k == 0 or k == len(pieces) - 1
+        if len(letters) >= (EDGE_SCRAP if edge else SCRAP):
+            out.append(as_heard(start, letters))
     return " ".join(t for t in out if t)
 
 
@@ -275,7 +307,17 @@ def score_english(target_text: str, recognized_text: str) -> tuple[ScoreResult, 
         raise ValueError("Target text has no English words; cannot score against it.")
     hyp = _letters(recognized_text)
     letters = score_pronunciation(ref, hyp)
-    matches, earned, _pieces = _segment(words, hyp)
-    score = round(max(0.0, earned) / len(ref) * 100)
+    matches, earned, pieces = _segment(words, hyp)
+    kept = sum(len(m.target.replace("'", "")) * m.similarity for m in matches if m.ok)
+    # Edge extras are discounted only after segmenting at full price, so
+    # the segmentation never pushes a real extra word ("i DONT like it")
+    # to the front to make it cheap.
+    edge = sum(
+        len(letters) for k, (index, _start, letters) in enumerate(pieces)
+        if index is None and k in (0, len(pieces) - 1) and len(letters) <= EDGE_NOISE
+    )
+    penalty = max(0.0, kept - earned) - (1.0 - EDGE_EXTRA_COST) * edge
+    penalty = min(max(0.0, penalty), MAX_EXTRA_SHARE * kept)
+    score = round(max(0.0, kept - penalty) / len(ref) * 100)
     level, message = _feedback(score)
     return replace(letters, score=score, level=level, message=message), matches
