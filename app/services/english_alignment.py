@@ -35,6 +35,7 @@ class SyllableTiming:
     # the model hears something else: the learner skipped them.
     missing: frozenset[int] = frozenset()
     confidence: tuple[float, ...] = ()  # mean best log-prob per word
+    letter_confidence: tuple[tuple[float, ...], ...] = ()  # best log-prob per letter
 
 
 # Mean (over a word's letters) of the best frame log-prob on the forced
@@ -46,6 +47,10 @@ MISSING_LOGPROB = -5.0
 # spelled it by ear ("KAT", "HEMORICH"): below the said-but-misheard band
 # on purpose, so near misses pass; skipped words stay under MISSING_LOGPROB.
 HEARD_LOGPROB = -4.5
+# ...and most of its letters must really be there: a good mean can hide a
+# missing tail ("weekend" read as "week" averages about -4.3).
+HEARD_LETTER_LOGPROB = -6.0
+HEARD_LETTER_SHARE = 0.75
 # More than this share of missing words: the timing itself is unreliable.
 MAX_MISSING_SHARE = 0.5
 
@@ -54,7 +59,12 @@ def heard_words(timing: SyllableTiming | None) -> frozenset[int]:
     """Target word indices the forced path found clearly in the audio."""
     if timing is None:
         return frozenset()
-    return frozenset(i for i, c in enumerate(timing.confidence) if c >= HEARD_LOGPROB)
+    out = set()
+    for i, (mean, letters) in enumerate(zip(timing.confidence, timing.letter_confidence)):
+        found = sum(1 for v in letters if v >= HEARD_LETTER_LOGPROB)
+        if letters and mean >= HEARD_LOGPROB and found >= HEARD_LETTER_SHARE * len(letters):
+            out.add(i)
+    return frozenset(out)
 
 
 def _syllable_letter_counts(analysis: SentenceAnalysis) -> list[list[int]]:
@@ -115,6 +125,7 @@ def align_syllables(
     if raw_spans is None:
         return None
     confidence = []
+    letter_confidence = []
     for pos in letter_pos:
         best = [
             float(np.max(log_probs[raw_spans[i][0]:raw_spans[i][1], ids[i]]))
@@ -122,6 +133,7 @@ def align_syllables(
             for i in pos
         ]
         confidence.append(round(float(np.mean(best)), 2) if best else -30.0)
+        letter_confidence.append(tuple(round(b, 2) for b in best))
     missing = frozenset(w for w, c in enumerate(confidence) if c < MISSING_LOGPROB)
     spans = _fill_missing(raw_spans, log_probs.shape[0])
     frame_time = duration / log_probs.shape[0]
@@ -148,7 +160,8 @@ def align_syllables(
         windows.append(word_windows)
     aligned = len(missing) <= MAX_MISSING_SHARE * len(letter_pos)
     return SyllableTiming(
-        windows, word_spans if aligned else None, aligned, missing, tuple(confidence)
+        windows, word_spans if aligned else None, aligned, missing, tuple(confidence),
+        tuple(letter_confidence),
     )
 
 

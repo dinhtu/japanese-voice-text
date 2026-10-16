@@ -22,7 +22,12 @@ from app.services.english_intonation import (
     analyze_sentence,
     evaluate_intonation,
 )
-from app.services.english_scoring import match_words, score_english, snap_transcript
+from app.services.english_scoring import (
+    SNAP_GATE,
+    match_words,
+    score_english,
+    snap_transcript,
+)
 from app.services.english_text import (
     english_words,
     expand_for_speech,
@@ -260,7 +265,8 @@ class EvaluateEnglishUseCase:
         # carries, or one that sounds like it, is written as the target
         # spells it -- both in "AI nghe được" and before scoring.
         heard = heard_words(aligned[1]) | {
-            i for i, m in enumerate(match_words(target_text, recognition.text)) if m.ok
+            i for i, m in enumerate(match_words(target_text, recognition.text))
+            if m.similarity >= SNAP_GATE
         }
         heard_text = snap_transcript(target_text, recognition.text, heard)
         if heard_text != recognition.text:

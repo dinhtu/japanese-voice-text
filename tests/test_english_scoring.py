@@ -162,3 +162,23 @@ def test_heard_words_from_forced_alignment():
     timing = align_syllables(analyze_sentence("cat dog"), log_probs, vocab, duration=0.4)
     assert heard_words(timing) == frozenset({0})  # "cat" said, "dog" never was
     assert heard_words(None) == frozenset()
+
+
+def test_word_missing_its_tail_is_not_confirmed():
+    pytest.importorskip("torch")
+    import numpy as np
+
+    from app.services.english_alignment import align_syllables, heard_words
+    from app.services.english_intonation import analyze_sentence
+
+    vocab = ["<pad>", "|", "D", "E", "K", "N", "W"]
+    # "weekend" read as "week": W E E K, then silence where E N D should be.
+    path = [6, 0, 3, 0, 3, 0, 4] + [0] * 13
+    log_probs = np.full((len(path), len(vocab)), -10.0)
+    for t, tok in enumerate(path):
+        log_probs[t, tok] = -0.01
+    timing = align_syllables(analyze_sentence("weekend"), log_probs, vocab, duration=0.4)
+    assert timing.confidence[0] > -4.5  # the mean alone would let it through
+    assert heard_words(timing) == frozenset()
+    assert _ok("weekend", "week") == [("weekend", False)]
+    assert _score("weekend", "week") == 0

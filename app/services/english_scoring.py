@@ -35,6 +35,9 @@ from app.services.english_text import normalize_english, speech_tokens
 from app.services.scoring import ScoreResult, _feedback, score_pronunciation
 
 WORD_GATE = 0.65
+# A word this close is shown as the target spells it ("kat" -> "cat"); a
+# passing but rougher one ("cat" for "cats") is shown as heard.
+SNAP_GATE = 0.8
 
 _VOWELS = frozenset("aeiou")
 # Spellings of one sound, scanned left to right (C = ch, S = sh, J = j).
