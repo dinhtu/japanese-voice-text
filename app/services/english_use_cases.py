@@ -8,15 +8,21 @@ from pathlib import Path
 from dataclasses import replace
 
 from app.services.aspect_scoring import AspectScores, score_aspects
-from app.services.english_alignment import align_syllables, proportional_syllables
+from app.services.english_alignment import (
+    SyllableTiming,
+    align_syllables,
+    heard_words,
+    proportional_syllables,
+)
 from app.services.english_asr import EnglishASRService, EnglishRecognition
 from app.services.english_intonation import (
     IntonationResult,
     PitchTrack,
+    SentenceAnalysis,
     analyze_sentence,
     evaluate_intonation,
 )
-from app.services.english_scoring import score_english
+from app.services.english_scoring import match_words, score_english, snap_transcript
 from app.services.english_text import (
     english_words,
     expand_for_speech,
@@ -29,23 +35,34 @@ from app.services.use_cases import EmptyTargetError, EvaluationResult
 logger = logging.getLogger(__name__)
 
 
+def _align(target: str, recognition: EnglishRecognition) -> tuple[SentenceAnalysis, SyllableTiming | None]:
+    """Target words and their forced-aligned timing (None when impossible)."""
+    analysis = analyze_sentence(target)
+    timing = None
+    if analysis.words:
+        try:
+            timing = align_syllables(
+                analysis, recognition.log_probs, recognition.vocab, recognition.duration
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("English forced alignment failed", exc_info=True)
+    return analysis, timing
+
+
 def _intonation(
-    target: str,
-    recognition: EnglishRecognition,
+    aligned: tuple[SentenceAnalysis, SyllableTiming | None],
     samples,
     sample_rate: int,
 ) -> IntonationResult | None:
     """Sentence stress / phrase / final-tone checks on forced-aligned syllables."""
     from app.services.pitch_extraction import frame_features
 
-    analysis = analyze_sentence(target)
+    analysis, timing = aligned
     features = frame_features(samples, sample_rate)
     if not analysis.words or features is None:
         return None
     track = PitchTrack(*features)
-    timing = align_syllables(
-        analysis, recognition.log_probs, recognition.vocab, recognition.duration
-    ) or proportional_syllables(analysis, track)
+    timing = timing or proportional_syllables(analysis, track)
     return evaluate_intonation(
         analysis, track, timing.windows, timing.word_spans, timing.aligned, timing.missing
     )
@@ -100,6 +117,7 @@ def _measure(
     score: ScoreResult,
     recognition: EnglishRecognition,
     audio_path: str | Path,
+    aligned: tuple[SentenceAnalysis, SyllableTiming | None],
 ) -> tuple[AspectScores, list[dict], IntonationResult | None]:
     words = word_pitch_pattern(target)
     n = len(words) or 1
@@ -139,7 +157,7 @@ def _measure(
         windows = [(i * step, (i + 1) * step) for i in range(n)]
 
         try:
-            intonation = _intonation(target, recognition, samples, sample_rate)
+            intonation = _intonation(aligned, samples, sample_rate)
         except Exception:  # noqa: BLE001
             logger.warning("English intonation failed", exc_info=True)
         measured_pitch = _word_pitch(target, intonation)
@@ -237,12 +255,22 @@ class EvaluateEnglishUseCase:
             raise EmptyTargetError("Target text contains no pronounceable English content.")
 
         recognition = self.asr.recognize(audio_path)
-        recognized_norm = normalize_english(recognition.text)
-        score, _words = score_english(target_text, recognition.text)
+        aligned = _align(target_text, recognition)
+        # Greedy CTC spells by ear ("KAT"); a target word the audio itself
+        # carries, or one that sounds like it, is written as the target
+        # spells it -- both in "AI nghe được" and before scoring.
+        heard = heard_words(aligned[1]) | {
+            i for i, m in enumerate(match_words(target_text, recognition.text)) if m.ok
+        }
+        heard_text = snap_transcript(target_text, recognition.text, heard)
+        if heard_text != recognition.text:
+            logger.info("English ASR %r read as %r", recognition.text, heard_text)
+        recognized_norm = normalize_english(heard_text)
+        score, _words = score_english(target_text, heard_text)
         intonation = None
         try:
             aspects, measured_pitch, intonation = _measure(
-                target_text, score, recognition, audio_path
+                target_text, score, recognition, audio_path, aligned
             )
         except Exception:  # noqa: BLE001
             logger.warning("English aspect scoring failed", exc_info=True)
@@ -257,7 +285,7 @@ class EvaluateEnglishUseCase:
         return EvaluationResult(
             target_text=target_text,
             target_hiragana=target_norm,
-            recognized_text=recognition.text,
+            recognized_text=heard_text,
             recognized_hiragana=recognized_norm,
             score=score,
             aspects=aspects,

@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.english_scoring import WORD_GATE, match_words, score_english
+from app.services.english_scoring import WORD_GATE, match_words, score_english, snap_transcript
 from app.services.scoring import score_pronunciation
 
 
@@ -23,11 +23,11 @@ def test_wrong_single_word_scores_zero():
 
 
 def test_asr_misspelling_keeps_partial_credit():
-    assert _score("articulate", "articulat") == 90
+    assert _score("articulate", "articulat") == 100  # sounds the same
     assert _ok("articulate", "articulat") == [("articulate", True)]
 
 
-def test_all_words_pass_equals_old_letter_cer():
+def test_all_words_pass_never_scores_below_old_letter_cer():
     for target, heard in [
         ("Nice to meet you", "nice to meat you"),
         ("Thank you very much", "thank you vary much"),
@@ -36,7 +36,26 @@ def test_all_words_pass_equals_old_letter_cer():
         old = score_pronunciation(
             target.lower().replace(" ", ""), heard.replace(" ", "")
         ).score
-        assert _score(target, heard) == old
+        assert _score(target, heard) >= old
+    assert _score("Nice to meet you", "uh nice to meet you") == 85  # filler still costs
+
+
+@pytest.mark.parametrize("target, heard", [
+    ("cat", "kat"), ("cat", "cad"), ("dog", "dok"), ("phone", "fone"),
+    ("night", "nait"), ("school", "skul"), ("knife", "naif"),
+    ("photograph", "fotograf"), ("hemorrhage", "hemoredge"),
+    ("technical", "teknikal"), ("I like it", "i laik it"),
+    ("Nice to meet you", "nais tu mit yu"), ("Thank you very much", "senkyu veri mat"),
+    ("subarachnoid hemorrhage", "SIRBERHAKNOY HEMORICH"),
+])
+def test_word_spelled_by_ear_passes(target, heard):
+    assert all(ok for _w, ok in _ok(target, heard))
+    assert _score(target, heard) >= 75
+
+
+def test_different_word_still_fails():
+    assert _ok("cat", "dog") == [("cat", False)]
+    assert _score("cat", "dog") == 0
 
 
 def test_asr_word_boundaries_do_not_matter():
@@ -48,10 +67,10 @@ def test_asr_word_boundaries_do_not_matter():
 
 
 def test_failed_word_loses_all_its_letters():
-    # "thank" (5 letters) heard as "sank": 2 errors -> 0.6 < gate.
-    # Old CER only took 2 letters off; now the whole word goes.
-    assert _score("Thank you very much", "sank you very much") == 69
-    assert _ok("Thank you very much", "sank you very much")[0] == ("thank", False)
+    # "very" heard as "happy": nothing alike -> the whole word goes.
+    # Old CER only took 3 letters off.
+    assert _score("Thank you very much", "thank you happy much") == 69
+    assert _ok("Thank you very much", "thank you happy much")[2] == ("very", False)
 
 
 def test_extra_words_still_cost_points():
@@ -93,7 +112,25 @@ def test_nothing_heard_scores_zero():
 
 
 def test_gate_value():
-    assert WORD_GATE == 0.75
+    assert WORD_GATE == 0.65
+
+
+def test_snap_writes_confirmed_words_as_the_target():
+    target = "subarachnoid hemorrhage"
+    heard = "SIRBERHAKNOY HEMORICH"
+    assert snap_transcript(target, heard, frozenset({0, 1})) == target
+    assert snap_transcript(target, heard, frozenset({1})) == "sirberhaknoy hemorrhage"
+    assert snap_transcript(target, heard, frozenset()) == heard.lower()
+
+
+def test_snap_keeps_extra_words_and_fills_dropped_ones():
+    assert snap_transcript("I like it", "i dont laik it", frozenset({0, 1, 2})) == "i dont like it"
+    assert snap_transcript("Nice to meet you", "uh nice to meat you", frozenset({0, 1, 2, 3})) == (
+        "uh nice to meet you"
+    )
+    assert snap_transcript("I like it", "", frozenset({0, 1, 2})) == "i like it"
+    # A snapped transcript scores the extra word like before.
+    assert _score("I like it", "i dont like it") == 43
 
 
 def test_empty_target_rejected():
@@ -106,3 +143,22 @@ def test_numbers_and_titles_are_scored_as_spoken():
     assert _score("I have 2 cats.", "i have twenty cats") < 100
     assert _score("Mr. Smith is here.", "mister smith is here") == 100
     assert _score("It costs $3.50.", "it costs three dollars fifty") == 100
+
+
+def test_heard_words_from_forced_alignment():
+    pytest.importorskip("torch")
+    import numpy as np
+
+    from app.services.english_alignment import align_syllables, heard_words
+    from app.services.english_intonation import analyze_sentence
+
+    vocab = ["<pad>", "|", "A", "C", "D", "G", "K", "O", "T"]
+    # Greedy hears "KAT" and then silence; "C" is the runner-up under K.
+    path = [0, 6, 0, 2, 0, 8] + [0] * 14
+    log_probs = np.full((len(path), len(vocab)), -10.0)
+    for t, tok in enumerate(path):
+        log_probs[t, tok] = -0.01
+    log_probs[1, 3] = -2.0
+    timing = align_syllables(analyze_sentence("cat dog"), log_probs, vocab, duration=0.4)
+    assert heard_words(timing) == frozenset({0})  # "cat" said, "dog" never was
+    assert heard_words(None) == frozenset()

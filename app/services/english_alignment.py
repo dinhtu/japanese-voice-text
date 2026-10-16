@@ -42,8 +42,19 @@ class SyllableTiming:
 # but misheard ones ("song" heard as SUM) around -4.3, skipped words at
 # -6.3 .. -13.5.
 MISSING_LOGPROB = -5.0
+# At or above this the word counts as said even when greedy decoding
+# spelled it by ear ("KAT", "HEMORICH"): below the said-but-misheard band
+# on purpose, so near misses pass; skipped words stay under MISSING_LOGPROB.
+HEARD_LOGPROB = -4.5
 # More than this share of missing words: the timing itself is unreliable.
 MAX_MISSING_SHARE = 0.5
+
+
+def heard_words(timing: SyllableTiming | None) -> frozenset[int]:
+    """Target word indices the forced path found clearly in the audio."""
+    if timing is None:
+        return frozenset()
+    return frozenset(i for i, c in enumerate(timing.confidence) if c >= HEARD_LOGPROB)
 
 
 def _syllable_letter_counts(analysis: SentenceAnalysis) -> list[list[int]]:
