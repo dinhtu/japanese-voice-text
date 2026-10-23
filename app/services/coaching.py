@@ -784,11 +784,13 @@ Nhiệm vụ của bạn là nhận vào một câu/đoạn văn tiếng Nhật 
 
 QUY TẮC BẮT BUỘC:
 1. KHÔNG thêm các lời chào hỏi xã giao, mở đầu hay kết bài (KHÔNG 'Dưới đây là...', 'Sure!', '---', hay tiêu đề Markdown như '### Step 1'). Bắt đầu ngay vào nội dung.
-2. Chia câu tiếng Nhật thành các cụm từ (cụm nghĩa/cụm từ vựng).
-3. Với mỗi cụm từ, cung cấp dạng đầu dòng (gạch/chấm tròn):
-   • Cụm từ tiếng Nhật (phiên âm Rōmaji): Đọc là "Phiên âm tiếng Việt tự nhiên". (Lưu ý: các lưu ý về trường âm, âm ngắt 「っ」, âm mũi 「ん」, nuốt âm/âm gió 「su/shi」, phát âm trợ từ 「를」/「を」 = "ô", 「は」 = "wa", 「へ」 = "e", v.v.).
-4. Thêm mục: "🎯 Từ/Cụm từ cần chú trọng phát âm:" chỉ rõ những từ hoặc hiện tượng âm thanh quan trọng nhất trong câu mà người học cần tập trung chú ý khi phát âm.
-5. Trình bày rõ ràng, dễ đọc, ngắn gọn, chính xác.
+2. CHỈ phân tích đúng các từ/cụm từ có mặt trong text đầu vào. TUYỆT ĐỐI KHÔNG tự bịa ra hoặc thêm các ký tự, từ vựng hay trợ từ không tồn tại trong text.
+3. Nếu text chỉ là một từ đơn hoặc cụm từ ngắn (ví dụ: 単語, ちかてつ, おはよう): CHỈ tạo đúng 01 dòng hướng dẫn cho từ đó, sau đó lập tức chuyển sang mục 🎯 và kết thúc.
+4. Với câu dài, chia câu tiếng Nhật thành các cụm từ (cụm nghĩa/cụm từ vựng). Với mỗi cụm từ, cung cấp dạng đầu dòng (chấm tròn •):
+   • Cụm từ tiếng Nhật (phiên âm Rōmaji): Đọc là "Phiên âm tiếng Việt tự nhiên". (Lưu ý: các lưu ý về trường âm, âm ngắt 「っ」, âm mũi 「ん」, nuốt âm/âm gió 「su/shi」, phát âm trợ từ 「を」 = "ô", 「は」 = "wa", 「へ」 = "e", v.v.).
+5. TUYỆT ĐỐI KHÔNG lặp lại bất kỳ cụm từ hay dòng hướng dẫn nào đã xuất hiện.
+6. Thêm mục: "🎯 Từ/Cụm từ cần chú trọng phát âm:" chỉ rõ những từ hoặc hiện tượng âm thanh quan trọng nhất trong câu mà người học cần tập trung chú ý khi phát âm.
+7. Trình bày rõ ràng, dễ đọc, ngắn gọn, chính xác.
 
 VÍ DỤ ĐẦU RA MONG MUỐN:
 Hướng dẫn phát âm từng cụm từ:
@@ -804,11 +806,13 @@ Your task is to take a Japanese sentence (text) and generate a concise, phrase-b
 
 MANDATORY RULES:
 1. DO NOT include conversational intro or outro (NO 'Sure!', 'Here is...', '---', or Markdown headers like '### Step 1'). Start directly with the guide.
-2. Break the sentence into natural phrases/meaningful chunks.
-3. For each chunk, use bullet points:
+2. ONLY analyze words/phrases present in the input text. DO NOT invent or add characters, words, or particles outside the text.
+3. If the input text is a single word or short phrase (e.g., 単語, ちかてつ, おはよう): provide ONLY ONE guide bullet for that word, then immediately proceed to 🎯 and stop.
+4. Break longer sentences into natural phrases/meaningful chunks. For each chunk, use bullet points:
    • Japanese phrase (Rōmaji): Read as "Phonetic reading". (Note: Important notes on long vowels, glottal stops, particle pronunciations like を=o, は=wa, silent vowels, etc.).
-4. Include a short section: "🎯 Key Focus Words for Pronunciation:" highlighting specific words or sound patterns requiring special attention.
-5. Keep it concise, clean, and formatted as plain readable text.
+5. DO NOT repeat any bullet points or guidance lines.
+6. Include a short section: "🎯 Key Focus Words for Pronunciation:" highlighting specific words or sound patterns requiring special attention.
+7. Keep it concise, clean, and formatted as plain readable text.
 
 DESIRED OUTPUT FORMAT EXAMPLE:
 Phrase-by-phrase pronunciation guide:
@@ -824,11 +828,13 @@ Phrase-by-phrase pronunciation guide:
 
 必須ルール:
 1. 挨拶や導入文、余計なマークダウン見出し（### Step 1 や --- など）は一切含めず、直接ガイドの内容を出力してください。
-2. テキストを自然な文節・フレーズに分割する。
-3. 各フレーズについて、箇条書き（•）で以下を出力する：
+2. 入力テキスト（text）に存在する単語・フレーズのみを解説してください。テキストに含まれない文字や助詞を勝手に追加しないでください。
+3. テキストが単語または短いフレーズ（例: 単語、ちかてつ、おはよう）の場合は、その単語に対する解説を1行だけ出力し、直ちに「🎯」のセクションに進んで終了してください。
+4. 長い文はテキストを自然な文節・フレーズに分割し、各フレーズについて箇条書き（•）で以下を出力する：
    • 日本語フレーズ (ローマ字表記): 読み方・発音のコツ（長音、促音「っ」、撥音「ん」、助詞「を」「は」「へ」の読み、無声化など）。
-4. 「🎯 発音で特に重点を置くべき単語・フレーズ」というセクションを設け、注意すべき箇所とその理由を明記する。
-5. 分かりやすく、丁寧に整理して出力すること。
+5. 同じフレーズや解説行を絶対に繰り返さないこと。
+6. 「🎯 発音で特に重点を置くべき単語・フレーズ」というセクションを設け、注意すべき箇所とその理由を明記する。
+7. 分かりやすく、丁寧に整理して出力すること。
 
 出力フォーマット例:
 フレーズごとの発音ガイド:
@@ -844,11 +850,13 @@ Phrase-by-phrase pronunciation guide:
 
 필수 규칙:
 1. 인사말이나 서론, 불필요한 마크다운 헤더(### Step 1, --- 등)를 제외하고 즉시 가이드 내용을 출력하세요.
-2. 일본어 문장을 구절 단위로 분할합니다.
-3. 각 구절별로 글머리 기호(•)를 사용하여 작성합니다:
+2. 입력된 텍스트(text)에 존재하는 단어/구절만 해설하세요. 텍스트에 없는 문자나 조사를 임의로 추가하지 마세요.
+3. 텍스트가 단일 단어이거나 짧은 구절(예: 単語, ちかてつ, おはよう)인 경우 해당 단어에 대해 단 1줄의 가이드만 작성한 후 즉시 🎯 섹션으로 넘어가 종료하세요.
+4. 긴 문장은 구절 단위로 분할하여 각 구절별로 글머리 기호(•)를 사용하여 작성합니다:
    • 일본어 구절 (로마지 표기): 한글 발음 가이드 + 발음 주의사항 (장음, 촉음, 탁음, 조사 발음 を=오, は=와, 무성화 등).
-4. 별도의 항목 "🎯 발음 시 특히 중점적으로 주의해야 할 단어/구절:"을 추가하여 학습자가 가장 신경 써서 연습해야 할 부분을 명시하세요.
-5. 읽기 쉽고 명확하게 작성하세요.
+5. 동일한 구절이나 해설 문장을 절대 반복하지 마세요.
+6. 별도의 항목 "🎯 발음 시 특히 중점적으로 주의해야 할 단어/구절:"을 추가하여 학습자가 가장 신경 써서 연습해야 할 부분을 명시하세요.
+7. 읽기 쉽고 명확하게 작성하세요.
 
 출력 예시:
 구절별 발음 가이드:
@@ -864,11 +872,13 @@ Phrase-by-phrase pronunciation guide:
 
 必填規則：
 1. 請勿包含任何打招呼、開場白或額外的 Markdown 標題（如 ### Step 1 或 ---）。直接開始輸出指導內容。
-2. 將日文句子拆分為自然的詞組。
-3. 針對每個詞組使用項目符號（•）提供：
+2. 僅分析輸入文字（text）中實際存在的詞組。切勿自行虛構或添加文字之外的字元、單字或助詞。
+3. 若輸入僅為單一詞彙或極短語句（例如：単語、ちかてつ、おはよう）：僅為該詞彙輸出 1 行指導，隨後立即進入「🎯」區塊並結束。
+4. 長句請拆分為自然的詞組，針對每個詞組使用項目符號（•）提供：
    • 日文詞組 (羅馬字): 發音指導與標注（長音、促音、撥音、助詞發音如 を=o、は=wa、無聲化等）。
-4. 包含一個獨立區塊「🎯 需重點注意發音的詞彙/短語：」，明確指明學習者在朗讀該句子時最需要特別注意發音的詞彙與原因。
-5. 條理清晰，易於閱讀。
+5. 嚴禁重複輸出相同的詞組或指導語句。
+6. 包含一個獨立區塊「🎯 需重點注意發音的詞彙/短語：」，明確指明學習者在朗讀該句子時最需要特別注意發音的詞彙與原因。
+7. 條理清晰，易於閱讀。
 
 期望輸出格式範例：
 逐句發音指導：
@@ -1218,47 +1228,59 @@ TEXT_GUIDE_MEANING_RULES: dict[str, str] = {
 ĐỊNH DẠNG TRẢ VỀ (BẮT BUỘC):
 - Dòng đầu tiên: <meaning>Nghĩa của từ/câu đang tìm, dịch tự nhiên sang tiếng Việt (1 câu ngắn)</meaning>. Nếu là một từ đơn có nhiều nghĩa, ghi nghĩa phổ biến nhất trước, các nghĩa khác cách nhau bằng dấu "; ".
 - Từ dòng thứ hai: toàn bộ hướng dẫn phát âm theo các quy tắc ở trên (văn bản thuần). KHÔNG lặp lại phần nghĩa.
-- PHẢI hướng dẫn HẾT toàn bộ câu, từ cụm đầu tiên đến dấu câu cuối cùng, không được dừng giữa chừng. Câu dài thì gộp thành các cụm lớn hơn và mỗi lưu ý chỉ 1 câu ngắn để đủ chỗ.""",
+- CHỈ phân tích các từ có mặt trong text đầu vào, TUYỆT ĐỐI KHÔNG tự ý bịa thêm từ hay ký tự ngoài text. KHÔNG lặp lại bất kỳ dòng nào.
+- Nếu text là từ đơn hoặc cụm từ ngắn: CHỈ tạo đúng 01 dòng hướng dẫn cho từ đó rồi lập tức chuyển sang mục 🎯 và kết thúc. Nếu là câu dài: hướng dẫn đầy đủ từ cụm đầu đến cụm cuối của câu (gộp thành các cụm lớn hơn và mỗi lưu ý chỉ 1 câu ngắn để đủ chỗ).""",
     "en": """
 
 OUTPUT FORMAT (MANDATORY):
 - First line: <meaning>The meaning of the searched word/sentence, translated naturally into English (one short sentence)</meaning>. For a single word with several senses, put the most common first and separate the others with "; ".
 - From the second line: the full pronunciation guide following the rules above (plain text). DO NOT repeat the meaning.
-- You MUST cover the WHOLE text, from the first phrase to the final punctuation, never stopping halfway. For long text, use bigger chunks and keep each note to one short sentence so everything fits.""",
+- ONLY guide words that appear in the input text. DO NOT invent extra words, characters, or particles outside the text. DO NOT repeat any lines.
+- If text is a single word or short phrase: output ONLY 1 guide bullet for that word, then proceed immediately to 🎯 and finish. For longer sentences: cover the full text from the first to the last phrase (use bigger chunks and one-sentence notes so everything fits).""",
     "jp": """
 
 出力形式（必須）:
 - 1行目: <meaning>検索された単語・文の意味を自然な日本語で（短い1文）</meaning>。テキストが日本語の場合は、やさしい言葉で意味を説明してください。複数の意味がある単語は、最も一般的な意味を先に書き、他の意味は「; 」で区切ってください。
 - 2行目以降: 上記ルールに従った発音ガイド全体（プレーンテキスト）。意味を繰り返さないでください。
-- 最初のフレーズから最後の句読点まで、テキスト全体を必ず最後まで解説してください。長い文はフレーズを大きめにまとめ、各注意点は短い1文にしてください。""",
+- 入力テキストに存在する語句のみを解説し、テキスト外の文字や語句を勝手に追加しないでください。同じ行を絶対に重複出力しないでください。
+- テキストが単語や短いフレーズの場合は1行のみ解説して直ちに「🎯」に進み終了してください。長い文の場合は最初のフレーズから最後のフレーズまで解説してください（各注意点は短い1文）。""",
     "ko": """
 
 출력 형식(필수):
 - 첫 줄: <meaning>검색한 단어/문장의 뜻을 자연스러운 한국어로 번역 (짧은 1문장)</meaning>. 입력이 한국어이면 쉬운 말로 뜻을 설명하세요. 뜻이 여러 개인 단어는 가장 일반적인 뜻을 먼저 쓰고 나머지는 "; "로 구분하세요.
 - 둘째 줄부터: 위 규칙에 따른 발음 가이드 전체 (일반 텍스트). 뜻을 반복하지 마세요.
-- 첫 구절부터 마지막 문장 부호까지 문장 전체를 반드시 끝까지 설명하세요. 긴 문장은 구절을 크게 묶고 각 주의사항은 짧은 1문장으로 쓰세요.""",
+- 입력 텍스트에 포함된 단어/구절만 설명하고 텍스트 외의 글자나 단어를 임의로 추가하지 마세요. 동일한 내용을 절대 중복 출력하지 마세요.
+- 단어 또는 짧은 구절인 경우 1줄만 가이드하고 즉시 🎯로 이동하여 종료하세요. 긴 문장인 경우 첫 구절부터 마지막 구절까지 설명하세요(주의사항은 짧은 1문장).""",
     "tw": """
 
 輸出格式（必填）：
 - 第一行：<meaning>所搜尋詞語/句子的意思，以自然的繁體中文翻譯（一句簡短的話）</meaning>。若輸入本身是中文，請用淺白的話解釋意思。若單字有多個意思，先寫最常用的，其餘以「; 」分隔。
 - 第二行起：依上述規則撰寫的完整發音指導（純文字）。不要重複意思。
-- 必須從第一個詞組講解到最後一個標點，涵蓋整段文字，不可中途停止。句子較長時請合併成較大的詞組，每條注意事項只寫一句短句。""",
+- 僅講解輸入文本中包含的字詞，嚴禁自行捏造額外字詞。嚴禁重複輸出相同內容。
+- 若為單詞或極短語句，僅輸出 1 行指導便立即進入「🎯」並結束。長句請完整涵蓋從頭至尾的所有詞組（注意事項請保持簡短一句話）。""",
 }
 TEXT_GUIDE_MEANING_RULES["ja"] = TEXT_GUIDE_MEANING_RULES["jp"]
 TEXT_GUIDE_MEANING_RULES["zh"] = TEXT_GUIDE_MEANING_RULES["tw"]
 TEXT_GUIDE_MEANING_RULES["zh-tw"] = TEXT_GUIDE_MEANING_RULES["tw"]
 
-# Output budget grows with the text: a 70-character sentence needs several
-# thousand tokens of phrase-by-phrase guide, far more than the old fixed 900.
-TEXT_GUIDE_MIN_TOKENS = 900
+# Output budget grows with the text: short words need only ~300 tokens,
+# while long sentences can scale up to TEXT_GUIDE_MAX_TOKENS.
+TEXT_GUIDE_MIN_TOKENS = 300
 TEXT_GUIDE_TOKENS_PER_CHAR = 45
 TEXT_GUIDE_MAX_TOKENS = 4096
 
 
 def text_guide_token_budget(text: str) -> int:
+    clean_len = len(text.strip())
+    if clean_len <= 6:
+        # Từ đơn hoặc cụm rất ngắn (VD: ちかてつ, はし, 猫): cấp 300 tokens là đủ,
+        # tránh cấp quá nhiều token khiến mô hình bị bẫy lặp lại (repetition loop).
+        return TEXT_GUIDE_MIN_TOKENS
+    if clean_len <= 15:
+        return 500
     return max(
         TEXT_GUIDE_MIN_TOKENS,
-        min(TEXT_GUIDE_MAX_TOKENS, 600 + TEXT_GUIDE_TOKENS_PER_CHAR * len(text.strip())),
+        min(TEXT_GUIDE_MAX_TOKENS, 600 + TEXT_GUIDE_TOKENS_PER_CHAR * clean_len),
     )
 
 
@@ -1275,8 +1297,44 @@ class TextReadingGuide:
 _GUIDE_PREAMBLE_RE = re.compile(r"^(?:(?:Sure|Certainly)!|Here['’]s\b|Here is\b)[^\n]*\n+", re.IGNORECASE)
 
 
+def _deduplicate_guide_lines(text: str) -> str:
+    """Loại bỏ các dòng bullet point / nội dung bị lặp lại do hiện tượng loop của LLM."""
+    lines = text.split("\n")
+    cleaned_lines: list[str] = []
+    prev_stripped = ""
+    seen_phrase_bullets: set[str] = set()
+    in_focus_section = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+
+        if "🎯" in stripped:
+            in_focus_section = True
+
+        # Bỏ qua dòng trùng hệt dòng không rỗng trước đó
+        if stripped == prev_stripped:
+            continue
+
+        # Ở phần hướng dẫn từng cụm từ (trước mục 🎯): loại bỏ nếu cụm từ đó đã được giải thích ở bullet trước
+        if not in_focus_section and stripped.startswith(("•", "·", "*", "-")):
+            colon_idx = stripped.find(":")
+            bullet_key = stripped[:colon_idx].strip() if colon_idx != -1 else stripped
+            if bullet_key in seen_phrase_bullets:
+                continue
+            seen_phrase_bullets.add(bullet_key)
+
+        cleaned_lines.append(line)
+        prev_stripped = stripped
+
+    return "\n".join(cleaned_lines)
+
+
 def _clean_guide_text(value: str) -> str:
-    return _GUIDE_PREAMBLE_RE.sub("", value.strip()).strip().strip('"`\n ')
+    cleaned = _GUIDE_PREAMBLE_RE.sub("", value.strip()).strip().strip('"`\n ')
+    return _deduplicate_guide_lines(cleaned)
 
 
 _MEANING_TAG_RE = re.compile(r"<meaning>(.*?)(?:</meaning>|\n|$)", re.DOTALL | re.IGNORECASE)
@@ -1392,7 +1450,12 @@ async def generate_text_reading_guide(
             ],
             think=False,
             stream=False,
-            options={"temperature": 0.3, "num_predict": num_predict},
+            options={
+                "temperature": 0.3,
+                "top_p": 0.9,
+                "repeat_penalty": 1.18,
+                "num_predict": num_predict,
+            },
         )
     except ResponseError as e:
         if e.status_code == 404:

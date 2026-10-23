@@ -347,3 +347,22 @@ def test_text_guide_token_budget_grows_with_text():
     assert text_guide_token_budget("はし") == TEXT_GUIDE_MIN_TOKENS
     assert text_guide_token_budget(long_text) > 3000
     assert text_guide_token_budget(long_text * 3) == TEXT_GUIDE_MAX_TOKENS
+
+
+def test_deduplicate_guide_lines_removes_repetition_loops():
+    from app.services.coaching import _deduplicate_guide_lines
+
+    looping_text = (
+        "• ちかてつ (chika tetsu): Đọc là \"Chi-ka tết\". (Lưu ý: phát âm dứt khoát).\n"
+        "• な (na): Đọc là \"na\". (Lưu ý: phát âm ngắn).\n"
+        "• な (na): Đọc là \"na\". (Lưu ý: phát âm ngắn).\n"
+        "• な (na): Đọc là \"na\". (Lưu ý: phát âm ngắn).\n"
+        "🎯 Từ/Cụm từ cần chú trọng phát âm:\n"
+        "- ちかてつ: Lưu ý phát âm chuẩn."
+    )
+    cleaned = _deduplicate_guide_lines(looping_text)
+    assert cleaned.count("• な (na)") == 1
+    assert "• ちかてつ (chika tetsu)" in cleaned
+    assert "🎯 Từ/Cụm từ cần chú trọng phát âm:" in cleaned
+    assert "- ちかてつ: Lưu ý phát âm chuẩn." in cleaned
+
