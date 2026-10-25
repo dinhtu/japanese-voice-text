@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
@@ -13,9 +14,15 @@ from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse, TextGuideResponse
+from app.schemas.english_assessment import (
+    EnglishEvaluateResponse,
+    GoptAssessment,
+    OllamaAssessment,
+    ReadingAssessment,
+)
 from app.schemas.english_intonation import build_intonation
 from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
-from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
+from app.schemas.pronunciation import MoraStatusItem
 from app.services.coaching import (
     SUPPORTED_LANGUAGES,
     CoachingUnavailableError,
@@ -24,6 +31,8 @@ from app.services.coaching import (
     generate_text_reading_guide,
 )
 from app.services.english_asr import EnglishASRService, get_english_asr_service
+from app.services.english_assessment import coach_facts
+from app.services.english_ollama_assessment import assess_with_ollama
 from app.services.english_intonation import (
     IntonationResult,
     SentenceAnalysis,
@@ -78,13 +87,51 @@ def _word_status(
     return items
 
 
-@router.post("/evaluate", response_model=EvaluateResponse)
+def _assessment_lang(lang: str | None) -> str:
+    """Language of reading_assessment's improvement messages (vi / en)."""
+    lang = (lang or "vi").strip().lower()
+    return lang if lang in {"vi", "en"} else "en"
+
+
+def _assessment_fields(result) -> dict:
+    """reading_assessment / gopt_assessment, validated; a report that does
+    not fit its schema is dropped (logged) instead of failing /evaluate."""
+    out = {}
+    for key, model in (("reading_assessment", ReadingAssessment), ("gopt_assessment", GoptAssessment)):
+        data = getattr(result, key, None)
+        if data is None:
+            continue
+        try:
+            # Round-trip through JSON so a stray numpy scalar in a free-form
+            # detail dict fails here, not later in response serialization.
+            plain = json.loads(json.dumps(data, default=lambda v: v.item()))
+            out[key] = model.model_validate(plain)
+        except Exception:  # noqa: BLE001
+            logger.warning("English %s did not validate; omitted", key, exc_info=True)
+    return out
+
+
+async def _ollama_field(result, settings: Settings, lang: str) -> OllamaAssessment | None:
+    """ollama_assessment, or None if even its error report cannot be built:
+    the LLM is an optional extra and never fails /evaluate."""
+    try:
+        data = await assess_with_ollama(
+            result.reading_assessment, result.gopt_assessment, result.intonation, settings, lang
+        )
+        return OllamaAssessment.model_validate(data)
+    except Exception:  # noqa: BLE001
+        logger.warning("English ollama_assessment failed; omitted", exc_info=True)
+        return None
+
+
+@router.post("/evaluate", response_model=EnglishEvaluateResponse)
 async def evaluate_english(
     text: str = Form(...),
     audio: UploadFile = File(...),
+    lang: str = Form("vi", description="reading_assessment / ollama_assessment text: vi | en"),
     use_case: EvaluateEnglishUseCase = Depends(get_en_use_case),
     settings: Settings = Depends(get_settings),
-) -> EvaluateResponse:
+) -> EnglishEvaluateResponse:
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
     suffix = _validate_upload(audio)
@@ -99,9 +146,9 @@ async def evaluate_english(
         with os.fdopen(fd, "wb") as f:
             f.write(content)
         with gpu_session():
-            result = use_case.execute(text.strip(), tmp_path)
+            result = use_case.execute(text.strip(), tmp_path, lang=_assessment_lang(lang))
             recognized_words = word_pitch_pattern(result.recognized_hiragana)
-            response = EvaluateResponse.from_result(result, recognized_words)
+            response = EnglishEvaluateResponse.from_result(result, recognized_words)
             intonation = result.intonation
             analysis = intonation.analysis if intonation is not None else analyze_sentence(result.target_text)
             update = {
@@ -111,7 +158,13 @@ async def evaluate_english(
             }
             if analysis.words:
                 update["intonation"] = build_intonation(analysis, intonation)
-            return response.model_copy(update=update)
+            update.update(_assessment_fields(result))
+            response = response.model_copy(update=update)
+        # After gpu_session: wav2vec2 is offloaded, so the LLM has the VRAM.
+        ollama = await _ollama_field(result, settings, _assessment_lang(lang))
+        if ollama is not None:
+            response = response.model_copy(update={"ollama_assessment": ollama})
+        return response
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
@@ -187,6 +240,10 @@ async def coach_english(
             duration_issues=[],
             pitch_points=pitch_points or None,
         )
+        try:
+            facts.extra_lines = coach_facts(result.reading_assessment)
+        except Exception:  # noqa: BLE001 -- extra facts must not cost the comment
+            logger.warning("English coach facts failed; using the basic facts", exc_info=True)
         comment = await generate_comment(
             facts, settings, lang=lang, target_lang="en"
         )

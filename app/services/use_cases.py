@@ -43,6 +43,9 @@ class EvaluationResult:
     recognized_reading: str | None = None
     # English only: app.services.english_intonation.IntonationResult
     intonation: object | None = None
+    # English only: app.services.english_assessment dicts (additive reports)
+    reading_assessment: dict | None = None
+    gopt_assessment: dict | None = None
 
 
 def _speech_span(windows: list[tuple[float, float]]) -> float | None:

@@ -34,6 +34,7 @@ from app.services.english_text import (
     english_words,
     expand_for_speech,
     normalize_english,
+    speech_tokens,
     word_pitch_pattern,
 )
 from app.services.scoring import ScoreResult
@@ -149,6 +150,72 @@ _NO_VOICE_MESSAGES = {
 }
 
 
+def _gopt_detail(
+    words: list[str],
+    recognition: EnglishRecognition,
+    timing: SyllableTiming | None,
+    initialisms: list[bool] | None = None,
+):
+    """GOPT word / phone heads for `reading_assessment`'s companion report,
+    phone windows cut from the forced-aligned words when there are any."""
+    if recognition.log_probs is None or not recognition.vocab:
+        return None
+    try:
+        from app.services.english_gopt import get_english_gopt_service
+
+        frames = None
+        if timing is not None and timing.aligned and len(timing.windows) == len(words) and recognition.duration > 0:
+            per_s = recognition.log_probs.shape[0] / recognition.duration
+            frames = [
+                (int(w[0][0] * per_s), int(round(w[-1][1] * per_s))) for w in timing.windows
+            ]
+        return get_english_gopt_service().score_detailed(
+            words, recognition.log_probs, recognition.vocab, frames, initialisms
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("English GOPT detail failed", exc_info=True)
+        return None
+
+
+def _reports(
+    target_text: str,
+    score: ScoreResult,
+    recognition: EnglishRecognition,
+    aligned: tuple[SentenceAnalysis, SyllableTiming | None],
+    intonation: IntonationResult | None,
+    vad: VadResult | None,
+    lang: str,
+) -> tuple[dict, dict]:
+    """`reading_assessment` and `gopt_assessment`; the legacy fields never
+    depend on these."""
+    from app.services.english_assessment import assess_gopt, assess_reading
+    from app.services.english_scoring import align_word_tokens
+
+    analysis, timing = aligned
+    # The raw ASR words, not heard_text: re-spelling there runs on the
+    # letter segmentation, which can hand a skipped "a" the "e" of "like".
+    recognized = normalize_english(recognition.text)
+    matches, extras = align_word_tokens(target_text, recognized)
+    reading = assess_reading(
+        target_text=target_text,
+        recognized_text=recognized,
+        matches=matches,
+        extras=extras,
+        analysis=analysis,
+        timing=timing,
+        confirmed=heard_words(timing),
+        intonation=intonation,
+        vad=vad,
+        duration=recognition.duration,
+        legacy_score=score.score,
+        lang=lang,
+    )
+    # Same tokenizer as the matches, so the flags line up word for word.
+    initialisms = [t.initialism for t in speech_tokens(target_text)[1]]
+    detail = _gopt_detail([m.target for m in matches], recognition, timing, initialisms)
+    return reading, assess_gopt(detail, reading, score.score)
+
+
 def _no_voice(
     target_text: str,
     target_norm: str,
@@ -156,6 +223,7 @@ def _no_voice(
     sample_rate: int,
     vad: VadResult,
     presence: VoicePresence,
+    lang: str = "vi",
 ) -> EvaluationResult:
     """Silence, noise or a whisper: nothing heard, nothing scored."""
     logger.info(
@@ -174,6 +242,17 @@ def _no_voice(
         method=f"no-voice:{presence.verdict}", vad_method=vad.method,
         pause_count=0, speech_ratio=vad.speech_ratio,
     )
+    reading = gopt_report = None
+    try:
+        from app.services.english_assessment import assess_gopt, no_voice_reading
+
+        reading = no_voice_reading(
+            target_text, [t.text for t in speech_tokens(target_text)[1]],
+            round(len(samples) / sample_rate, 2), presence.verdict, legacy_score=0, lang=lang,
+        )
+        gopt_report = assess_gopt(None, reading, 0)
+    except Exception:  # noqa: BLE001
+        logger.warning("English no-voice assessment failed", exc_info=True)
     return EvaluationResult(
         target_text=target_text,
         target_hiragana=target_norm,
@@ -184,6 +263,8 @@ def _no_voice(
         audio_duration=round(len(samples) / sample_rate, 2),
         inference_ms=0.0,
         measured_pitch=_word_pitch(target_text, None),
+        reading_assessment=reading,
+        gopt_assessment=gopt_report,
     )
 
 
@@ -312,7 +393,7 @@ class EvaluateEnglishUseCase:
     def __init__(self, asr: EnglishASRService):
         self.asr = asr
 
-    def execute(self, target_text: str, audio_path: str | Path) -> EvaluationResult:
+    def execute(self, target_text: str, audio_path: str | Path, lang: str = "vi") -> EvaluationResult:
         # Numbers / titles written out first: "Room 101" has three more words.
         target_norm = normalize_english(expand_for_speech(target_text))
         if not target_norm:
@@ -323,7 +404,7 @@ class EvaluateEnglishUseCase:
         if vad is not None:
             presence = check_voice(samples, sample_rate, vad)
             if not presence.voiced:
-                return _no_voice(target_text, target_norm, samples, sample_rate, vad, presence)
+                return _no_voice(target_text, target_norm, samples, sample_rate, vad, presence, lang)
 
         recognition = self.asr.recognize(audio_path)
         aligned = _align(target_text, recognition)
@@ -354,6 +435,14 @@ class EvaluateEnglishUseCase:
             )
             measured_pitch = _word_pitch(target_text, None)
 
+        reading = gopt_report = None
+        try:
+            reading, gopt_report = _reports(
+                target_text, score, recognition, aligned, intonation, vad, lang
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("English reading / GOPT assessment failed", exc_info=True)
+
         return EvaluationResult(
             target_text=target_text,
             target_hiragana=target_norm,
@@ -365,4 +454,6 @@ class EvaluateEnglishUseCase:
             inference_ms=round(recognition.inference_time * 1000, 1),
             measured_pitch=measured_pitch,
             intonation=intonation,
+            reading_assessment=reading,
+            gopt_assessment=gopt_report,
         )

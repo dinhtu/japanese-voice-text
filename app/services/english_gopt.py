@@ -21,7 +21,14 @@ from pathlib import Path
 import numpy as np
 
 from app.core.config import ROOT_DIR, Settings, get_settings
-from app.services.english_g2p import PHONES, PHONE_TO_LETTER, phone_ids, text_phones
+from app.services.english_g2p import (
+    PHONE_TO_ID,
+    PHONE_TO_LETTER,
+    PHONES,
+    phone_ids,
+    text_phones,
+    word_phones,
+)
 from app.services.gopt_model import (
     GOPT,
     GOPT_FEAT_DIM,
@@ -132,6 +139,100 @@ def build_gopt_features(
     return feat[np.newaxis], phn[np.newaxis]
 
 
+def _gopt_phones(cmu: list[str]) -> list[str]:
+    phones = ["SH" if p == "ZH" else p for p in (p.rstrip("012") for p in cmu)]
+    return [p for p in phones if p in PHONE_TO_ID]
+
+
+def word_cmu_phones(spoken: str, initialism: bool = False) -> list[str]:
+    """Stress-stripped CMUdict phones of one spoken word (first entry; ZH
+    folded into SH like PHONES), or english_g2p's spelling rules. An
+    initialism ("U.S.") is its letter names, not the word "us"."""
+    from app.services.english_lexicon import _cmudict, _letter_name
+
+    letters = spoken.replace("'", "")
+    if initialism:
+        names = [_letter_name(ch) for ch in letters]
+        if all(names):
+            phones = _gopt_phones([p for name in names for p in name])
+            if phones:
+                return phones
+    entries = _cmudict().get(spoken) or _cmudict().get(letters)
+    if entries:
+        phones = _gopt_phones(entries[0])
+        if phones:
+            return phones
+    return word_phones(letters)
+
+
+def build_word_gopt_features(
+    log_probs: np.ndarray,
+    words: list[list[str]],
+    vocab: list[str],
+    word_frames: list[tuple[int, int]] | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[list[int]]] | None:
+    """Like build_gopt_features, but phones come per word and, with
+    `word_frames` (start, end frame per word, from forced alignment), each
+    phone's window is a share of its own word instead of a share of the
+    whole clip. Returns (1, 50, 84) features, (1, 50) phone ids and, per
+    word, the sequence slots of its phones (empty when truncated away)."""
+    n_frames = log_probs.shape[0] if log_probs.ndim == 2 else 0
+    if n_frames == 0 or not any(words):
+        return None
+    if word_frames is not None and len(word_frames) != len(words):
+        word_frames = None
+    if word_frames is None:
+        total = sum(len(p) for p in words) or 1
+        word_frames, done = [], 0
+        for phones in words:
+            word_frames.append((int(done * n_frames / total), int((done + len(phones)) * n_frames / total)))
+            done += len(phones)
+    feat = np.zeros((GOPT_SEQ_LEN, GOPT_FEAT_DIM), dtype=np.float64)
+    phn = np.full(GOPT_SEQ_LEN, -1, dtype=np.int64)
+    slots: list[list[int]] = []
+    slot = 0
+    for phones, (lo, hi) in zip(words, word_frames):
+        if slot + len(phones) > GOPT_SEQ_LEN:
+            slots.append([])  # GOPT sees 50 phones at most
+            slot = GOPT_SEQ_LEN
+            continue
+        lo = min(max(0, int(lo)), n_frames - 1)
+        hi = min(max(lo + 1, int(hi)), n_frames)
+        own = []
+        for k, phone in enumerate(phones):
+            start = lo + int(k * (hi - lo) / len(phones))
+            end = max(start + 1, lo + int((k + 1) * (hi - lo) / len(phones)))
+            vec = _lpp_lpr(log_probs[start:min(end, n_frames)], phone, vocab)
+            feat[slot] = (vec - LIBRISPEECH_FEAT_MEAN) / LIBRISPEECH_FEAT_STD
+            phn[slot] = min(PHONE_TO_ID.get(phone, PHONE_TO_ID["AH"]), 38)
+            own.append(slot)
+            slot += 1
+        slots.append(own)
+    if not np.any(phn >= 0):
+        return None
+    return feat[np.newaxis], phn[np.newaxis], slots
+
+
+@dataclass(frozen=True)
+class GoptWord:
+    index: int
+    phones: tuple[str, ...]
+    # GOPT word heads (0-100); None when the word fell past 50 phones.
+    accuracy: float | None
+    stress: float | None
+    total: float | None
+    phone_scores: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True)
+class GoptDetail:
+    scores: GoptScores
+    words: tuple[GoptWord, ...]
+    phone_count: int
+    truncated: bool
+    feature_source: str  # "forced_alignment" | "proportional"
+
+
 def _to_100(value: float) -> float:
     """SpeechOcean labels are 0-10; GOPT trains on label/5 so raw ~0-2."""
     raw = float(value)
@@ -214,6 +315,67 @@ class EnglishGoptService:
             fluency=_to_100(flu),
             intonation=_to_100(pro),
             overall=_to_100(tot),
+        )
+
+    def score_detailed(
+        self,
+        words: list[str],
+        log_probs: np.ndarray,
+        vocab: list[str],
+        word_frames: list[tuple[int, int]] | None = None,
+        initialisms: list[bool] | None = None,
+    ) -> GoptDetail | None:
+        """Utterance, word and phone heads for the target's spoken `words`
+        (english_text.speech_tokens order). Separate from score(), which
+        the legacy aspect bars keep using unchanged."""
+        if not self.load() or self._model is None:
+            return None
+        flags = initialisms if initialisms is not None and len(initialisms) == len(words) else [False] * len(words)
+        phones = [word_cmu_phones(w, f) for w, f in zip(words, flags)]
+        built = build_word_gopt_features(log_probs, phones, vocab, word_frames)
+        if built is None:
+            return None
+        import torch
+
+        feat, phn, slots = built
+        device = next(self._model.parameters()).device
+        with torch.inference_mode():
+            u1, u2, u3, u4, u5, p, w1, w2, w3 = self._model(
+                torch.from_numpy(feat).float().to(device),
+                torch.from_numpy(phn).to(device),
+            )
+        p, w1, w2, w3 = (t.reshape(-1).cpu().numpy() for t in (p, w1, w2, w3))
+        out = []
+        for i, (word_phones_, own) in enumerate(zip(phones, slots)):
+            if not own:
+                out.append(GoptWord(i, tuple(word_phones_), None, None, None))
+                continue
+            # SpeechOcean word labels sit on every phone of the word.
+            out.append(GoptWord(
+                index=i,
+                phones=tuple(word_phones_),
+                accuracy=_to_100(float(np.mean(w1[own]))),
+                stress=_to_100(float(np.mean(w2[own]))),
+                total=_to_100(float(np.mean(w3[own]))),
+                phone_scores=tuple(_to_100(float(p[s])) for s in own),
+            ))
+        scores = GoptScores(
+            pronunciation=_to_100(u1.reshape(-1)[0].item()),
+            completeness=_to_100(u2.reshape(-1)[0].item()),
+            fluency=_to_100(u3.reshape(-1)[0].item()),
+            intonation=_to_100(u4.reshape(-1)[0].item()),
+            overall=_to_100(u5.reshape(-1)[0].item()),
+        )
+        return GoptDetail(
+            scores=scores,
+            words=tuple(out),
+            phone_count=sum(len(s) for s in slots),
+            truncated=any(ph and not s for ph, s in zip(phones, slots)),
+            feature_source=(
+                "forced_alignment"
+                if word_frames is not None and len(word_frames) == len(words)
+                else "proportional"
+            ),
         )
 
 

@@ -490,6 +490,8 @@ async function evaluate(wav) {
   const formData = new FormData();
   formData.append("text", target.text);
   formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
+  // English reports (improvements / Ollama reasons) follow the coach language.
+  if (TARGET_LANG === "en" && el.coachLang) formData.append("lang", el.coachLang.value);
 
   try {
     const response = await fetch(API_URL, { method: "POST", body: formData });
@@ -671,7 +673,196 @@ function renderResult(result) {
     el.diffsList.replaceChildren(...items);
   }
 
+  if (TARGET_LANG === "en") renderComparison(result);
   el.result.hidden = false;
+}
+
+/* ------------------------------------------- Score reports, side by side */
+
+const CMP_STATUS = {
+  gated: "Không chấm (đọc sai nhiều từ)",
+  insufficient_evidence: "Thiếu dữ liệu",
+  not_assessed: "Không áp dụng",
+  unavailable: "Không chạy được",
+  disabled: "Đã tắt",
+  invalid_output: "Trả lời không hợp lệ",
+  no_voice: "Không có giọng",
+  skipped: "Bỏ qua",
+  content_mismatch: "Đọc sai nhiều từ",
+  complete: "Đủ tiêu chí",
+  partial_assessment: "Thiếu một số tiêu chí",
+  scored: "Đã chấm",
+};
+
+const CMP_WORD = {
+  correct: "Đúng",
+  mispronounced: "Gần đúng",
+  substituted: "Đọc sai",
+  omitted: "Bỏ sót",
+};
+
+const CMP_CRITERIA = [
+  ["content_accuracy", "Đọc đúng nội dung"],
+  ["phoneme_accuracy", "Phát âm"],
+  ["word_stress", "Trọng âm từ"],
+  ["intonation", "Ngữ điệu"],
+  ["fluency", "Trôi chảy"],
+  ["rhythm_and_linking", "Nhịp, nối âm"],
+];
+
+const fmtScore = (value) => (value == null ? null : Number(value).toFixed(1));
+
+/** One table cell: coloured number, or why there is none. */
+function cmpCell(value, { status = null, sub = null, subLabel = "" } = {}) {
+  if (value == null) {
+    const why = status ? CMP_STATUS[status] || status : "—";
+    return `<td><span class="cmp__na">${escapeHtml(why)}</span></td>`;
+  }
+  const n = Math.min(100, Math.max(0, Number(value)));
+  const extra = sub == null
+    ? ""
+    : `<span class="cmp__sub">${escapeHtml(subLabel)} ${escapeHtml(fmtScore(sub))}</span>`;
+  return `<td><span class="cmp__num" data-tone="${aspectTone(n)}">${n.toFixed(1)}</span>${extra}</td>`;
+}
+
+function renderComparison(result) {
+  const box = $("compare");
+  if (!box) return;
+  const reading = result.reading_assessment;
+  const gopt = result.gopt_assessment;
+  const ollama = result.ollama_assessment;
+  box.hidden = !(reading || gopt || ollama);
+  if (box.hidden) return;
+
+  const rc = (key) => reading?.criteria?.[key] || {};
+  const oc = (key) => ollama?.criteria?.[key] || {};
+  const ollamaStatus = ollama?.status === "scored" ? null : ollama?.status || "unavailable";
+  const goptStatus = gopt?.heads ? null : gopt?.status || "unavailable";
+  const head = (key) => gopt?.heads?.[key] ?? null;
+  const adj = (key) => (gopt?.adjusted_heads ? gopt.adjusted_heads[key] : null);
+  const goptCell = (key) => (head(key) == null
+    ? cmpCell(null, { status: goptStatus })
+    : cmpCell(head(key), { sub: adj(key), subLabel: "đ/c" }));
+  // Legacy bars per criterion (null = the old page has no such bar).
+  const legacy = {
+    content_accuracy: result.score,
+    phoneme_accuracy: result.pronunciation_score,
+    word_stress: null,
+    intonation: result.intonation_measured ? result.intonation_score : null,
+    fluency: result.fluency_score,
+    rhythm_and_linking: result.rhythm_measured !== false ? result.rhythm_score : null,
+  };
+  const goptKey = {
+    content_accuracy: "completeness",
+    phoneme_accuracy: "accuracy",
+    intonation: "prosodic",
+    fluency: "fluency",
+  };
+
+  const rows = [
+    `<tr class="cmp__total"><th scope="row">Điểm tổng</th>
+      ${cmpCell(result.score)}
+      ${cmpCell(reading?.overall_score, { status: reading?.overall_score == null ? reading?.status : null })}
+      ${gopt?.average == null ? cmpCell(null, { status: goptStatus }) : cmpCell(gopt.average, { sub: gopt.adjusted_average, subLabel: "đ/c" })}
+      ${ollama?.overall_score == null ? cmpCell(null, { status: ollamaStatus }) : cmpCell(ollama.overall_score, { sub: ollama.weighted_overall, subLabel: "theo trọng số" })}
+    </tr>`,
+    ...CMP_CRITERIA.map(([key, label]) => {
+      const weight = rc(key).weight;
+      return `<tr><th scope="row">${escapeHtml(label)}${weight ? ` <span class="cmp__w">${Math.round(weight * 100)}%</span>` : ""}</th>
+        ${cmpCell(legacy[key])}
+        ${cmpCell(rc(key).score, { status: rc(key).status })}
+        ${goptKey[key] ? goptCell(goptKey[key]) : cmpCell(null)}
+        ${cmpCell(oc(key).score, { status: ollamaStatus || (oc(key).score == null ? "insufficient_evidence" : null) })}
+      </tr>`;
+    }),
+  ];
+  $("compare-table").innerHTML = `
+    <thead><tr><th scope="col">Tiêu chí</th><th scope="col">Hiện tại</th>
+      <th scope="col">Reading</th><th scope="col">GOPT</th><th scope="col">Ollama</th></tr></thead>
+    <tbody>${rows.join("")}</tbody>`;
+
+  $("compare-reading").innerHTML = readingCardHtml(reading);
+  $("compare-gopt").innerHTML = goptCardHtml(gopt);
+  $("compare-ollama").innerHTML = ollamaCardHtml(ollama);
+}
+
+function cmpCardHead(title, status, meta = "") {
+  const tone = ["scored", "complete"].includes(status) ? "ok"
+    : ["partial_assessment"].includes(status) ? "warn" : "bad";
+  return `<div class="cmp-card__head"><h3>${escapeHtml(title)}</h3>
+    <span class="cmp-card__status" data-tone="${tone}">${escapeHtml(CMP_STATUS[status] || status || "—")}</span></div>
+    ${meta ? `<p class="cmp-card__meta">${meta}</p>` : ""}`;
+}
+
+function readingCardHtml(r) {
+  if (!r) return cmpCardHead("Reading (en-reading-v1)", "unavailable");
+  const gate = r.content_gate || {};
+  const audio = r.audio_analysis || {};
+  const facts = [
+    `Đọc đúng ${Math.round((gate.word_coverage || 0) * 100)}% số từ`,
+    gate.passed ? "qua ngưỡng nội dung" : "dưới ngưỡng nội dung → không chấm nhịp/ngữ điệu",
+    audio.correct_words_per_minute != null ? `${audio.correct_words_per_minute} từ đúng/phút` : null,
+    audio.pause_count != null ? `${audio.pause_count} lần ngắt` : null,
+  ].filter(Boolean).map(escapeHtml).join(" · ");
+  const words = (r.word_results || []).map((w) => {
+    const tip = [CMP_WORD[w.status] || w.status, w.recognized ? `nghe: ${w.recognized}` : "",
+      w.phoneme_score != null ? `rõ: ${w.phoneme_score}` : "", w.stress_ok === false ? "sai trọng âm" : ""]
+      .filter(Boolean).join(" · ");
+    return `<span class="cmp-word" data-status="${escapeHtml(w.status)}" title="${escapeHtml(tip)}">${escapeHtml(w.word)}${
+      w.status === "substituted" && w.recognized ? `<small>${escapeHtml(w.recognized)}</small>` : ""}${
+      w.stress_ok === false ? "<small>trọng âm</small>" : ""}</span>`;
+  }).join("");
+  const extra = [...(r.inserted || []).map((e) => `+${e.text}`), ...(r.repeated || []).map((e) => `↻${e.text}`)];
+  const tips = (r.improvements || []).map((i) =>
+    `<li data-priority="${escapeHtml(i.priority)}">${escapeHtml(i.message)}</li>`).join("");
+  return `${cmpCardHead("Reading (en-reading-v1)", r.status, facts)}
+    <div class="cmp-words">${words}</div>
+    ${extra.length ? `<p class="cmp-card__meta">Từ thừa (+) / lặp (↻): ${escapeHtml(extra.join(", "))}</p>` : ""}
+    ${tips ? `<ul class="cmp-tips">${tips}</ul>` : `<p class="cmp-card__meta">Không có gợi ý sửa.</p>`}`;
+}
+
+function goptCardHtml(g) {
+  if (!g) return cmpCardHead("GOPT", "unavailable");
+  const meta = g.heads
+    ? escapeHtml([
+      g.feature_source === "forced_alignment" ? "khung âm theo forced alignment" : "khung âm chia đều",
+      `${g.phone_count} âm`,
+      g.truncated ? "quá 50 âm, phần cuối bị cắt" : null,
+    ].filter(Boolean).join(" · "))
+    : "";
+  const heads = g.heads
+    ? `<table class="cmp-mini"><thead><tr><th></th><th>Thô</th><th>Điều chỉnh</th></tr></thead><tbody>${
+      ["accuracy", "completeness", "fluency", "prosodic"].map((k) => `<tr><th>${k}${
+        g.head_reliable && g.head_reliable[k] === false ? " ⚠" : ""}</th><td>${fmtScore(g.heads[k])}</td><td>${
+        fmtScore(g.adjusted_heads?.[k]) ?? "—"}</td></tr>`).join("")
+    }<tr><th>total</th><td>${fmtScore(g.heads.total)}</td><td></td></tr></tbody></table>`
+    : "";
+  const words = (g.words || []).map((w) => `<span class="cmp-word" data-status="${w.read_ok ? "correct" : "omitted"}"
+      title="${escapeHtml(`${w.phones.join(" ")} · thô: ${fmtScore(w.raw?.accuracy) ?? "—"}`)}">${escapeHtml(w.word)}<small>${
+      fmtScore(w.accuracy) ?? "—"}</small></span>`).join("");
+  return `${cmpCardHead("GOPT", g.status, meta)}${heads}
+    ${words ? `<p class="cmp-card__meta">Điểm từng từ (accuracy; từ không đọc = 0):</p><div class="cmp-words">${words}</div>` : ""}
+    ${g.status === "unavailable" ? `<p class="cmp-card__meta">GOPT không chạy (thiếu checkpoint hoặc bị tắt).</p>` : ""}`;
+}
+
+function ollamaCardHtml(o) {
+  if (!o) return cmpCardHead("Ollama", "unavailable");
+  const meta = escapeHtml([o.model, o.latency_ms != null ? `${(o.latency_ms / 1000).toFixed(1)}s` : null]
+    .filter(Boolean).join(" · "));
+  if (o.status !== "scored") {
+    return `${cmpCardHead("Ollama", o.status, meta)}
+      ${o.error ? `<p class="cmp-card__meta cmp-card__error">${escapeHtml(o.error)}</p>` : ""}`;
+  }
+  const reasons = CMP_CRITERIA.map(([key, label]) => {
+    const c = o.criteria?.[key];
+    if (!c || !c.reason) return "";
+    return `<li><b>${escapeHtml(label)}:</b> ${escapeHtml(c.reason)}</li>`;
+  }).join("");
+  const delta = o.comparison?.delta_vs_reading;
+  return `${cmpCardHead("Ollama", o.status, meta)}
+    ${o.summary ? `<p class="cmp-card__summary">${escapeHtml(o.summary)}</p>` : ""}
+    ${delta != null ? `<p class="cmp-card__meta">Lệch so với Reading: ${delta > 0 ? "+" : ""}${escapeHtml(delta.toFixed(1))} điểm</p>` : ""}
+    ${reasons ? `<ul class="cmp-tips">${reasons}</ul>` : ""}`;
 }
 
 /* -------------------------------------------------------------- Coaching */

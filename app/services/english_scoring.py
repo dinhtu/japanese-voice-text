@@ -51,6 +51,8 @@ MAX_EXTRA_SHARE = 0.7
 # transcript (see snap_transcript); real extra words are kept.
 EDGE_SCRAP = 4
 SCRAP = 3
+# Hesitation sounds the ASR may spell out; never part of a target word.
+_FILLERS = frozenset({"uh", "um", "er", "ah", "eh", "hm", "hmm", "mm", "erm", "uhm"})
 
 _VOWELS = frozenset("aeiou")
 # Spellings of one sound, scanned left to right (C = ch, S = sh, J = j).
@@ -259,6 +261,120 @@ def _segment(
 def match_words(target_text: str, recognized_text: str) -> list[WordMatch]:
     """One WordMatch per target word; the per-word grid on the page."""
     return _segment(_target_words(target_text), _letters(recognized_text))[0]
+
+
+@dataclass(frozen=True)
+class ExtraPiece:
+    """Heard letters no target word claimed (an extra / repeated word)."""
+
+    after: int  # index of the target word it follows, -1 before the first
+    letters: str
+    edge: bool  # before the first or after the last word
+    repeat: bool = False  # says a neighbouring target word again ("to to")
+
+
+def word_similarity(word: str, heard: str) -> float:
+    """Letter match or sound match, whichever is better (as in _segment)."""
+    letters, heard = word.replace("'", ""), heard.replace("'", "")
+    if not letters or not heard:
+        return 0.0
+    similarity = max(0.0, 1.0 - _prefix_distances(letters, heard)[-1] / len(letters))
+    if similarity < 1.0:
+        similarity = max(similarity, _sound_similarity(letters, heard))
+    return similarity
+
+
+def align_word_tokens(target_text: str, recognized_text: str) -> tuple[list[WordMatch], list[ExtraPiece]]:
+    """Word-level alignment for WER, on the transcript's own word breaks.
+
+    The letter segmentation above ignores spaces, which is right for the
+    score but lets a short word borrow a neighbour's letters: "I would like
+    glass" gives "a" the "e" of "like", so the skipped article never shows.
+    Here each target word takes whole heard tokens -- one, two or three
+    joined ("to day" -> today) or half of one ("thankyou" -> thank, you) --
+    or none (omitted); a token no word takes is an ExtraPiece (inserted, or
+    a repeat of the word next to it)."""
+    words = _target_words(target_text)
+    tokens = [t.replace("'", "") for t in normalize_english(recognized_text).split()]
+    n, m = len(words), len(tokens)
+    inf = float("inf")
+    cost = [[inf] * (m + 1) for _ in range(n + 1)]
+    back: list[list[tuple | None]] = [[None] * (m + 1) for _ in range(n + 1)]
+    cost[0][0] = 0.0
+
+    def pair_cost(similarity: float) -> float:
+        # One edit if the word was not said; the tiny term picks the closer pairing.
+        return (0.0 if similarity >= WORD_GATE else 1.0) + 0.01 * (1.0 - similarity)
+
+    for i in range(n + 1):
+        for j in range(m + 1):
+            base = cost[i][j]
+            if base == inf:
+                continue
+            steps = []
+            if i < n:
+                steps.append((i + 1, j, 1.0, ("del",)))
+            if j < m:
+                steps.append((i, j + 1, 1.0, ("ins",)))
+            # A filler never stands in for a word: "like um glass" skipped "a".
+            if i < n and j < m and tokens[j] not in _FILLERS:
+                sim = word_similarity(words[i], tokens[j])
+                steps.append((i + 1, j + 1, pair_cost(sim), ("word", tokens[j], sim)))
+            # Joining ("to day", "p i n") / splitting ("thankyou") only for a
+            # close match that no single token gives: otherwise an inserted
+            # or repeated word ("a water", "you you") would vanish into it.
+            for k in (2, 3):
+                group = tokens[j:j + k]
+                if i >= n or len(group) < k or set(group) & _FILLERS:
+                    continue
+                if any(word_similarity(words[i], t) >= WORD_GATE for t in group):
+                    continue
+                joined = "".join(group)
+                sim = word_similarity(words[i], joined)
+                if sim >= SNAP_GATE:
+                    steps.append((i + 1, j + k, pair_cost(sim) + 0.005 * k, ("word", joined, sim)))
+            if i + 1 < n and j < m:
+                first = words[i].replace("'", "")
+                second = words[i + 1].replace("'", "")
+                token = tokens[j]
+                if len(token) > len(first):
+                    a, b = token[:len(first)], token[len(first):]
+                    sa, sb = word_similarity(first, a), word_similarity(second, b)
+                    # Its first half must fit better than the whole token.
+                    if sa >= SNAP_GATE and sb >= SNAP_GATE and sa > word_similarity(first, token):
+                        steps.append((i + 2, j + 1, pair_cost(sa) + pair_cost(sb) + 0.005,
+                                      ("split", a, sa, b, sb)))
+            for ni, nj, step, move in steps:
+                if base + step < cost[ni][nj] - 1e-12:
+                    cost[ni][nj] = base + step
+                    back[ni][nj] = (i, j, move)
+
+    path = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        pi, pj, move = back[i][j]
+        path.append((pi, pj, move))
+        i, j = pi, pj
+    path.reverse()
+
+    matches: list[WordMatch] = []
+    extras: list[ExtraPiece] = []
+    for pi, pj, move in path:
+        if move[0] == "del":
+            matches.append(WordMatch(words[pi], "", 0.0))
+        elif move[0] == "ins":
+            # `pi` words are already placed: the token follows word pi - 1.
+            token = tokens[pj]
+            repeat = any(
+                0 <= w < n and word_similarity(words[w], token) >= SNAP_GATE for w in (pi - 1, pi)
+            )
+            extras.append(ExtraPiece(pi - 1, token, pi == 0 or pi == n, repeat))
+        elif move[0] == "word":
+            matches.append(WordMatch(words[pi], move[1], round(move[2], 4)))
+        else:
+            matches.append(WordMatch(words[pi], move[1], round(move[2], 4)))
+            matches.append(WordMatch(words[pi + 1], move[3], round(move[4], 4)))
+    return matches, extras
 
 
 def snap_transcript(target_text: str, recognized_text: str, heard: frozenset[int]) -> str:

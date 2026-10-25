@@ -326,6 +326,8 @@ class PronunciationFacts:
     duration_issues: list[DurationIssue] = field(default_factory=list)
     pitch_matched: int | None = None
     pitch_total: int | None = None
+    # Already-measured findings appended verbatim (English: reading_assessment).
+    extra_lines: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -472,6 +474,7 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
     else:
         lines.append("Không có đủ dữ liệu cao độ để đánh giá.")
 
+    lines.extend(facts.extra_lines)
     return "\n".join(lines)
 
 

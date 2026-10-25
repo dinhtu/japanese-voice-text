@@ -401,6 +401,8 @@ class IntonationResult:
     aligned: bool
     score: float | None = field(default=None)
     missing: frozenset[int] = frozenset()
+    # Longest pause (s) between word i and word i+1; empty without real timing.
+    pauses: tuple[float, ...] = ()
 
     @property
     def final(self) -> FinalCheck | None:
@@ -640,5 +642,5 @@ def evaluate_intonation(
     word_stress = _check_word_stress(analysis, measures, missing)
     return IntonationResult(
         analysis, measures, peaks, breaks, ends, word_stress, aligned,
-        _score(peaks, breaks, ends, word_stress), missing,
+        _score(peaks, breaks, ends, word_stress), missing, tuple(pauses or ()),
     )

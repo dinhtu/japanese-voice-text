@@ -407,6 +407,25 @@
               </div>
             </div>
 
+            <!-- Side-by-side: the scores above vs the three extra reports. -->
+            <div class="compare" id="compare" hidden>
+              <p class="label">So sánh các bộ điểm</p>
+              <p class="compare__hint">
+                <b>Hiện tại</b> = các điểm phía trên (giữ nguyên) ·
+                <b>Reading</b> = bộ chấm mới en-reading-v1 ·
+                <b>GOPT</b> = model GOPT (số nhỏ: đã điều chỉnh theo từ đọc đúng) ·
+                <b>Ollama</b> = LLM chấm từ số liệu đo được
+              </p>
+              <div class="compare__scroll">
+                <table class="compare__table" id="compare-table"></table>
+              </div>
+              <div class="compare__cards">
+                <section class="compare__card" id="compare-reading"></section>
+                <section class="compare__card" id="compare-gopt"></section>
+                <section class="compare__card" id="compare-ollama"></section>
+              </div>
+            </div>
+
             <p class="note">
               Vòng tròn là CER chữ cái, nhưng từ nào sai quá 25% chữ cái thì
               mất toàn bộ chữ của từ đó; nói thừa chữ cũng bị trừ. Ngữ điệu
