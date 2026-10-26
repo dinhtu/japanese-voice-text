@@ -200,3 +200,28 @@ def test_word_missing_its_tail_is_not_confirmed():
     assert heard_words(timing) == frozenset()
     assert _ok("weekend", "week") == [("weekend", False)]
     assert _score("weekend", "week") == 0
+
+
+def test_transcript_tokens_keep_contractions_and_initialisms():
+    from app.services.english_scoring import transcript_tokens
+
+    # (Digits are written out before this: expand_for_speech.)
+    assert transcript_tokens("I don't know, it's nine a.m. in the U.S.") == [
+        "i", "dont", "know", "its", "nine", "am", "in", "the", "us"]
+
+
+def test_expand_contractions_follows_the_target():
+    from app.services.english_scoring import expand_contractions
+
+    assert expand_contractions("It's fine, I can't.", "It is fine, I can not.") == "It is fine, I can not."
+    assert expand_contractions("It's fine.", "It's fine.") == "It's fine."
+    assert expand_contractions("I won't go.", "I will not go.") == "I will not go."
+
+
+def test_exact_spelling_over_two_tokens_joins():
+    from app.services.english_scoring import align_word_tokens
+
+    for target, heard in [("I cannot swim", "i can not swim"), ("call me anytime", "call me any time"),
+                          ("walk into the room", "walk in to the room")]:
+        matches, extras = align_word_tokens(target, heard)
+        assert all(m.ok for m in matches) and not extras, (target, heard)

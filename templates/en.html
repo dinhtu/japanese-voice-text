@@ -18,6 +18,7 @@
   <body
     data-api-base="{{ api_base_url }}"
     data-evaluate-url="{{ api_base_url }}/api/pronunciation-en/evaluate"
+    data-evaluate-v2-url="{{ api_base_url }}/api/pronunciation-en/evaluate-v2"
     data-pitch-url="{{ api_base_url }}/api/pronunciation-en/pitch-accent"
     data-coach-url="{{ api_base_url }}/api/pronunciation-en/coach"
     data-text-guide-url="{{ api_base_url }}/api/pronunciation-en/text-guide"
@@ -244,6 +245,18 @@
             </h2>
           </div>
           <div class="card__body recorder" id="recorder">
+            <fieldset class="api-mode" id="api-mode">
+              <legend class="api-mode__legend">Cách chấm</legend>
+              <label class="api-mode__opt">
+                <input type="radio" name="api-mode" value="v1" checked />
+                <span>Chuẩn <small>/evaluate</small></span>
+              </label>
+              <label class="api-mode__opt">
+                <input type="radio" name="api-mode" value="v2" />
+                <span>Ollama v2 <small>/evaluate-v2</small></span>
+              </label>
+            </fieldset>
+
             <div class="recorder__dial" id="dial">
               <span class="recorder__pulse"></span>
               <span class="recorder__level" id="level"></span>
@@ -414,7 +427,7 @@
                 <b>Hiện tại</b> = các điểm phía trên (giữ nguyên) ·
                 <b>Reading</b> = bộ chấm mới en-reading-v1 ·
                 <b>GOPT</b> = model GOPT (số nhỏ: đã điều chỉnh theo từ đọc đúng) ·
-                <b>Ollama</b> = LLM chấm từ số liệu đo được
+                <b>Qwen3-ASR</b> = chép lời bằng Qwen3-ASR (Ollama) rồi chấm như Reading
               </p>
               <div class="compare__scroll">
                 <table class="compare__table" id="compare-table"></table>
@@ -434,6 +447,14 @@
               thời gian bằng wav2vec2. Phát âm / trôi chảy có thêm GOPT.
             </p>
           </div>
+        </section>
+
+        <!-- 3b. Result from /evaluate-v2 (Qwen3-ASR + Ollama) -->
+        <section class="card rise" id="result-v2" hidden>
+          <div class="card__head">
+            <h2 class="card__title"><span class="step">v2</span> Kết quả chấm Ollama (Qwen3-ASR)</h2>
+          </div>
+          <div class="card__body" id="result-v2-body" aria-live="polite"></div>
         </section>
       </div>
 

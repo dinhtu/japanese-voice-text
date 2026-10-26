@@ -2015,3 +2015,116 @@ html[lang="en"] .pitch__label {
   font-weight: 500;
   color: var(--ink-muted);
 }
+
+/* ---------- English: v1 / v2 scoring switch ---------- */
+
+.api-mode {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem;
+  margin: 0 auto 1rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--canvas);
+}
+
+.api-mode__legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.api-mode__opt {
+  position: relative;
+  cursor: pointer;
+}
+
+.api-mode__opt input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  cursor: pointer;
+}
+
+.api-mode__opt span {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.35rem 0.85rem;
+  border-radius: 0.55rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  line-height: 1.25;
+}
+
+.api-mode__opt small {
+  font-size: 10.5px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.api-mode__opt input:checked + span {
+  background: var(--surface);
+  color: var(--brand-700);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.12);
+}
+
+.api-mode__opt input:focus-visible + span {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 1px;
+}
+
+/* ---------- English: /evaluate-v2 result card ---------- */
+
+.v2-top {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.v2-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 6.5rem;
+  height: 6.5rem;
+  border: 6px solid var(--line);
+  border-radius: 9999px;
+  flex: none;
+}
+
+.v2-score[data-tone="excellent"] { border-color: var(--score-excellent); color: var(--score-excellent); }
+.v2-score[data-tone="good"] { border-color: var(--score-good); color: var(--score-good); }
+.v2-score[data-tone="fair"] { border-color: var(--score-fair); color: var(--score-fair); }
+.v2-score[data-tone="poor"] { border-color: var(--score-poor); color: var(--score-poor); }
+
+.v2-score__num {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-score__max {
+  font-size: 10.5px;
+  color: var(--ink-muted);
+}
+
+.v2-summary {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.v2-bars {
+  margin-top: 1rem;
+}
+
+.v2-label {
+  margin-top: 1rem;
+}

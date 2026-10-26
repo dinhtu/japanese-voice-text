@@ -149,28 +149,44 @@ class GoptAssessment(BaseModel):
     legacy_score: float | None = None
 
 
-class OllamaCriterion(BaseModel):
-    score: float | None = Field(default=None, description="0-100 from the LLM; null = no data")
-    weight: float
-    reason: str | None = None
+class AsrAgreement(BaseModel):
+    same_verdict_share: float = Field(description="Share of target words both ASRs judged alike")
+    both_read: list[str] = Field(default_factory=list)
+    both_wrong: list[str] = Field(default_factory=list, description="Strong evidence of a real error")
+    wrong_only_by_wav2vec2: list[str] = Field(default_factory=list)
+    wrong_only_by_qwen3_asr: list[str] = Field(default_factory=list)
 
 
 class OllamaAssessment(BaseModel):
     status: str = Field(
-        description='"scored" | "disabled" | "unavailable" (Ollama down / model not '
-        'pulled) | "invalid_output" | "no_voice" | "skipped"',
+        description='reading statuses ("complete" | "partial_assessment" | '
+        '"content_mismatch" | "insufficient_evidence") or "no_speech" | "disabled" | '
+        '"unavailable" (Ollama down / model not pulled) | "unsupported" (server cannot '
+        'take audio) | "invalid_output" | "no_voice" | "skipped"',
     )
-    model: str | None = None
-    criteria: dict[str, OllamaCriterion] | None = None
-    overall_score: float | None = Field(default=None, description="The LLM's own overall")
-    weighted_overall: float | None = Field(
+    model: str | None = Field(default=None, description="EN_OLLAMA_ASR_MODEL")
+    language: str | None = Field(default=None, description="Language Qwen3-ASR detected")
+    language_mismatch: bool = False
+    transcript: str | None = Field(default=None, description="Qwen3-ASR transcript as returned")
+    recognized_text: str | None = Field(default=None, description="Transcript as scored")
+    overall_score: float | None = None
+    weights_used: float | None = None
+    content_gate: ContentGate | None = None
+    criteria: dict[str, CriterionResult] | None = None
+    word_results: list[WordResult] = Field(default_factory=list)
+    inserted: list[InsertedWord] = Field(default_factory=list)
+    repeated: list[InsertedWord] = Field(default_factory=list)
+    improvements: list[Improvement] = Field(default_factory=list)
+    confidence_source: str | None = Field(
         default=None,
-        description="The LLM's criterion scores with reading_assessment's weights",
+        description='Phoneme accuracy from "qwen3_asr_logprobs" or "forced_alignment"',
     )
-    summary: str | None = None
+    agreement: AsrAgreement | None = Field(
+        default=None, description="wav2vec2 vs Qwen3-ASR verdict per target word",
+    )
     comparison: dict[str, float | None] | None = Field(
         default=None,
-        description="ollama vs reading_assessment vs GOPT vs legacy, side by side",
+        description="Qwen3-ASR vs reading_assessment vs GOPT vs legacy, side by side",
     )
     latency_ms: float | None = None
     error: str | None = None
@@ -192,6 +208,6 @@ class EnglishEvaluateResponse(EvaluateResponse):
     )
     ollama_assessment: OllamaAssessment | None = Field(
         default=None,
-        description="The local LLM's scores from the measured facts (not from the "
-        "other reports' scores), for comparison",
+        description="The audio transcribed by Qwen3-ASR (Ollama, EN_OLLAMA_ASR_MODEL) "
+        "and scored like reading_assessment, for comparison",
     )

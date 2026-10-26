@@ -189,13 +189,15 @@ def _reports(
     """`reading_assessment` and `gopt_assessment`; the legacy fields never
     depend on these."""
     from app.services.english_assessment import assess_gopt, assess_reading
-    from app.services.english_scoring import align_word_tokens
+    from app.services.english_scoring import align_word_tokens, expand_contractions
 
     analysis, timing = aligned
     # The raw ASR words, not heard_text: re-spelling there runs on the
     # letter segmentation, which can hand a skipped "a" the "e" of "like".
     recognized = normalize_english(recognition.text)
-    matches, extras = align_word_tokens(target_text, recognized)
+    # Apostrophes kept ("DON'T" is one word) and contractions read as the
+    # target writes them ("IT'S" for "it is").
+    matches, extras = align_word_tokens(target_text, expand_contractions(recognition.text, target_text))
     reading = assess_reading(
         target_text=target_text,
         recognized_text=recognized,
@@ -442,6 +444,21 @@ class EvaluateEnglishUseCase:
             )
         except Exception:  # noqa: BLE001
             logger.warning("English reading / GOPT assessment failed", exc_info=True)
+        from app.services.english_assessment import AssessmentInputs
+
+        # For ollama_assessment: Qwen3-ASR's transcript scored on these acoustics.
+        inputs = AssessmentInputs(
+            target_text=target_text,
+            analysis=aligned[0],
+            timing=aligned[1],
+            intonation=intonation,
+            vad=vad,
+            duration=recognition.duration,
+            samples=samples,
+            sample_rate=sample_rate,
+            legacy_score=score.score,
+            lang=lang,
+        )
 
         return EvaluationResult(
             target_text=target_text,
@@ -456,4 +473,5 @@ class EvaluateEnglishUseCase:
             intonation=intonation,
             reading_assessment=reading,
             gopt_assessment=gopt_report,
+            assessment_inputs=inputs,
         )

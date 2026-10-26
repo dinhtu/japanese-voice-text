@@ -17,6 +17,8 @@ const COACH_API_URL = document.body.dataset.coachUrl
   || `${API_BASE}/api/pronunciation/coach`;
 const TEXT_GUIDE_API_URL = document.body.dataset.textGuideUrl
   || `${API_BASE}/api/pronunciation/text-guide`;
+/** English only: Qwen3-ASR + Ollama scoring (en-reading-v2). */
+const API_V2_URL = document.body.dataset.evaluateV2Url || "";
 const TTS_LANG = document.body.dataset.ttsLang || "ja-JP";
 /** "Nghe mẫu": server-side proxy to the Qwen3-TTS service (app/api/tts_routes.py). */
 const SPEAK_API_URL = document.body.dataset.speakUrl || `${API_BASE}/api/tts`;
@@ -291,6 +293,8 @@ function showError(message) {
 function clearOutput() {
   el.error.hidden = true;
   el.result.hidden = true;
+  const v2 = $("result-v2");
+  if (v2) v2.hidden = true;
   resetCoach();
 }
 
@@ -487,22 +491,13 @@ async function evaluate(wav) {
     if (englishReference) renderPitchChart();
   }
 
-  const formData = new FormData();
-  formData.append("text", target.text);
-  formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
-  // English reports (improvements / Ollama reasons) follow the coach language.
-  if (TARGET_LANG === "en" && el.coachLang) formData.append("lang", el.coachLang.value);
-
   try {
-    const response = await fetch(API_URL, { method: "POST", body: formData });
-    if (!response.ok) {
-      const detail = await response
-        .json()
-        .then((body) => body.detail)
-        .catch(() => undefined);
-      throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+    // English page: "Cách chấm" switches between /evaluate and /evaluate-v2.
+    if (TARGET_LANG === "en" && API_V2_URL && apiMode() === "v2") {
+      renderV2(await postEvaluate(API_V2_URL, wav, { feedback: "true" }));
+      return;
     }
-    const result = await response.json();
+    const result = await postEvaluate(API_URL, wav);
     renderResult(result);
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
@@ -519,6 +514,57 @@ async function evaluate(wav) {
     setStatus("idle");
   }
 }
+
+/** POST the take to one evaluate endpoint; the parsed JSON, or an Error with the API's detail. */
+async function postEvaluate(url, wav, extra = {}) {
+  const formData = new FormData();
+  formData.append("text", target.text);
+  formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
+  // English reports (improvements / Ollama feedback) follow the coach language.
+  if (TARGET_LANG === "en" && el.coachLang) formData.append("lang", el.coachLang.value);
+  for (const [key, value] of Object.entries(extra)) formData.append(key, value);
+  const response = await fetch(url, { method: "POST", body: formData });
+  if (!response.ok) {
+    const detail = await response
+      .json()
+      .then((body) => body.detail)
+      .catch(() => undefined);
+    throw new Error(detail || `Yêu cầu thất bại (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+/* ------------------------------------------------- Which API to score with */
+
+const API_MODE_KEY = "pronunciation-en-api-mode";
+
+function apiMode() {
+  const checked = document.querySelector('input[name="api-mode"]:checked');
+  return checked ? checked.value : "v1";
+}
+
+function initApiMode() {
+  const radios = document.querySelectorAll('input[name="api-mode"]');
+  if (!radios.length) return;
+  let saved = null;
+  try {
+    saved = localStorage.getItem(API_MODE_KEY);
+  } catch {
+    saved = null; // storage blocked: keep the default
+  }
+  radios.forEach((radio) => {
+    if (saved && radio.value === saved) radio.checked = true;
+    radio.addEventListener("change", () => {
+      try {
+        localStorage.setItem(API_MODE_KEY, radio.value);
+      } catch {
+        /* not remembered, still used for this take */
+      }
+    });
+  });
+}
+
+initApiMode();
 
 function aspectTone(value) {
   if (value >= 90) return "excellent";
@@ -686,6 +732,10 @@ const CMP_STATUS = {
   unavailable: "Không chạy được",
   disabled: "Đã tắt",
   invalid_output: "Trả lời không hợp lệ",
+  unsupported: "Ollama không nhận audio",
+  no_speech: "Không nghe thấy lời",
+  language_mismatch: "Không phải tiếng Anh",
+  asr_unavailable: "Ollama không chạy được",
   no_voice: "Không có giọng",
   skipped: "Bỏ qua",
   content_mismatch: "Đọc sai nhiều từ",
@@ -736,7 +786,8 @@ function renderComparison(result) {
 
   const rc = (key) => reading?.criteria?.[key] || {};
   const oc = (key) => ollama?.criteria?.[key] || {};
-  const ollamaStatus = ollama?.status === "scored" ? null : ollama?.status || "unavailable";
+  // Qwen3-ASR report: criteria present = it ran; otherwise its status says why.
+  const ollamaStatus = ollama?.criteria ? null : ollama?.status || "unavailable";
   const goptStatus = gopt?.heads ? null : gopt?.status || "unavailable";
   const head = (key) => gopt?.heads?.[key] ?? null;
   const adj = (key) => (gopt?.adjusted_heads ? gopt.adjusted_heads[key] : null);
@@ -758,13 +809,12 @@ function renderComparison(result) {
     intonation: "prosodic",
     fluency: "fluency",
   };
-
   const rows = [
     `<tr class="cmp__total"><th scope="row">Điểm tổng</th>
       ${cmpCell(result.score)}
       ${cmpCell(reading?.overall_score, { status: reading?.overall_score == null ? reading?.status : null })}
       ${gopt?.average == null ? cmpCell(null, { status: goptStatus }) : cmpCell(gopt.average, { sub: gopt.adjusted_average, subLabel: "đ/c" })}
-      ${ollama?.overall_score == null ? cmpCell(null, { status: ollamaStatus }) : cmpCell(ollama.overall_score, { sub: ollama.weighted_overall, subLabel: "theo trọng số" })}
+      ${cmpCell(ollama?.overall_score, { status: ollama?.overall_score == null ? ollamaStatus || ollama?.status : null })}
     </tr>`,
     ...CMP_CRITERIA.map(([key, label]) => {
       const weight = rc(key).weight;
@@ -772,13 +822,13 @@ function renderComparison(result) {
         ${cmpCell(legacy[key])}
         ${cmpCell(rc(key).score, { status: rc(key).status })}
         ${goptKey[key] ? goptCell(goptKey[key]) : cmpCell(null)}
-        ${cmpCell(oc(key).score, { status: ollamaStatus || (oc(key).score == null ? "insufficient_evidence" : null) })}
+        ${cmpCell(oc(key).score, { status: ollamaStatus || oc(key).status })}
       </tr>`;
     }),
   ];
   $("compare-table").innerHTML = `
     <thead><tr><th scope="col">Tiêu chí</th><th scope="col">Hiện tại</th>
-      <th scope="col">Reading</th><th scope="col">GOPT</th><th scope="col">Ollama</th></tr></thead>
+      <th scope="col">Reading</th><th scope="col">GOPT</th><th scope="col">Qwen3-ASR</th></tr></thead>
     <tbody>${rows.join("")}</tbody>`;
 
   $("compare-reading").innerHTML = readingCardHtml(reading);
@@ -846,23 +896,137 @@ function goptCardHtml(g) {
 }
 
 function ollamaCardHtml(o) {
-  if (!o) return cmpCardHead("Ollama", "unavailable");
-  const meta = escapeHtml([o.model, o.latency_ms != null ? `${(o.latency_ms / 1000).toFixed(1)}s` : null]
-    .filter(Boolean).join(" · "));
-  if (o.status !== "scored") {
-    return `${cmpCardHead("Ollama", o.status, meta)}
+  const title = "Qwen3-ASR (Ollama)";
+  if (!o) return cmpCardHead(title, "unavailable");
+  const meta = escapeHtml([
+    o.model,
+    o.language ? `ngôn ngữ: ${o.language}${o.language_mismatch ? " (không phải tiếng Anh)" : ""}` : null,
+    o.latency_ms != null ? `${(o.latency_ms / 1000).toFixed(1)}s` : null,
+  ].filter(Boolean).join(" · "));
+  if (!o.criteria) {
+    return `${cmpCardHead(title, o.status, meta)}
       ${o.error ? `<p class="cmp-card__meta cmp-card__error">${escapeHtml(o.error)}</p>` : ""}`;
   }
-  const reasons = CMP_CRITERIA.map(([key, label]) => {
-    const c = o.criteria?.[key];
-    if (!c || !c.reason) return "";
-    return `<li><b>${escapeHtml(label)}:</b> ${escapeHtml(c.reason)}</li>`;
+  const words = (o.word_results || []).map((w) => {
+    const tip = [CMP_WORD[w.status] || w.status, w.recognized ? `nghe: ${w.recognized}` : "",
+      w.phoneme_score != null ? `tin cậy: ${w.phoneme_score}` : ""].filter(Boolean).join(" · ");
+    return `<span class="cmp-word" data-status="${escapeHtml(w.status)}" title="${escapeHtml(tip)}">${escapeHtml(w.word)}${
+      w.status === "substituted" && w.recognized ? `<small>${escapeHtml(w.recognized)}</small>` : ""}</span>`;
   }).join("");
+  const a = o.agreement;
+  const list = (items) => (items && items.length ? escapeHtml(items.join(", ")) : "—");
+  const agree = a
+    ? `<ul class="cmp-tips">
+        <li>Cùng kết luận ở ${Math.round(a.same_verdict_share * 100)}% số từ</li>
+        <li><b>Cả hai đều nghe sai</b> (lỗi gần như chắc chắn): ${list(a.both_wrong)}</li>
+        <li>Chỉ wav2vec2 nghe sai: ${list(a.wrong_only_by_wav2vec2)}</li>
+        <li>Chỉ Qwen3-ASR nghe sai: ${list(a.wrong_only_by_qwen3_asr)}</li>
+      </ul>`
+    : "";
   const delta = o.comparison?.delta_vs_reading;
-  return `${cmpCardHead("Ollama", o.status, meta)}
-    ${o.summary ? `<p class="cmp-card__summary">${escapeHtml(o.summary)}</p>` : ""}
-    ${delta != null ? `<p class="cmp-card__meta">Lệch so với Reading: ${delta > 0 ? "+" : ""}${escapeHtml(delta.toFixed(1))} điểm</p>` : ""}
-    ${reasons ? `<ul class="cmp-tips">${reasons}</ul>` : ""}`;
+  const source = o.confidence_source === "qwen3_asr_logprobs"
+    ? "Phát âm: độ tin cậy từng từ của Qwen3-ASR"
+    : "Phát âm: ước lượng forced alignment (Ollama không trả logprobs)";
+  return `${cmpCardHead(title, o.status, meta)}
+    <p class="cmp-card__summary">“${escapeHtml(o.transcript || "")}”</p>
+    <p class="cmp-card__meta">${escapeHtml(source)}${delta != null
+      ? ` · lệch so với Reading: ${delta > 0 ? "+" : ""}${escapeHtml(delta.toFixed(1))} điểm` : ""}</p>
+    <div class="cmp-words">${words}</div>
+    ${agree ? `<p class="cmp-card__meta">Đối chiếu wav2vec2 ↔ Qwen3-ASR:</p>${agree}` : ""}`;
+}
+
+/* --------------------------------------------- /evaluate-v2 (Qwen3-ASR) */
+
+const V2_CRITERIA = [
+  ["content_accuracy", "Đọc đúng nội dung"],
+  ["pronunciation", "Phát âm"],
+  ["word_stress", "Trọng âm từ"],
+  ["intonation", "Nhịp điệu, ngữ điệu"],
+  ["fluency", "Trôi chảy"],
+];
+
+const V2_ERROR = {
+  omission: "Bỏ sót",
+  substitution: "Đọc sai thành",
+  mispronunciation: "Phát âm dễ nghe thành",
+  word_stress: "Sai trọng âm",
+  insertion: "Từ thừa",
+  repetition: "Lặp từ",
+  filler: "Từ đệm",
+};
+
+function v2BarsHtml(criteria) {
+  return V2_CRITERIA.map(([key, label]) => {
+    const c = criteria?.[key] || {};
+    const has = c.score != null;
+    const n = has ? Math.min(100, Math.max(0, Number(c.score))) : 0;
+    const weight = c.weight ? ` <span class="cmp__w">${Math.round(c.weight * 100)}%</span>` : "";
+    return `<div class="aspect">
+      <span class="aspect__name">${escapeHtml(label)}${weight}</span>
+      <div class="aspect__track"><i class="aspect__fill" style="width:${n}%"${has ? ` data-tone="${aspectTone(n)}"` : ""}></i></div>
+      <span class="aspect__num${has ? "" : " aspect__num--na"}" title="${escapeHtml(has ? "" : CMP_STATUS[c.status] || c.status || "")}">${has ? n.toFixed(1) : "—"}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderV2(report) {
+  const card = $("result-v2");
+  if (!card) return;
+  const overall = report.overall_score;
+  const tone = overall == null ? null : aspectTone(Number(overall));
+  const asr = report.asr || {};
+  const meta = [
+    asr.model,
+    asr.latency_ms != null ? `ASR ${(asr.latency_ms / 1000).toFixed(1)}s` : null,
+    report.alignment?.method ? "căn thời gian: wav2vec2" : "không có căn thời gian",
+    report.detected_language ? `ngôn ngữ: ${report.detected_language}` : null,
+  ].filter(Boolean).join(" · ");
+  const words = (report.word_results || []).map((w) => {
+    const p = w.pronunciation;
+    const tip = [CMP_WORD[w.status] || w.status, w.heard ? `nghe: ${w.heard}` : "",
+      p && p.score != null ? `phát âm: ${p.score}` : "", p && p.rival ? `đối thủ: ${p.rival}` : ""]
+      .filter(Boolean).join(" · ");
+    const flagged = (w.issues || []).includes("mispronunciation") ? "mispronounced" : w.status;
+    return `<span class="cmp-word" data-status="${escapeHtml(flagged)}" title="${escapeHtml(tip)}">${escapeHtml(w.text)}${
+      p && p.score != null ? `<small>${escapeHtml(Number(p.score).toFixed(0))}</small>` : ""}</span>`;
+  }).join("");
+  const errors = (report.errors || []).map((e) => `<li>${escapeHtml(V2_ERROR[e.type] || e.type)}: <b>${escapeHtml(e.word)}</b>${
+    e.heard && ["substitution", "mispronunciation"].includes(e.type) ? ` → ${escapeHtml(e.heard)}` : ""}${
+    e.expected ? ` (đúng: ${escapeHtml(e.expected)})` : ""}</li>`).join("");
+  const tips = (report.improvements || []).map((i) =>
+    `<li data-priority="${escapeHtml(i.priority)}">${escapeHtml(i.message)}</li>`).join("");
+  const fb = report.feedback;
+  let feedback = "";
+  if (fb && fb.status === "generated") {
+    feedback = `<div class="coach__panel">
+      ${fb.assessment ? `<div class="coach__block"><p class="coach__block-label">Nhận xét (${escapeHtml(fb.model || "Ollama")})</p><p class="coach__block-text">${escapeHtml(fb.assessment)}</p></div>` : ""}
+      ${fb.suggestion ? `<div class="coach__block"><p class="coach__block-label">Gợi ý luyện tập</p><p class="coach__block-text">${escapeHtml(fb.suggestion)}</p></div>` : ""}
+    </div>`;
+  } else if (fb) {
+    feedback = `<p class="cmp-card__meta cmp-card__error">Nhận xét AI chưa có: ${escapeHtml(fb.error || fb.status)}</p>`;
+  }
+  const asrError = report.status === "asr_unavailable" && asr.error
+    ? `<p class="cmp-card__meta cmp-card__error">${escapeHtml(asr.error)}</p>` : "";
+
+  $("result-v2-body").innerHTML = `
+    <div class="v2-top">
+      <div class="v2-score"${tone ? ` data-tone="${tone}"` : ""}>
+        <span class="v2-score__num">${overall == null ? "—" : escapeHtml(Number(overall).toFixed(1))}</span>
+        <span class="v2-score__max">tổng / 100</span>
+      </div>
+      <div class="v2-summary">
+        ${cmpCardHead("en-reading-v2", report.status)}
+        <p class="cmp-card__meta">${escapeHtml(meta)}</p>
+        ${report.recognized_text != null ? `<p class="cmp-card__summary">Nghe được: “${escapeHtml(report.recognized_text)}”</p>` : ""}
+        ${asrError}
+      </div>
+    </div>
+    <div class="aspects__list v2-bars">${v2BarsHtml(report.criteria)}</div>
+    ${words ? `<p class="label v2-label">Từng từ (số = điểm phát âm)</p><div class="cmp-words">${words}</div>` : ""}
+    ${errors ? `<p class="label v2-label">Lỗi phát hiện</p><ul class="cmp-tips">${errors}</ul>` : ""}
+    ${tips ? `<p class="label v2-label">Gợi ý</p><ul class="cmp-tips">${tips}</ul>` : ""}
+    ${feedback}`;
+  card.hidden = false;
 }
 
 /* -------------------------------------------------------------- Coaching */

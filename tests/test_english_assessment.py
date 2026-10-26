@@ -428,3 +428,39 @@ def test_initialism_phones_are_letter_names():
 
     assert word_cmu_phones("us", initialism=True) == ["Y", "UW", "EH", "S"]
     assert word_cmu_phones("us") == ["AH", "S"]
+
+
+def test_other_real_word_counts_only_without_audio_confirmation():
+    # A letter ASR spells a clean "rice" as "rise" while the forced path
+    # finds "rice" in the audio: trust the audio. Without it, "rise" is
+    # another word read.
+    target = "I like rice"
+    matches, extras = align_word_tokens(target, "i like rise")
+
+    def status(confirmed):
+        return assess_reading(
+            target_text=target, recognized_text="i like rise", matches=matches, extras=extras,
+            analysis=analyze_sentence(target), timing=_timing(target), intonation=None, vad=_vad(),
+            duration=2.0, confirmed=confirmed,
+        )["word_results"][2]["status"]
+
+    assert status(frozenset(range(3))) == "correct"
+    assert status(frozenset()) == "substituted"
+
+
+def test_weak_function_word_confirmed_by_audio_is_not_a_substitution():
+    # Real recording: letter CTC wrote "in" for a spoken weak "and".
+    target = "He has two cats and a dog"
+    matches, extras = align_word_tokens(target, "he has two cats in a dog")
+    report = assess_reading(
+        target_text=target, recognized_text="he has two cats in a dog", matches=matches, extras=extras,
+        analysis=analyze_sentence(target), timing=_timing(target), intonation=None, vad=_vad(),
+        duration=2.0, confirmed=frozenset(range(7)),
+    )
+    assert report["word_results"][4]["status"] == "mispronounced"
+    assert report["criteria"]["content_accuracy"]["score"] == 100
+
+
+def test_contraction_in_transcript_stays_one_word():
+    matches, extras = align_word_tokens("I don't like it", "i don't like it")
+    assert [m.heard for m in matches] == ["i", "dont", "like", "it"] and not extras

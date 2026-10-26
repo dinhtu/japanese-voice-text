@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
@@ -21,6 +22,7 @@ from app.schemas.english_assessment import (
     ReadingAssessment,
 )
 from app.schemas.english_intonation import build_intonation
+from app.schemas.english_v2 import EvaluateV2Response
 from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
 from app.schemas.pronunciation import MoraStatusItem
 from app.services.coaching import (
@@ -111,14 +113,15 @@ def _assessment_fields(result) -> dict:
     return out
 
 
-async def _ollama_field(result, settings: Settings, lang: str) -> OllamaAssessment | None:
-    """ollama_assessment, or None if even its error report cannot be built:
-    the LLM is an optional extra and never fails /evaluate."""
+async def _ollama_field(result, settings: Settings) -> OllamaAssessment | None:
+    """ollama_assessment (Qwen3-ASR via Ollama), or None if even its error
+    report cannot be built: it is an optional extra and never fails /evaluate."""
     try:
         data = await assess_with_ollama(
-            result.reading_assessment, result.gopt_assessment, result.intonation, settings, lang
+            result.assessment_inputs, result.reading_assessment, result.gopt_assessment, settings
         )
-        return OllamaAssessment.model_validate(data)
+        plain = json.loads(json.dumps(data, default=lambda v: v.item()))
+        return OllamaAssessment.model_validate(plain)
     except Exception:  # noqa: BLE001
         logger.warning("English ollama_assessment failed; omitted", exc_info=True)
         return None
@@ -128,7 +131,7 @@ async def _ollama_field(result, settings: Settings, lang: str) -> OllamaAssessme
 async def evaluate_english(
     text: str = Form(...),
     audio: UploadFile = File(...),
-    lang: str = Form("vi", description="reading_assessment / ollama_assessment text: vi | en"),
+    lang: str = Form("vi", description="reading_assessment / ollama_assessment messages: vi | en"),
     use_case: EvaluateEnglishUseCase = Depends(get_en_use_case),
     settings: Settings = Depends(get_settings),
 ) -> EnglishEvaluateResponse:
@@ -160,8 +163,8 @@ async def evaluate_english(
                 update["intonation"] = build_intonation(analysis, intonation)
             update.update(_assessment_fields(result))
             response = response.model_copy(update=update)
-        # After gpu_session: wav2vec2 is offloaded, so the LLM has the VRAM.
-        ollama = await _ollama_field(result, settings, _assessment_lang(lang))
+        # After gpu_session: wav2vec2 is offloaded, so Qwen3-ASR has the VRAM.
+        ollama = await _ollama_field(result, settings)
         if ollama is not None:
             response = response.model_copy(update={"ollama_assessment": ollama})
         return response
@@ -171,6 +174,61 @@ async def evaluate_english(
         raise HTTPException(status_code=422, detail=f"Could not read the audio: {e}") from e
     except Exception as e:  # noqa: BLE001
         logger.exception("English evaluation failed")
+        raise HTTPException(status_code=500, detail=f"Inference failed: {e}") from e
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+@router.post(
+    "/evaluate-v2",
+    response_model=EvaluateV2Response,
+    summary="Chấm đọc tiếng Anh v2: Qwen3-ASR (Ollama) + căn thời gian + nhận xét qwen3 (Ollama)",
+)
+async def evaluate_english_v2(
+    text: str = Form(...),
+    audio: UploadFile = File(...),
+    lang: str = Form("vi", description="Feedback / improvements language: vi | en | ja"),
+    feedback: bool = Form(True, description="Also ask OLLAMA_MODEL for a written comment"),
+    asr: EnglishASRService = Depends(get_english_asr_service),
+    settings: Settings = Depends(get_settings),
+) -> EvaluateV2Response:
+    """en-reading-v2: separate from /evaluate, whose fields are unchanged."""
+    from app.services.english_evaluate_v2 import evaluate_v2, measure_acoustics
+    from app.services.english_text import expand_for_speech, normalize_english
+
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+    if not normalize_english(expand_for_speech(text)):
+        raise HTTPException(status_code=400, detail="Target text contains no pronounceable English content.")
+    lang = (lang or "vi").strip().lower()
+    lang = "ja" if lang == "jp" else lang
+    suffix = _validate_upload(audio)
+    content = await audio.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+    if len(content) > settings.max_audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio exceeds the upload limit.")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="en_v2_")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        with gpu_session():
+            # wav2vec2 + pitch are CPU/GPU-bound: off the event loop.
+            acoustics = await run_in_threadpool(
+                measure_acoustics, text, tmp_path,
+                asr if settings.en_v2_aligner == "wav2vec2" else None, settings.en_v2_aligner,
+            )
+        # After gpu_session: wav2vec2 is offloaded before the Ollama models load.
+        report = await evaluate_v2(acoustics, settings, lang=lang, with_feedback=feedback)
+        return EvaluateV2Response.model_validate(json.loads(json.dumps(report, default=lambda v: v.item())))
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=f"Could not read the audio: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("English evaluate-v2 failed")
         raise HTTPException(status_code=500, detail=f"Inference failed: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)

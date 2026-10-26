@@ -29,6 +29,7 @@ vowels cheap), and a passing word keeps len(word) * similarity letters.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from functools import lru_cache
 
@@ -271,6 +272,51 @@ class ExtraPiece:
     letters: str
     edge: bool  # before the first or after the last word
     repeat: bool = False  # says a neighbouring target word again ("to to")
+    optional: bool = False  # allowed though not written ("hundred and five")
+
+
+_APOSTROPHES = re.compile(r"['’]")
+# "a.m.", "U.S.": one word, as the target tokenizer reads them.
+_DOTTED = re.compile(r"\b(?:[A-Za-z]\.){2,}")
+# Number scales after which a spoken "and" is optional (205 = "two hundred and five").
+_SCALES = frozenset({"hundred", "thousand", "million", "billion"})
+_CLITICS = {"s": ("is", "has"), "m": ("am",), "re": ("are",), "ve": ("have",), "ll": ("will",), "d": ("would", "had")}
+_NOT_HEADS = {"can": "can", "won": "will", "ain": "is", "shan": "shall"}
+_CONTRACTION = re.compile(r"^(\W*)([A-Za-z]+)['’]([A-Za-z]+)(\W*)$")
+
+
+def transcript_tokens(text: str) -> list[str]:
+    """Words of a transcript for word-level alignment: apostrophes dropped
+    BEFORE normalize_english (which turns them into spaces), so "don't"
+    stays one word "dont" -- as the target's spoken letters are -- and
+    dotted initialisms kept whole ("a.m." -> "am")."""
+    text = _DOTTED.sub(lambda m: m.group().replace(".", ""), text or "")
+    return normalize_english(_APOSTROPHES.sub("", text)).split()
+
+
+def expand_contractions(text: str, target_text: str) -> str:
+    """Write out each contraction in `text` the way the target has it, when
+    the target has the full form right there ("It's" -> "It is" for a target
+    "it is ..."); others stay as they are ("It's" for a target "it's")."""
+    words = [w.replace("'", "") for w in _target_words(target_text)]
+    pairs = set(zip(words, words[1:]))
+    out = []
+    for word in (text or "").split():
+        m = _CONTRACTION.match(word)
+        if m:
+            head, clitic = m.group(2), m.group(3).lower()
+            low = head.lower()
+            if clitic == "t" and low.endswith("n"):
+                options = [(_NOT_HEADS.get(low, low[:-1]), "not")]
+            else:
+                options = [(low, full) for full in _CLITICS.get(clitic, ())]
+            for a, b in options:
+                if (a, b) in pairs:
+                    first = head if a == low else a
+                    word = f"{m.group(1)}{first} {b}{m.group(4)}"
+                    break
+        out.append(word)
+    return " ".join(out)
 
 
 def word_similarity(word: str, heard: str) -> float:
@@ -295,7 +341,7 @@ def align_word_tokens(target_text: str, recognized_text: str) -> tuple[list[Word
     or none (omitted); a token no word takes is an ExtraPiece (inserted, or
     a repeat of the word next to it)."""
     words = _target_words(target_text)
-    tokens = [t.replace("'", "") for t in normalize_english(recognized_text).split()]
+    tokens = transcript_tokens(recognized_text)
     n, m = len(words), len(tokens)
     inf = float("inf")
     cost = [[inf] * (m + 1) for _ in range(n + 1)]
@@ -327,10 +373,13 @@ def align_word_tokens(target_text: str, recognized_text: str) -> tuple[list[Word
                 group = tokens[j:j + k]
                 if i >= n or len(group) < k or set(group) & _FILLERS:
                     continue
-                if any(word_similarity(words[i], t) >= WORD_GATE for t in group):
-                    continue
                 joined = "".join(group)
-                sim = word_similarity(words[i], joined)
+                # Spelling the word exactly ("can not", "any time", "in to")
+                # is always fine.
+                exact = joined == words[i].replace("'", "")
+                if not exact and any(word_similarity(words[i], t) >= WORD_GATE for t in group):
+                    continue
+                sim = 1.0 if exact else word_similarity(words[i], joined)
                 if sim >= SNAP_GATE:
                     steps.append((i + 1, j + k, pair_cost(sim) + 0.005 * k, ("word", joined, sim)))
             if i + 1 < n and j < m:
@@ -368,7 +417,8 @@ def align_word_tokens(target_text: str, recognized_text: str) -> tuple[list[Word
             repeat = any(
                 0 <= w < n and word_similarity(words[w], token) >= SNAP_GATE for w in (pi - 1, pi)
             )
-            extras.append(ExtraPiece(pi - 1, token, pi == 0 or pi == n, repeat))
+            optional = token == "and" and 0 < pi < n and words[pi - 1] in _SCALES
+            extras.append(ExtraPiece(pi - 1, token, pi == 0 or pi == n, repeat and not optional, optional))
         elif move[0] == "word":
             matches.append(WordMatch(words[pi], move[1], round(move[2], 4)))
         else:

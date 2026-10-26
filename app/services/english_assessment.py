@@ -155,7 +155,7 @@ def inserted_words(extras: Sequence[ExtraPiece]) -> list[ExtraPiece]:
     scraps): the I of WER."""
     return [
         e for e in extras
-        if not e.repeat and e.letters not in FILLERS and (
+        if not e.repeat and not e.optional and e.letters not in FILLERS and (
             len(e.letters) >= EDGE_EXTRA if e.edge
             else len(e.letters) >= 2 or e.letters in SINGLE_LETTER_WORDS
         )
@@ -206,7 +206,9 @@ def word_verdicts(matches: Sequence[WordMatch], timing: SyllableTiming | None,
     omission needs the transcript to agree (nothing heard for the word);
     the forced path alone always places every word somewhere. A word the
     ASR spelled far off but the forced path clearly finds in the audio
-    (`confirmed`, english_alignment.heard_words) counts as roughly right."""
+    (`confirmed`, english_alignment.heard_words) counts as roughly right; a
+    letter ASR's look-alike spelling of a word it confirms ("rise" for a
+    clean "rice") is not taken as another word."""
     missing = timing.missing if timing is not None else frozenset()
     out = []
     for i, m in enumerate(matches):
@@ -271,6 +273,32 @@ def phoneme_accuracy(articulation: list[float] | None, timing: SyllableTiming | 
     )
 
 
+def confidence_articulation(verdicts: Sequence["WordVerdict"],
+                            word_confidence: Sequence[float | None]) -> list[float | None]:
+    """0-100 per target word from an ASR's own evidence (0-1) for it. A
+    word it did not hear as the target has no pronunciation evidence (None):
+    that is a content error, scored there."""
+    out: list[float | None] = []
+    for v, conf in zip(verdicts, word_confidence):
+        if v.status in ("omitted", "substituted") or conf is None:
+            out.append(None)
+        else:
+            out.append(round(100.0 * _clamp01(conf), 2))
+    return out
+
+
+def phoneme_from_confidence(articulation: list[float | None], words: Sequence[str],
+                            metric: str = "asr_token_confidence") -> dict:
+    sized = [(a, max(1, len(w.replace("'", "")))) for a, w in zip(articulation, words) if a is not None]
+    if not sized:
+        return _criterion("insufficient_evidence", reason="no_word_read_with_evidence")
+    score = sum(a * s for a, s in sized) / sum(s for _a, s in sized)
+    return _criterion(
+        "estimated", score, metric,
+        calibrated=False, unit="word", words_with_confidence=len(sized),
+    )
+
+
 # --- prosody ---------------------------------------------------------------
 
 def _gate(content: dict, verdicts: Sequence[WordVerdict]) -> dict:
@@ -287,10 +315,36 @@ def _gate(content: dict, verdicts: Sequence[WordVerdict]) -> dict:
     }
 
 
+def _elidable(spoken: str) -> bool:
+    """Dictionary readings with different syllable counts ("every": EV-er-y
+    / EV-ry): the stressed-syllable check would compare windows of a
+    syllable the speaker rightly drops."""
+    entries = _cmu_phones(spoken.replace("'", ""))
+    if not entries or len(entries) < 2:
+        return False
+    vowels = {sum(1 for p in e if p[:1] in "AEIOU") for e in entries}
+    return len(vowels) > 1
+
+
+def stress_checks(intonation: IntonationResult | None) -> dict:
+    """Word-stress checks by word index. For an elidable word ("every",
+    "different") a miss is dropped -- its syllable windows may hold one the
+    speaker rightly left out -- but a hit still counts."""
+    if intonation is None:
+        return {}
+    words = intonation.analysis.words
+    out = {}
+    for c in intonation.word_stress:
+        elidable = c.word < len(words) and _elidable(words[c.word].spoken or words[c.word].text.lower())
+        if not (elidable and c.ok is False):
+            out[c.word] = c
+    return out
+
+
 def word_stress(intonation: IntonationResult | None, read: set[int]) -> dict:
     if intonation is None:
         return _criterion("insufficient_evidence", reason="no_pitch_track")
-    checks = [c for c in intonation.word_stress if c.word in read and c.ok is not None]
+    checks = [c for k, c in stress_checks(intonation).items() if k in read and c.ok is not None]
     if not checks:
         return _criterion("not_assessed", reason="no_multisyllable_word_measured")
     right = sum(1 for c in checks if c.ok)
@@ -449,6 +503,7 @@ _MESSAGES = {
         "extra_words": "Có từ thừa không có trong câu: {words}. Hãy đọc đúng theo văn bản, không chen thêm từ.",
         "repeated_words": "Có từ bị đọc lặp lại: {words}. Hãy đọc liền mạch, không lặp hay sửa giữa chừng.",
         "unclear_words": "Phát âm chưa rõ: {words}. Hãy mở miệng rõ hơn và đọc đủ âm cuối.",
+        "mispronounced_words": "Phát âm dễ bị nghe thành từ khác: {words}. Nghe lại mẫu, chú ý phụ âm và âm cuối của các từ này.",
         "wrong_stress": "Đặt trọng âm sai ở: {words}. Nhấn mạnh (cao và dài hơn) vào âm tiết viết hoa.",
         "final_tone_fall": "Cuối câu nên xuống giọng rõ ràng.",
         "final_tone_rise": "Câu hỏi Yes/No nên lên giọng ở cuối câu.",
@@ -460,6 +515,7 @@ _MESSAGES = {
         "no_reduction": "Đọc lướt nhẹ các từ chức năng (a, the, to, of...) để tạo nhịp tự nhiên của tiếng Anh.",
         "content_gate": "Hãy đọc đúng các từ trong câu trước. Trọng âm, ngữ điệu, nhịp và độ trôi chảy chỉ được chấm khi bạn đọc đúng ít nhất một nửa câu.",
         "no_voice": "Không nghe thấy giọng đọc. Hãy đọc to, rõ và gần micro hơn.",
+        "wrong_language": "Bản ghi nghe như tiếng {language}, không phải câu tiếng Anh. Hãy đọc đúng câu tiếng Anh mẫu.",
     },
     "en": {
         "omitted_words": "You skipped: {words}. Read every word, including articles and prepositions.",
@@ -467,6 +523,7 @@ _MESSAGES = {
         "extra_words": "Extra words not in the text: {words}. Read exactly what is written.",
         "repeated_words": "Repeated words: {words}. Read smoothly without repeating or restarting.",
         "unclear_words": "Not clearly pronounced: {words}. Open your mouth more and finish the final sounds.",
+        "mispronounced_words": "These could be heard as other words: {words}. Listen to the model and mind their consonants and final sounds.",
         "wrong_stress": "Wrong word stress on: {words}. Make the capitalised syllable louder, longer and higher.",
         "final_tone_fall": "Let your voice fall clearly at the end of the sentence.",
         "final_tone_rise": "A yes/no question should rise at the end.",
@@ -478,6 +535,7 @@ _MESSAGES = {
         "no_reduction": "Say function words (a, the, to, of...) lightly to get a natural English rhythm.",
         "content_gate": "Read the right words first. Stress, intonation, rhythm and fluency are only scored once at least half the sentence is read correctly.",
         "no_voice": "No voice was heard. Read aloud, clearly and closer to the microphone.",
+        "wrong_language": "The recording sounds like {language}, not the English sentence. Read the English text aloud.",
     },
 }
 
@@ -497,6 +555,24 @@ def _stress_label(syllables: Sequence[str], index: int | None) -> str:
 
 
 # --- report ----------------------------------------------------------------
+
+@dataclass
+class AssessmentInputs:
+    """What assess_reading needed for the wav2vec2 report, kept so another
+    ASR's transcript (Qwen3-ASR via Ollama) can be scored on the same
+    acoustics: same timing, pitch checks, VAD and audio."""
+
+    target_text: str
+    analysis: SentenceAnalysis | None
+    timing: SyllableTiming | None
+    intonation: IntonationResult | None
+    vad: Any
+    duration: float
+    samples: Any  # 16 kHz mono float32 numpy array, or None
+    sample_rate: int | None
+    legacy_score: float | None = None
+    lang: str = "vi"
+
 
 def _word_texts(analysis: SentenceAnalysis | None, matches: Sequence[WordMatch]) -> list[str]:
     if analysis is not None and len(analysis.words) == len(matches):
@@ -518,8 +594,13 @@ def assess_reading(
     confirmed: frozenset[int] = frozenset(),
     legacy_score: float | None = None,
     lang: str = "vi",
+    word_confidence: Sequence[float | None] | None = None,
+    confidence_metric: str = "asr_token_confidence",
 ) -> dict:
-    """The `reading_assessment` dict (see module docstring)."""
+    """The `reading_assessment` dict (see module docstring). With
+    `word_confidence` (the ASR's own 0-1 confidence per target word, e.g.
+    Qwen3-ASR logprobs) phoneme accuracy comes from it instead of the
+    forced-alignment letter posteriors."""
     if intonation is not None and len(intonation.analysis.words) != len(matches):
         intonation = None  # tokenizers drifted apart: no per-word prosody
     if analysis is not None and len(analysis.words) != len(matches):
@@ -532,12 +613,15 @@ def assess_reading(
     spoken = [m.target for m in matches]
     verdicts = word_verdicts(matches, timing, confirmed)
     read = {v.index for v in verdicts if v.status in ("correct", "mispronounced")}
-    # Letter posteriors on an unreliable path say nothing about articulation.
-    articulation = word_articulation(timing) if timing is not None and timing.aligned else None
-
     criteria: dict[str, dict] = {}
     criteria["content_accuracy"] = content_accuracy(matches, verdicts, extras)
-    criteria["phoneme_accuracy"] = phoneme_accuracy(articulation, timing, spoken)
+    if word_confidence is not None and len(word_confidence) == len(matches):
+        articulation = confidence_articulation(verdicts, word_confidence)
+        criteria["phoneme_accuracy"] = phoneme_from_confidence(articulation, spoken, confidence_metric)
+    else:
+        # Letter posteriors on an unreliable path say nothing about articulation.
+        articulation = word_articulation(timing) if timing is not None and timing.aligned else None
+        criteria["phoneme_accuracy"] = phoneme_accuracy(articulation, timing, spoken)
     gate = _gate(criteria["content_accuracy"], verdicts)
     flu, audio = fluency(len(matches), len(read), duration, vad, analysis, extras)
     if gate["passed"]:
@@ -562,7 +646,7 @@ def assess_reading(
     else:
         status = "partial_assessment"
 
-    stress = {c.word: c for c in intonation.word_stress} if intonation is not None else {}
+    stress = stress_checks(intonation)
     word_results = []
     for v, m, text in zip(verdicts, matches, texts):
         issues: list[str] = []
@@ -688,7 +772,8 @@ def _improvements(criteria, gate, words, extras, intonation, read, lang) -> list
             add("low", "intonation", "weak_sentence_stress", weak_peaks, "f0_peaks",
                 words=_quote(weak_peaks))
         for c in intonation.ends:
-            if c.ok is False and c.expected in ("fall", "rise"):
+            if (c.ok is False and c.expected in ("fall", "rise")
+                    and _phrase_last_word(intonation.analysis, c.phrase) in read):
                 add("low", "intonation", f"final_tone_{c.expected}", evidence="f0_final_tone")
                 break
     flu = criteria["fluency"]

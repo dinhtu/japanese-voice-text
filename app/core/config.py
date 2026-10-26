@@ -55,9 +55,14 @@ class Settings:
                            (auto-downloaded on first English evaluate, ~121KB).
         GOPT_DEVICE        cpu (default) — tiny transformer, keep off the 3060.
         GOPT_ENABLED       1 to run GOPT on /en (default), 0 to skip.
-        EN_OLLAMA_ASSESSMENT  1 (default) to add `ollama_assessment` (OLLAMA_MODEL
-                           scores the measured facts) to English /evaluate, 0 to skip.
+        EN_OLLAMA_ASSESSMENT  1 (default) to add `ollama_assessment` (the audio
+                           transcribed by EN_OLLAMA_ASR_MODEL, then scored) to
+                           English /evaluate, 0 to skip.
+        EN_OLLAMA_ASR_MODEL   Ollama ASR model for it (default frozenlab/qwen3-asr;
+                           `ollama pull frozenlab/qwen3-asr`). Independent of OLLAMA_MODEL.
         EN_OLLAMA_ASSESSMENT_TIMEOUT_S  Its timeout in seconds (default 45).
+        EN_V2_ALIGNER      /evaluate-v2 word timing: wav2vec2 (default) | none.
+        EN_V2_FEEDBACK     1 (default) to add OLLAMA_MODEL feedback to /evaluate-v2, 0 to skip.
     """
 
     def __init__(self) -> None:
@@ -97,9 +102,18 @@ class Settings:
         # /text-guide writes a long phrase-by-phrase guide (minutes for long
         # sentences on a local GPU), so it gets its own, larger timeout.
         self.text_guide_timeout_s = float(os.getenv("TEXT_GUIDE_TIMEOUT_S", "180"))
-        # English /evaluate: `ollama_assessment`, the LLM's own scores from the
-        # measured facts, next to reading_assessment / gopt_assessment.
+        # English /evaluate: `ollama_assessment`, the audio transcribed by an
+        # Ollama ASR model (not OLLAMA_MODEL, which is text-only and stays
+        # for /coach) and scored like reading_assessment.
         self.en_ollama_assessment = os.getenv("EN_OLLAMA_ASSESSMENT", "1") == "1"
+        self.en_ollama_asr_model = (
+            os.getenv("EN_OLLAMA_ASR_MODEL", "frozenlab/qwen3-asr").strip() or "frozenlab/qwen3-asr"
+        )
+        # English /evaluate-v2: word timing has no Ollama option, so it stays a
+        # wav2vec2 CTC forced alignment ("none" = no timing: word stress is
+        # then not assessed); feedback is OLLAMA_MODEL explaining the scores.
+        self.en_v2_aligner = os.getenv("EN_V2_ALIGNER", "wav2vec2").strip().lower() or "wav2vec2"
+        self.en_v2_feedback = os.getenv("EN_V2_FEEDBACK", "1") == "1"
         self.en_ollama_assessment_timeout_s = float(
             os.getenv("EN_OLLAMA_ASSESSMENT_TIMEOUT_S", "45")
         )

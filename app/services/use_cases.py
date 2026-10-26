@@ -46,6 +46,8 @@ class EvaluationResult:
     # English only: app.services.english_assessment dicts (additive reports)
     reading_assessment: dict | None = None
     gopt_assessment: dict | None = None
+    # English only: english_assessment.AssessmentInputs (not serialized)
+    assessment_inputs: object | None = None
 
 
 def _speech_span(windows: list[tuple[float, float]]) -> float | None:

@@ -1,202 +1,305 @@
-"""`ollama_assessment`: the local LLM's own scores for one English reading,
-returned next to reading_assessment / gopt_assessment for comparison.
+"""`ollama_assessment` on English /evaluate: the reading scored from the
+AUDIO by Qwen3-ASR (EN_OLLAMA_ASR_MODEL, default frozenlab/qwen3-asr) in
+Ollama -- separate from OLLAMA_MODEL, the text model /coach uses. The
+Ollama calls live in app/services/qwen3_asr.py.
 
-A text LLM cannot hear the audio, so it scores the MEASURED facts: the
-transcript against the target, each word's status and letter clarity,
-pace / pauses / repeats, and the pitch checks on words that were read
-right. It is deliberately NOT shown reading_assessment's or GOPT's scores,
-so its numbers are an independent opinion, not a copy.
+1. Qwen3-ASR transcribes the learner's audio (verbatim prompt, never the
+   target sentence).
+2. That transcript replaces wav2vec2's: the same six criteria are scored
+   by english_assessment.assess_reading on it, over the same acoustics
+   (forced-alignment timing, pitch checks, VAD). Content, the per-word
+   verdicts, the gate and words-correct-per-minute follow Qwen3-ASR.
+   Phoneme accuracy uses, per word read, Qwen3-ASR's margin between the
+   word and its best rival among the top-20 token alternatives (see
+   qwen3_asr.word_evidence) when Ollama returns them, otherwise the
+   forced-alignment estimate (`confidence_source` says which).
+3. `agreement` puts the two ASRs' word verdicts side by side. Qwen3-ASR has
+   a strong language model that "repairs" misread words, so a word it ALSO
+   hears wrong is strong evidence of a real error; a word it hears right
+   is weaker evidence than wav2vec2's.
 
-Same six criteria and weights as reading_assessment. `overall_score` is
-the model's own; `weighted_overall` re-weights the model's criterion
-scores with english_assessment.WEIGHTS so the two reports compare like for
-like. temperature 0 + a fixed seed keep repeated calls close, but an LLM
-score is still an opinion: never feed it back into the other scores.
+Optional throughout: Ollama down, model not pulled or an old server is a
+`status`, never a failed /evaluate.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from collections import defaultdict
+from typing import TYPE_CHECKING, Any, Sequence
 
-from app.services.english_assessment import WEIGHTS
+import numpy as np
+
+from app.services.english_assessment import _cmu_phones, assess_reading
+from app.services.english_scoring import (
+    ExtraPiece,
+    WordMatch,
+    align_word_tokens,
+    expand_contractions,
+    transcript_tokens,
+)
+from app.services.english_text import expand_for_speech
+from app.services.qwen3_asr import (  # noqa: F401 -- re-exported for callers / tests
+    AsrError,
+    audio_windows,
+    letters,
+    parse_reply,
+    raw_word_confidences,
+    stream_positions,
+    transcribe,
+    wav_bytes,
+    word_evidence,
+)
 
 if TYPE_CHECKING:
     from app.core.config import Settings
-    from app.services.english_intonation import IntonationResult
+    from app.services.english_assessment import AssessmentInputs
 
 logger = logging.getLogger(__name__)
 
-SCORING_VERSION = "en-ollama-v1"
-SEED = 42
-NUM_PREDICT = 700
-
-_CRITERION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "score": {"type": ["number", "null"]},
-        "reason": {"type": "string"},
-    },
-    "required": ["score", "reason"],
-}
-# Passed to Ollama's `format` so the reply is this JSON object.
-JSON_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "criteria": {
-            "type": "object",
-            "properties": {key: _CRITERION_SCHEMA for key in WEIGHTS},
-            "required": list(WEIGHTS),
-        },
-        "overall_score": {"type": ["number", "null"]},
-        "summary": {"type": "string"},
-    },
-    "required": ["criteria", "overall_score", "summary"],
-}
-
-_REASON_LANG = {"vi": "Vietnamese", "en": "English"}
-
-SYSTEM_PROMPT = """\
-You are an experienced English pronunciation examiner. A learner read one \
-English sentence aloud. You cannot hear the recording; you get a JSON block \
-of facts MEASURED from it by speech-recognition and acoustic analysis. \
-Score the reading from those facts only.
-
-Score each criterion from 0 to 100 (100 = native-like for read-aloud):
-- content_accuracy: were the right words read (skipped, replaced, extra words)?
-- phoneme_accuracy: how clearly the words were articulated ("clarity" per word, \
-0-100, from forced alignment; low = unclear or a different sound).
-- word_stress: stress on the right syllable of multi-syllable words.
-- intonation: key words raised in pitch; the sentence end falls / rises as expected.
-- fluency: pace in words CORRECT per minute (about 80-220 is normal for reading \
-aloud), hesitation pauses, repeated words, fillers.
-- rhythm_and_linking: pauses at phrase breaks, words inside a phrase linked \
-without pauses, function words shorter than stressed syllables \
-(reduction_ratio below about 0.7 is natural English, above 1.0 is choppy).
-
-RULES:
-- Use only the facts given. If a criterion has no data (null or listed in \
-"not_measured"), give it "score": null; never guess.
-- Pitch, stress and timing facts cover only words that were read correctly. \
-If few words were read correctly, prosody says little about the target \
-sentence: judge it on that basis.
-- "overall_score": your overall judgement, 0-100, weighting content and \
-phoneme accuracy most.
-- "reason": one short sentence per criterion; "summary": 1-2 sentences. \
-Write them in {reason_lang}.
-- Reply with ONLY the JSON object."""
+SCORING_VERSION = "en-qwen3asr-v1"
+_OK_STATUSES = ("correct", "mispronounced")
 
 
-def _clamp_score(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return round(max(0.0, min(100.0, float(value))), 2)
+def _speech_words(word: str, target_text: str | None = None) -> list[str]:
+    """Alignment tokens of one transcript word (see transcript_tokens), a
+    contraction written out where the target has the full form."""
+    if target_text:
+        word = expand_contractions(word, target_text)
+    return transcript_tokens(expand_for_speech(word))
 
 
-def llm_facts(reading: dict, intonation: "IntonationResult | None" = None) -> dict:
-    """The facts block: measurements only, none of the computed scores."""
-    words = reading["word_results"]
-    read = {w["index"] for w in words if w["status"] in ("correct", "mispronounced")}
+def speech_token_words(transcript: str, target_text: str | None = None
+                       ) -> tuple[list[str], list[int] | None, list[int | None] | None]:
+    """The alignment tokens of `transcript` (numbers / titles written out,
+    apostrophes dropped -- as align_word_tokens sees them) and, per token,
+    the whitespace word it came from and the character offset in that word
+    where its letters start ("one" in "twenty-one" -> 7; None when the
+    token is not spelled there, as "one" from "21"). Both lists are None if
+    expanding word by word does not give the same tokens as the whole text.
+    With `target_text`, "It's" is read "it is" where the target says so."""
+    tokens = _speech_words(transcript, target_text)
+    owners: list[int] = []
+    offsets: list[int | None] = []
+    rebuilt: list[str] = []
+    for k, word in enumerate(transcript.split()):
+        alpha = [(j, ch) for j, ch in enumerate(word.lower()) if "a" <= ch <= "z"]
+        spelled = "".join(ch for _j, ch in alpha)
+        cursor = 0
+        for t in _speech_words(word, target_text):
+            rebuilt.append(t)
+            owners.append(k)
+            at = spelled.find(t, cursor)
+            if at >= 0:
+                offsets.append(alpha[at][0])
+                cursor = at + len(t)
+            else:
+                offsets.append(None)
+    if rebuilt != tokens:
+        return tokens, None, None
+    return tokens, owners, offsets
 
-    def stress_label(w: dict) -> str | None:
-        syllables, index = w.get("syllables"), w.get("expected_stress")
-        if not syllables or len(syllables) < 2 or index is None:
+
+def speech_tokens_with_confidence(transcript: str, raw_conf: Sequence[float] | None,
+                                  target_text: str | None = None) -> tuple[list[str], list[float] | None]:
+    """The alignment tokens of `transcript` and, if known, each one's
+    confidence (that of the whitespace word it came from)."""
+    tokens, owners, _offsets = speech_token_words(transcript, target_text)
+    if raw_conf is None or owners is None or len(transcript.split()) != len(raw_conf):
+        return tokens, None
+    return tokens, [raw_conf[k] for k in owners]
+
+
+def target_positions(matches: Sequence[WordMatch], extras: Sequence[ExtraPiece],
+                     tokens: Sequence[str]) -> list[tuple[int, str]] | None:
+    """Where each target word sits in the transcript tokens, replaying
+    align_word_tokens' path (extras sit after the word they follow; a word
+    may take 1-3 tokens or half of one). Per word (token index, kind):
+    "heard" -- the transcript has it at that token (joined tokens start
+    there); "split_first" / "split_rest" -- it shares one token with its
+    neighbour ("cannot" -> can + not); "gap" -- skipped, index of the next
+    token said (len(tokens) = after the last). None if the replay does not fit."""
+    after: dict[int, list[ExtraPiece]] = defaultdict(list)
+    for e in extras:
+        after[e.after].append(e)
+    out: list[tuple[int, str]] = []
+    p, rest = 0, None
+
+    def take_extra(e: ExtraPiece) -> bool:
+        nonlocal p
+        if rest is not None or p >= len(tokens) or tokens[p] != e.letters:
+            return False
+        p += 1
+        return True
+
+    for e in after[-1]:
+        if not take_extra(e):
             return None
-        return "-".join(s.upper() if k == index else s.lower() for k, s in enumerate(syllables))
+    for i, m in enumerate(matches):
+        need = m.heard
+        if not need:
+            out.append((p, "gap"))
+        elif rest is not None:
+            if need != rest:
+                return None
+            out.append((p, "split_rest"))
+            p, rest = p + 1, None
+        elif p < len(tokens) and tokens[p] == need:
+            out.append((p, "heard"))
+            p += 1
+        elif p < len(tokens) and tokens[p].startswith(need):
+            out.append((p, "split_first"))
+            rest = tokens[p][len(need):]
+        else:
+            start, joined = p, ""
+            while p < len(tokens) and len(joined) < len(need):
+                joined += tokens[p]
+                p += 1
+            if joined != need:
+                return None
+            out.append((start, "heard"))
+        for e in after[i]:
+            if not take_extra(e):
+                return None
+    return out if p == len(tokens) and rest is None else None
 
-    content = reading["criteria"]["content_accuracy"].get("detail") or {}
-    flu = reading["criteria"]["fluency"].get("detail") or {}
-    rhythm = reading["criteria"]["rhythm_and_linking"].get("detail") or {}
-    audio = reading.get("audio_analysis") or {}
-    facts: dict[str, Any] = {
-        "target_text": reading["reference_text"],
-        "recognized_text": reading["recognized_text"],
-        "words_read_correctly": f"{len(read)} of {len(words)}",
-        "word_errors": {
-            "substituted": content.get("substitutions"),
-            "omitted": content.get("deletions"),
-            "extra_words": [e["text"] for e in reading.get("inserted") or []],
-            "repeated_words": [e["text"] for e in reading.get("repeated") or []],
-            "fillers": flu.get("fillers"),
-        },
-        "words": [
-            {
-                "word": w["word"],
-                "status": w["status"],
-                "heard_as": w["recognized"],
-                "clarity": w["phoneme_score"],
-                "dictionary_stress": stress_label(w),
-                "stress_correct": w["stress_ok"],
-            }
-            for w in words
-        ],
-        "timing": {
-            "speech_seconds": audio.get("speech_seconds"),
-            "words_per_minute": audio.get("words_per_minute"),
-            "correct_words_per_minute": audio.get("correct_words_per_minute"),
-            "pauses": audio.get("pause_count"),
-            "pauses_not_at_punctuation": audio.get("unexpected_pause_count"),
-        },
-        "rhythm": {
-            "pauses_inside_phrases_between": [
-                f"{words[a]['word']} | {words[b]['word']}" for a, b in rhythm.get("broken_links", [])
-            ] if rhythm else None,
-            "reduction_ratio": rhythm.get("reduction_ratio"),
-        },
+
+def target_confidence(matches: Sequence[WordMatch], extras: Sequence[ExtraPiece],
+                      tokens: Sequence[str], conf: Sequence[float] | None) -> list[float | None] | None:
+    """Confidence per target word (None for a skipped one); None if unknown."""
+    if conf is None:
+        return None
+    positions = target_positions(matches, extras, tokens)
+    if positions is None:
+        return None
+    out: list[float | None] = []
+    for m, (p, kind) in zip(matches, positions):
+        if kind == "gap":
+            out.append(None)
+        elif kind == "heard" and p < len(tokens) and len(m.heard) > len(tokens[p]):
+            # Joined tokens ("to day"): the weakest of them.
+            joined, k, worst = "", p, 1.0
+            while k < len(tokens) and len(joined) < len(m.heard):
+                joined += tokens[k]
+                worst = min(worst, conf[k])
+                k += 1
+            out.append(worst)
+        else:
+            out.append(conf[p])
+    return out
+
+
+_SHORT_WORDS = frozenset(
+    "a i am an as at be by do go he hi if in is it me my no of oh ok on or so to up us we".split()
+)
+
+
+def _is_word(letters_: str) -> bool:
+    """A real word, not a fragment: "walk", "an", "a" -- not "gl", "wat",
+    nor CMU's odd short entries ("na", "ed")."""
+    if len(letters_) <= 2:
+        return letters_ in _SHORT_WORDS
+    return _cmu_phones(letters_) is not None
+
+
+def _homophone(token_letters: str, target: str) -> bool:
+    a, b = _cmu_phones(token_letters), _cmu_phones(target)
+    return bool(a and b and set(a) & set(b))
+
+
+def rival_evidence(stream: Sequence[dict] | None, transcript: str, matches: Sequence[WordMatch],
+                   extras: Sequence[ExtraPiece], target_text: str | None = None) -> list[dict | None] | None:
+    """Pronunciation evidence (qwen3_asr.word_evidence) for every target
+    word the transcript has, read at the stream token where its letters
+    start. None per word that was skipped, shares a token with the word
+    before it, or is not spelled in the transcript (digits); None overall
+    when the stream / transcript / alignment do not line up."""
+    if not stream or not transcript:
+        return None
+    tokens, owners, offsets = speech_token_words(transcript, target_text)
+    positions = target_positions(matches, extras, tokens)
+    located = stream_positions(stream, transcript)
+    if positions is None or owners is None or located is None:
+        return None
+    word_starts, token_at = located
+    target_letters = [letters(m.target) for m in matches]
+    # Target words skipped at each spot: the model still half-expects them
+    # there, so they are no rival for the word actually said ("like glass").
+    skipped: dict[int, list[str]] = defaultdict(list)
+    for (p, kind), w in zip(positions, target_letters):
+        if kind == "gap":
+            skipped[p].append(w)
+    out: list[dict | None] = []
+    for k, (m, (p, kind)) in enumerate(zip(matches, positions)):
+        if kind in ("gap", "split_rest") or p >= len(tokens) or offsets[p] is None:
+            out.append(None)
+            continue
+        idx = token_at(word_starts[owners[p]] + offsets[p])
+        if idx is None:
+            out.append(None)
+            continue
+        target = target_letters[k]
+        own = []
+        if kind == "split_first":
+            own.append(tokens[p])  # "cannot" stands for can + not
+        if len(m.heard) > len(tokens[p]):
+            own.append(tokens[p])  # "in" of "in to" for "into"
+        if tokens[p] == target or kind == "split_first" or m.ok:
+            # The token the model wrote here spells this very word (or an
+            # accepted spelling of it: "flavor" for "flavour").
+            own.append(letters(str(stream[idx].get("token", ""))))
+        # Skipped words, and the next target word (the model wondering
+        # whether this one was skipped), are content questions, not rivals.
+        ignore = [w for w in skipped.get(p, []) if w != target]
+        if k + 1 < len(target_letters) and target_letters[k + 1] != target:
+            ignore.append(target_letters[k + 1])
+        out.append(word_evidence(stream[idx].get("top_logprobs") or [], target,
+                                 same_word=_homophone, ignore=ignore, extra_own=own, is_word=_is_word))
+    return out
+
+
+# --- report ----------------------------------------------------------------
+
+def agreement(wav2vec2: dict | None, qwen: dict) -> dict | None:
+    """Per target word: did each ASR hear it as the target?"""
+    a = (wav2vec2 or {}).get("word_results") or []
+    b = qwen.get("word_results") or []
+    if not a or len(a) != len(b):
+        return None
+    both_ok, both_wrong, only_w2v, only_qwen = [], [], [], []
+    for wa, wb in zip(a, b):
+        ok_a, ok_b = wa["status"] in _OK_STATUSES, wb["status"] in _OK_STATUSES
+        bucket = both_ok if ok_a and ok_b else both_wrong if not ok_a and not ok_b else (
+            only_qwen if ok_a else only_w2v
+        )
+        bucket.append(wa["word"])
+    return {
+        "same_verdict_share": round((len(both_ok) + len(both_wrong)) / len(a), 4),
+        "both_read": both_ok,
+        "both_wrong": both_wrong,
+        "wrong_only_by_wav2vec2": only_w2v,
+        "wrong_only_by_qwen3_asr": only_qwen,
     }
-    if intonation is not None and len(intonation.analysis.words) == len(words):
-        names = [w["word"] for w in words]
-        facts["intonation"] = {
-            "expected_sentence_end": intonation.analysis.final_tone,
-            "key_word_pitch": [
-                {"word": names[c.word], "raised": c.ok, "semitones_above_neighbours": c.delta}
-                for c in intonation.peaks if c.ok is not None and c.word in read
-            ],
-            "sentence_ends": [
-                {"expected": c.expected, "as_expected": c.ok, "pitch_change_semitones": c.delta}
-                for c in intonation.ends if c.ok is not None
-            ],
-            "phrase_breaks": [
-                {"after": names[c.after_word], "paused": c.ok, "pause_seconds": c.pause}
-                for c in intonation.breaks
-                if c.ok is not None and c.after_word in read and c.after_word + 1 in read
-            ],
-        }
-    else:
-        facts["intonation"] = None
-    facts["not_measured"] = [
-        key for key, c in reading["criteria"].items()
-        if c["status"] in ("insufficient_evidence", "not_assessed")
-    ]
-    return facts
-
-
-async def _chat(settings: "Settings", messages: list[dict]) -> str:
-    """One constrained-JSON chat call; raises on any Ollama problem."""
-    from ollama import AsyncClient
-
-    client = AsyncClient(host=settings.ollama_host, timeout=settings.en_ollama_assessment_timeout_s)
-    response = await client.chat(
-        model=settings.ollama_model,
-        messages=messages,
-        think=False,
-        stream=False,
-        format=JSON_SCHEMA,
-        options={"temperature": 0, "seed": SEED, "num_predict": NUM_PREDICT},
-    )
-    return ((response.get("message", {}) or {}).get("content", "") or "").strip()
 
 
 def _base(status: str, settings: "Settings | None", **extra: Any) -> dict:
     return {
         "status": status,
-        "model": getattr(settings, "ollama_model", None),
-        "criteria": None,
+        "model": getattr(settings, "en_ollama_asr_model", None),
+        "language": None,
+        "transcript": None,
+        "recognized_text": None,
         "overall_score": None,
-        "weighted_overall": None,
-        "summary": None,
+        "weights_used": None,
+        "content_gate": None,
+        "criteria": None,
+        "word_results": [],
+        "inserted": [],
+        "repeated": [],
+        "improvements": [],
+        "confidence_source": None,
+        "agreement": None,
         "comparison": None,
         "latency_ms": None,
         "error": None,
@@ -205,93 +308,102 @@ def _base(status: str, settings: "Settings | None", **extra: Any) -> dict:
     }
 
 
-def parse_scores(content: str) -> tuple[dict, float | None, str]:
-    """(criteria, overall, summary) from the model reply; ValueError if unusable."""
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"not JSON: {e}") from e
-    if not isinstance(data, dict) or not isinstance(data.get("criteria"), dict):
-        raise ValueError("no 'criteria' object")
-    criteria = {}
-    for key, weight in WEIGHTS.items():
-        item = data["criteria"].get(key)
-        item = item if isinstance(item, dict) else {}
-        criteria[key] = {
-            "score": _clamp_score(item.get("score")),
-            "weight": weight,
-            "reason": str(item.get("reason") or "").strip() or None,
-        }
-    return criteria, _clamp_score(data.get("overall_score")), str(data.get("summary") or "").strip()
-
-
-def _weighted(criteria: dict) -> float | None:
-    used = {k: c["score"] for k, c in criteria.items() if c["score"] is not None}
-    if not used:
-        return None
-    return round(sum(WEIGHTS[k] * s for k, s in used.items()) / sum(WEIGHTS[k] for k in used), 2)
+def score_transcript(inputs: "AssessmentInputs", transcript: str,
+                     raw_conf: Sequence[float] | None,
+                     stream: Sequence[dict] | None = None) -> tuple[dict, str]:
+    """assess_reading on Qwen3-ASR's transcript; (report, confidence_source).
+    Phoneme accuracy: the rival margin per word read (from `stream`'s
+    top-20 alternatives), else the chosen tokens' probability, else the
+    forced-alignment estimate."""
+    tokens, conf = speech_tokens_with_confidence(transcript, raw_conf, inputs.target_text)
+    recognized = " ".join(tokens)
+    matches, extras = align_word_tokens(inputs.target_text, recognized)
+    source, metric = "forced_alignment", "asr_token_confidence"
+    evidence = rival_evidence(stream, transcript, matches, extras, inputs.target_text)
+    if evidence is not None and any(e and e.get("score") is not None for e in evidence):
+        word_conf = [e["score"] / 100.0 if e and e.get("score") is not None else None for e in evidence]
+        source = metric = "qwen3_asr_rival_margin"
+    else:
+        word_conf = target_confidence(matches, extras, tokens, conf)
+        if word_conf is not None:
+            source = "qwen3_asr_logprobs"
+    report = assess_reading(
+        target_text=inputs.target_text,
+        recognized_text=recognized,
+        matches=matches,
+        extras=extras,
+        analysis=inputs.analysis,
+        timing=inputs.timing,
+        intonation=inputs.intonation,
+        vad=inputs.vad,
+        duration=inputs.duration,
+        legacy_score=inputs.legacy_score,
+        lang=inputs.lang,
+        word_confidence=word_conf,
+        confidence_metric=metric,
+    )
+    return report, source
 
 
 async def assess_with_ollama(
+    inputs: "AssessmentInputs | None",
     reading: dict | None,
     gopt: dict | None,
-    intonation: "IntonationResult | None",
     settings: "Settings",
-    lang: str = "vi",
 ) -> dict:
-    """The `ollama_assessment` dict. Never raises: a missing / down Ollama
-    is a status, not a failed /evaluate."""
+    """The `ollama_assessment` dict. Never raises."""
     if not getattr(settings, "en_ollama_assessment", True):
         return _base("disabled", settings)
-    if not reading:
-        return _base("skipped", settings, error="reading_assessment unavailable")
-    if reading.get("status") == "no_voice":
+    if reading and reading.get("status") == "no_voice":
         return _base("no_voice", settings)
-    try:
-        facts = llm_facts(reading, intonation)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Ollama assessment facts failed", exc_info=True)
-        return _base("skipped", settings, error=f"facts: {e}")
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.replace("{reason_lang}", _REASON_LANG.get(lang, "English"))},
-        {"role": "user", "content": json.dumps(facts, ensure_ascii=False)},
-    ]
+    if inputs is None or inputs.samples is None or not inputs.sample_rate:
+        return _base("skipped", settings, error="no audio / acoustics to score")
     t0 = time.perf_counter()
     try:
-        content = await _chat(settings, messages)
-    except ImportError:
-        return _base("unavailable", settings, error="package 'ollama' is not installed")
-    except Exception as e:  # noqa: BLE001 -- connection refused, timeout, model not pulled
-        logger.warning("Ollama assessment call failed: %s", e)
+        heard = await transcribe(np.asarray(inputs.samples), int(inputs.sample_rate), settings)
+    except AsrError as e:
+        logger.warning("Qwen3-ASR assessment: %s", e)
+        return _base(e.status, settings, error=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Qwen3-ASR assessment failed", exc_info=True)
         return _base("unavailable", settings, error=str(e) or type(e).__name__)
     latency = round((time.perf_counter() - t0) * 1000, 1)
     try:
-        criteria, overall, summary = parse_scores(content)
-    except ValueError as e:
-        logger.warning("Ollama assessment reply unusable: %s", e)
-        return _base("invalid_output", settings, latency_ms=latency, error=str(e))
+        report, source = score_transcript(inputs, heard["transcript"], heard["word_confidence"], heard.get("stream"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Qwen3-ASR transcript scoring failed", exc_info=True)
+        return _base("invalid_output", settings, latency_ms=latency, error=f"scoring: {e}")
 
-    weighted = _weighted(criteria)
-    reading_overall = reading.get("overall_score")
+    status = "no_speech" if not heard["transcript"] else report["status"]
+    overall = report["overall_score"]
+    reading_overall = (reading or {}).get("overall_score")
     return _base(
-        "scored",
+        status,
         settings,
-        criteria=criteria,
+        language=heard["language"],
+        language_mismatch=bool(heard["language"]) and heard["language"].lower() != "english",
+        transcript=heard["transcript"],
+        recognized_text=report["recognized_text"],
         overall_score=overall,
-        weighted_overall=weighted,
-        summary=summary or None,
+        weights_used=report["weights_used"],
+        content_gate=report["content_gate"],
+        criteria=report["criteria"],
+        word_results=report["word_results"],
+        inserted=report["inserted"],
+        repeated=report["repeated"],
+        improvements=report["improvements"],
+        confidence_source=source,
+        agreement=agreement(reading, report),
         latency_ms=latency,
         comparison={
-            "ollama_overall": overall,
-            "ollama_weighted_overall": weighted,
+            "qwen3_asr_overall": overall,
             "reading_overall": reading_overall,
             "gopt_average": (gopt or {}).get("average"),
             "gopt_adjusted_average": (gopt or {}).get("adjusted_average"),
-            "legacy_score": reading.get("legacy_score"),
+            "legacy_score": (reading or {}).get("legacy_score"),
             "delta_vs_reading": (
-                round(weighted - reading_overall, 2)
-                if weighted is not None and reading_overall is not None else None
+                round(overall - reading_overall, 2)
+                if overall is not None and reading_overall is not None else None
             ),
         },
     )

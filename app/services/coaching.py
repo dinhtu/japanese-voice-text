@@ -328,6 +328,9 @@ class PronunciationFacts:
     pitch_total: int | None = None
     # Already-measured findings appended verbatim (English: reading_assessment).
     extra_lines: list[str] = field(default_factory=list)
+    # True: the facts block is the target text plus extra_lines only, for a
+    # caller whose lines already cover everything (English /evaluate-v2).
+    facts_only: bool = False
 
 
 @dataclass
@@ -426,6 +429,8 @@ def build_facts(
 
 
 def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
+    if facts.facts_only:
+        return "\n".join([f"Câu mục tiêu: {facts.text}", *facts.extra_lines])
     unit = "từ" if target_lang == "en" else ("âm tiết" if target_lang == "zh" else "mora")
     lines = [
         f"Câu mục tiêu: {facts.text}",
