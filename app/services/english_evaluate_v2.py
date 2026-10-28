@@ -63,7 +63,7 @@ from app.services.english_assessment import (
     word_stress,
     word_verdicts,
 )
-from app.services.english_ollama_assessment import rival_evidence, speech_token_words
+from app.services.english_ollama_assessment import ASR_LANGUAGE, rival_evidence, speech_token_words
 from app.services.english_scoring import align_word_tokens, transcript_tokens
 
 if TYPE_CHECKING:
@@ -509,7 +509,7 @@ async def evaluate_v2(acoustics: Acoustics, settings: "Settings", lang: str = "v
         report["overall_score"] = 0.0
         return report
     try:
-        heard = await qwen3_asr.transcribe(acoustics.samples, acoustics.sample_rate, settings)
+        heard = await qwen3_asr.transcribe(acoustics.samples, acoustics.sample_rate, settings, ASR_LANGUAGE)
     except qwen3_asr.AsrError as e:
         return _base(acoustics, target_text, "asr_unavailable",
                      asr={"model": settings.en_ollama_asr_model, "status": e.status, "error": str(e)})

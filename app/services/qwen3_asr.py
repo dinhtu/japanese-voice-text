@@ -8,7 +8,12 @@ base64 in the user message's `images` field (Ollama has no audio field).
   (Ollama `logprobs` / `top_logprobs`, server >= 0.12.11). The system
   prompt asks for a verbatim transcript (measured: it then keeps "waiter"
   for "water" instead of repairing it); it never contains the target
-  sentence, which would bias the transcript toward it.
+  sentence, which would bias the transcript toward it. Given the caller's
+  target language, a window the model labels as another one (accented
+  English heard as "Japanese" and written in kana) is decoded again with
+  the reply prefilled "language English<asr_text>" -- only then: forced on
+  silence or noise it makes up an English sentence where free decoding
+  answers "language None".
 
 * word_evidence() -- pronunciation evidence for a TARGET word from the
   distribution at the transcript token where it starts (in the transcript
@@ -26,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import math
 import re
 import time
@@ -38,6 +44,8 @@ import numpy as np
 
 if TYPE_CHECKING:
     from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 ASR_TAG = "<asr_text>"
 # Generic -- never the target sentence.
@@ -194,14 +202,22 @@ def base_url(host: str) -> str:
     return f"{parts.scheme}://{name}:{port}{parts.path}"
 
 
-async def chat(settings: "Settings", wav: bytes, num_predict: int = NUM_PREDICT, top_logprobs: int = 0) -> dict:
-    """One /api/chat call with the audio; returns the response JSON."""
+async def chat(settings: "Settings", wav: bytes, num_predict: int = NUM_PREDICT, top_logprobs: int = 0,
+               language: str | None = None) -> dict:
+    """One /api/chat call with the audio; returns the response JSON. With
+    `language` the reply is prefilled "language <language><asr_text>" (the
+    model's own forced-language format: the legacy template stops right
+    after the last assistant message), and that prefix is put back in front
+    of the content and the logprobs so the reply parses like a free one."""
     import httpx
 
+    prefill = f"language {language}{ASR_TAG}" if language else ""
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": VERBATIM_PROMPT},
         {"role": "user", "content": "", "images": [base64.b64encode(wav).decode("ascii")]},
     ]
+    if prefill:
+        messages.append({"role": "assistant", "content": prefill})
     payload: dict[str, Any] = {
         "model": settings.en_ollama_asr_model,
         "stream": False,
@@ -237,35 +253,59 @@ async def chat(settings: "Settings", wav: bytes, num_predict: int = NUM_PREDICT,
         status = "unsupported" if "does not support" in body else "unavailable"
         raise AsrError(status, f"Ollama HTTP {response.status_code}: {body}")
     try:
-        return response.json()
+        data = response.json()
     except ValueError as e:
         raise AsrError("invalid_output", f"Ollama trả về không phải JSON: {e}") from e
+    if prefill and isinstance(data, dict):
+        message = data.get("message") or {}
+        data["message"] = {**message, "content": prefill + (message.get("content") or "")}
+        if isinstance(data.get("logprobs"), list):
+            data["logprobs"] = [{"token": prefill, "logprob": 0.0, "top_logprobs": []}] + data["logprobs"]
+    return data
 
 
 def _content(data: dict) -> str:
     return ((data.get("message") or {}).get("content") or "").strip()
 
 
-async def transcribe(samples: np.ndarray, sample_rate: int, settings: "Settings") -> dict:
+async def _decode(settings: "Settings", wav: bytes, language: str | None = None) -> tuple[dict, str | None, str]:
+    """(response JSON, language, text) for one window."""
+    data = await chat(settings, wav, top_logprobs=TOP_LOGPROBS, language=language)
+    content = _content(data)
+    try:
+        heard_language, text = parse_reply(content)
+    except ValueError as e:
+        raise AsrError(
+            "invalid_output",
+            f"Không có <asr_text> trong câu trả lời ({content[:120]!r}). Bản Ollama có thể quá cũ "
+            "để đưa audio vào model này: cần bản hỗ trợ qwen3a (nên dùng 0.40.x mới nhất).",
+        ) from e
+    return data, heard_language, text
+
+
+async def transcribe(samples: np.ndarray, sample_rate: int, settings: "Settings",
+                     language: str | None = None) -> dict:
     """{"language", "transcript", "word_confidence" (or None), "stream" (the
     tokens after <asr_text> with their top-20 alternatives, windows joined
     by a space; None without logprobs), "calls", "latency_ms"}. Leading /
-    trailing silence is trimmed first; long clips go window by window."""
+    trailing silence is trimmed first; long clips go window by window.
+    `language` is the caller's target language as the model names it
+    ("English"): a window heard as another one is decoded again forced to
+    it (one more call). None = keep whatever language it detects."""
     t0 = time.perf_counter()
+    forced = (language or "").strip()
     languages, texts, logprobs, streams = [], [], [], []
     have_logprobs = True
+    calls = 0
     windows = audio_windows(trim_silence(samples, sample_rate), sample_rate)
     for window in windows:
-        data = await chat(settings, wav_bytes(window, sample_rate), top_logprobs=TOP_LOGPROBS)
-        content = _content(data)
-        try:
-            language, text = parse_reply(content)
-        except ValueError as e:
-            raise AsrError(
-                "invalid_output",
-                f"Không có <asr_text> trong câu trả lời ({content[:120]!r}). Bản Ollama có thể quá cũ "
-                "để đưa audio vào model này: cần bản hỗ trợ qwen3a (nên dùng 0.40.x mới nhất).",
-            ) from e
+        wav = wav_bytes(window, sample_rate)
+        data, language, text = await _decode(settings, wav)
+        calls += 1
+        if forced and language and language.lower() != forced.lower():
+            logger.info("Qwen3-ASR heard %s (%r); decoding again as %s", language, text[:60], forced)
+            data, language, text = await _decode(settings, wav, forced)
+            calls += 1
         languages.append(language)
         texts.append(text)
         if text:
@@ -296,7 +336,7 @@ async def transcribe(samples: np.ndarray, sample_rate: int, settings: "Settings"
         "transcript": transcript,
         "word_confidence": confidences,
         "stream": stream,
-        "calls": len(windows),
+        "calls": calls,
         "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
     }
 

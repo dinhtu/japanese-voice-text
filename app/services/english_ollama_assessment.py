@@ -59,6 +59,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SCORING_VERSION = "en-qwen3asr-v1"
+# Target language for Qwen3-ASR, as the model names it: a part it hears as
+# another language (accented English as Japanese) is transcribed again as this.
+ASR_LANGUAGE = "English"
 _OK_STATUSES = ("correct", "mispronounced")
 
 
@@ -360,7 +363,7 @@ async def assess_with_ollama(
         return _base("skipped", settings, error="no audio / acoustics to score")
     t0 = time.perf_counter()
     try:
-        heard = await transcribe(np.asarray(inputs.samples), int(inputs.sample_rate), settings)
+        heard = await transcribe(np.asarray(inputs.samples), int(inputs.sample_rate), settings, ASR_LANGUAGE)
     except AsrError as e:
         logger.warning("Qwen3-ASR assessment: %s", e)
         return _base(e.status, settings, error=str(e))

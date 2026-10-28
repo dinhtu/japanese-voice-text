@@ -377,3 +377,68 @@ def test_timeout_is_reported_as_such(monkeypatch):
     with pytest.raises(qwen3_asr.AsrError) as e:
         asyncio.run(qwen3_asr.chat(_settings(), b"RIFF"))
     assert "không trả lời trong" in str(e.value) and "ReadTimeout" in str(e.value)
+
+
+def test_window_heard_as_another_language_is_decoded_again_as_english(monkeypatch):
+    seen = []
+
+    async def fake_chat(_settings, wav, **kw):
+        seen.append(kw.get("language"))
+        if kw.get("language"):
+            return _reply("I would like a glass of water.")
+        return {"message": {"content": "language Japanese<asr_text>アイウッドライク。"}}
+
+    monkeypatch.setattr(qwen3_asr, "chat", fake_chat)
+    report = asyncio.run(v2.evaluate_v2(_acoustics(), _settings(), with_feedback=False))
+    assert seen == [None, "English"]
+    assert report["recognized_text"] == "I would like a glass of water."
+    assert report["status"] != "language_mismatch" and report["language_mismatch"] is False
+    assert report["asr"]["calls"] == 2
+
+
+def test_no_speech_is_not_forced_to_english(monkeypatch):
+    seen = []
+
+    async def fake_chat(_settings, wav, **kw):
+        seen.append(kw.get("language"))
+        return {"message": {"content": "language None<asr_text>"}}
+
+    monkeypatch.setattr(qwen3_asr, "chat", fake_chat)
+    monkeypatch.setattr(qwen3_asr, "trim_silence", lambda s, sr: s)
+    heard = asyncio.run(qwen3_asr.transcribe(np.ones(16000, dtype=np.float32) * 0.1, 16000, _settings(), "English"))
+    assert seen == [None] and heard["transcript"] == "" and heard["language"] is None
+
+
+def test_without_a_target_language_the_detected_one_is_kept(monkeypatch):
+    seen = []
+
+    async def fake_chat(_settings, wav, **kw):
+        seen.append(kw.get("language"))
+        return {"message": {"content": "language Japanese<asr_text>水をください。"}}
+
+    monkeypatch.setattr(qwen3_asr, "chat", fake_chat)
+    monkeypatch.setattr(qwen3_asr, "trim_silence", lambda s, sr: s)
+    heard = asyncio.run(qwen3_asr.transcribe(np.ones(16000, dtype=np.float32) * 0.1, 16000, _settings()))
+    assert seen == [None] and heard["language"] == "Japanese" and heard["calls"] == 1
+
+
+def test_forced_language_is_prefilled_and_put_back_in_the_reply(monkeypatch):
+    import httpx
+
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "message": {"role": "assistant", "content": "I would like water."},
+            "logprobs": [_tok("I"), _tok(" would"), _tok(" like"), _tok(" water"), _tok(".")],
+        })
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    data = asyncio.run(qwen3_asr.chat(_settings(), b"RIFF", language="English"))
+    assert sent[0]["messages"][-1] == {"role": "assistant", "content": "language English<asr_text>"}
+    assert qwen3_asr.parse_reply(data["message"]["content"]) == ("English", "I would like water.")
+    stream = qwen3_asr.stream_after_tag(data)
+    assert [t["token"] for t in stream] == ["I", " would", " like", " water", "."]
+    assert qwen3_asr.raw_word_confidences(data["logprobs"], "I would like water.") == [1.0, 1.0, 1.0, 1.0]

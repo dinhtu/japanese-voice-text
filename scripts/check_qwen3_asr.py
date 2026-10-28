@@ -72,7 +72,7 @@ async def _run(args) -> int:
     samples, sr = load_audio(args.audio)
     t0 = time.perf_counter()
     try:
-        heard = await transcribe(samples, sr, settings)
+        heard = await transcribe(samples, sr, settings, "English")
     except AsrError as e:
         print(f"[x] {e.status}: {e}")
         return 1
