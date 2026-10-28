@@ -593,3 +593,105 @@ async def evaluate_v2(acoustics: Acoustics, settings: "Settings", lang: str = "v
     if with_feedback and getattr(settings, "en_v2_feedback", True):
         report["feedback"] = await _feedback(report, settings, lang)
     return report
+
+
+# --- the /evaluate response shape ------------------------------------------
+
+def _criterion_score(criteria: dict, key: str) -> float | None:
+    c = (criteria or {}).get(key) or {}
+    return c.get("score")
+
+
+def legacy_fields(report: dict, acoustics: Acoustics) -> dict:
+    """The /evaluate (EnglishEvaluateResponse) fields from a v2 report, so a
+    client reads /evaluate-v2 exactly like /evaluate. Mapping:
+
+        score / overall_score   v2 overall (0 when no voice)
+        pronunciation_score     v2 pronunciation, else content accuracy
+        fluency_score           v2 fluency (0 when gated: other words read)
+        rhythm_score            the rhythm part of v2 intonation (null if not measured)
+        intonation_score        the intonation part of v2 intonation (null if not measured)
+        cer / distance / errors letter diff of the Qwen3-ASR transcript, as /evaluate
+        mora_status             one item per target word from v2 word_results
+        measured_pitch / intonation   the same pitch measures as /evaluate
+        coach                   the v2 Ollama feedback, as POST /coach returns it
+    """
+    from app.services.english_scoring import score_english
+    from app.services.english_text import expand_for_speech, normalize_english, word_pitch_pattern
+    from app.services.english_use_cases import _NO_VOICE_MESSAGES, _word_pitch
+    from app.services.scoring import _feedback as level_of
+
+    target = acoustics.target_text
+    target_norm = normalize_english(expand_for_speech(target))
+    transcript = report.get("recognized_text") or ""
+    recognized_norm = " ".join(speech_token_words(transcript, target)[0]) if transcript else ""
+    criteria = report.get("criteria") or {}
+    overall = report.get("overall_score")
+    score = int(round(overall)) if overall is not None else 0
+    level, message = level_of(score)
+    if report.get("status") == "no_voice":
+        level = "mismatch"
+        message = _NO_VOICE_MESSAGES.get(acoustics.presence.verdict, message)
+
+    letters = score_english(target, recognized_norm)[0]
+    detail = (criteria.get("intonation") or {}).get("detail") or {}
+    rhythm = (detail.get("rhythm") or {}).get("score")
+    tone = (detail.get("intonation") or {}).get("score")
+    pronunciation = _criterion_score(criteria, "pronunciation")
+    if pronunciation is None:
+        pronunciation = _criterion_score(criteria, "content_accuracy") or 0.0
+    vad = acoustics.vad
+
+    analysis = acoustics.analysis
+    infos = analysis.words if analysis is not None else ()
+    mora_status = []
+    for k, w in enumerate(report.get("word_results") or []):
+        info = infos[k] if len(infos) == len(report["word_results"]) else None
+        mora_status.append({
+            "mora": w["text"],
+            "ok": w["status"] == "correct" and "mispronunciation" not in (w.get("issues") or []),
+            "syllables": w.get("syllables"),
+            "ipa": info.ipa if info is not None else None,
+            "stress_index": w.get("expected_stress"),
+            "heard_stress_index": w.get("heard_stress"),
+            "stress_ok": w.get("stress_ok"),
+        })
+
+    pattern = [{"mora": m.mora, "pitch": m.pitch, "phrase": m.phrase} for m in word_pitch_pattern(recognized_norm)]
+    fb = report.get("feedback") or {}
+    coach = None
+    if fb.get("status") == "generated" and fb.get("assessment"):
+        coach = {"assessment": fb["assessment"], "suggestion": fb.get("suggestion") or "",
+                 "lang": fb.get("lang") or "vi"}
+
+    return {
+        "target_text": target,
+        "target_hiragana": target_norm,
+        "recognized_text": transcript,
+        "recognized_hiragana": recognized_norm,
+        "score": score,
+        "overall_score": float(score if overall is None else overall),
+        "pronunciation_score": float(pronunciation),
+        "fluency_score": float(_criterion_score(criteria, "fluency") or 0.0),
+        "rhythm_score": rhythm,
+        "intonation_score": tone if tone is not None else _criterion_score(criteria, "intonation"),
+        "rhythm_measured": rhythm is not None,
+        "intonation_measured": tone is not None or _criterion_score(criteria, "intonation") is not None,
+        "aspect_method": "qwen3-asr" + ("+wav2vec2-align" if report.get("alignment", {}).get("aligned") else "")
+                         + ("+vad" if vad is not None else ""),
+        "vad_method": vad.method if vad is not None else None,
+        "pause_count": vad.pause_count if vad is not None else 0,
+        "speech_ratio": vad.speech_ratio if vad is not None else None,
+        "cer": letters.cer,
+        "distance": letters.distance,
+        "audio_duration": round(acoustics.duration, 2),
+        "inference_ms": float((report.get("asr") or {}).get("latency_ms") or 0.0),
+        "feedback": {"level": level, "message": message},
+        "errors": [vars(e) for e in letters.errors],
+        "mora_status": mora_status,
+        "recognized_pitch_pattern": pattern,
+        "recognized_pitch_patterns": [pattern] if pattern else [],
+        "measured_pitch": _word_pitch(target, acoustics.intonation),
+        "coach": coach,
+        "coach_error": None if coach or not fb else (fb.get("error") or fb.get("status")),
+    }

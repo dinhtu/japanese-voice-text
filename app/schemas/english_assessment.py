@@ -193,9 +193,26 @@ class OllamaAssessment(BaseModel):
     scoring_version: str
 
 
+class CoachComment(BaseModel):
+    """The /coach comment ({assessment, suggestion, lang}), returned inside
+    the evaluate response so a client makes one call."""
+
+    assessment: str
+    suggestion: str = ""
+    lang: str
+
+
 class EnglishEvaluateResponse(EvaluateResponse):
-    """EvaluateResponse plus the two English-only reports (null if they
-    could not be built; the legacy fields never depend on them)."""
+    """EvaluateResponse plus the English-only reports (null if they could
+    not be built; the legacy fields never depend on them). /evaluate-v2
+    returns this same shape too."""
+
+    coach: CoachComment | None = Field(
+        default=None,
+        description="AI comment (same fields as POST /coach). /evaluate: only with "
+        "coach=true; /evaluate-v2: always, unless feedback=false or Ollama failed",
+    )
+    coach_error: str | None = Field(default=None, description="Why `coach` is null when it was asked for")
 
     reading_assessment: ReadingAssessment | None = Field(
         default=None,

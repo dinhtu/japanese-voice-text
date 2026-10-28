@@ -494,7 +494,9 @@ async function evaluate(wav) {
   try {
     // English page: "Cách chấm" switches between /evaluate and /evaluate-v2.
     if (TARGET_LANG === "en" && API_V2_URL && apiMode() === "v2") {
-      renderV2(await postEvaluate(API_V2_URL, wav, { feedback: "true" }));
+      // /evaluate-v2 answers in the /evaluate shape; the v2 details ride in v2_assessment.
+      const data = await postEvaluate(API_V2_URL, wav, { feedback: "true" });
+      renderV2(data.v2_assessment || data);
       return;
     }
     const result = await postEvaluate(API_URL, wav);

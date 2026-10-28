@@ -6,7 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.english_assessment import ContentGate, CriterionResult, Improvement
+from app.schemas.english_assessment import (
+    ContentGate,
+    CriterionResult,
+    EnglishEvaluateResponse,
+    Improvement,
+)
 
 
 class PronunciationEvidence(BaseModel):
@@ -83,3 +88,13 @@ class EvaluateV2Response(BaseModel):
     alignment: dict[str, Any] | None = Field(default=None, description="Word-timing method")
     feedback: Feedback | None = Field(default=None, description="OLLAMA_MODEL explanation of the scores")
     scoring_version: str
+
+
+class EnglishEvaluateV2Response(EnglishEvaluateResponse):
+    """POST /evaluate-v2: the /evaluate fields (same names and types, values
+    from en-reading-v2) plus `coach` and the full v2 report, so a client can
+    switch between /evaluate and /evaluate-v2 without other changes."""
+
+    v2_assessment: EvaluateV2Response | None = Field(
+        default=None, description="Full en-reading-v2 report (criteria, word results, errors)",
+    )

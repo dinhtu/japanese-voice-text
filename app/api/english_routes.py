@@ -16,13 +16,14 @@ from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.coaching import CoachResponse, TextGuideResponse
 from app.schemas.english_assessment import (
+    CoachComment,
     EnglishEvaluateResponse,
     GoptAssessment,
     OllamaAssessment,
     ReadingAssessment,
 )
 from app.schemas.english_intonation import build_intonation
-from app.schemas.english_v2 import EvaluateV2Response
+from app.schemas.english_v2 import EnglishEvaluateV2Response
 from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
 from app.schemas.pronunciation import MoraStatusItem
 from app.services.coaching import (
@@ -95,6 +96,46 @@ def _assessment_lang(lang: str | None) -> str:
     return lang if lang in {"vi", "en"} else "en"
 
 
+def _jsonable(value):
+    """json.dumps default: numpy scalars and pydantic models."""
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return value.item()
+
+
+def _coach_lang(lang: str | None) -> str:
+    """The /coach language rule: jp -> ja; unsupported -> 400."""
+    lang = (lang or "vi").strip().lower()
+    lang = "ja" if lang == "jp" else lang
+    if lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported lang '{lang}'.")
+    return lang
+
+
+async def _coach_comment(text: str, result, settings: Settings, lang: str, words=None):
+    """The /coach comment for an English result already computed (the same
+    facts /coach always used); raises CoachingUnavailableError."""
+    words = words if words is not None else word_pitch_pattern(text)
+    pitch_points = [
+        {"semitone": p.get("semitone"), "voiced": p.get("voiced")}
+        for p in (result.measured_pitch or [])
+    ]
+    facts = build_facts(
+        text=text,
+        score=result.score.score,
+        level=result.score.level,
+        moras=words,
+        errors=result.score.errors,
+        duration_issues=[],
+        pitch_points=pitch_points or None,
+    )
+    try:
+        facts.extra_lines = coach_facts(result.reading_assessment)
+    except Exception:  # noqa: BLE001 -- extra facts must not cost the comment
+        logger.warning("English coach facts failed; using the basic facts", exc_info=True)
+    return await generate_comment(facts, settings, lang=lang, target_lang="en")
+
+
 def _assessment_fields(result) -> dict:
     """reading_assessment / gopt_assessment, validated; a report that does
     not fit its schema is dropped (logged) instead of failing /evaluate."""
@@ -131,12 +172,14 @@ async def _ollama_field(result, settings: Settings) -> OllamaAssessment | None:
 async def evaluate_english(
     text: str = Form(...),
     audio: UploadFile = File(...),
-    lang: str = Form("vi", description="reading_assessment / ollama_assessment messages: vi | en"),
+    lang: str = Form("vi", description="Messages / coach comment language: vi | en | ja"),
+    coach: bool = Form(False, description="Also return the /coach comment (same request, no re-scoring)"),
     use_case: EvaluateEnglishUseCase = Depends(get_en_use_case),
     settings: Settings = Depends(get_settings),
 ) -> EnglishEvaluateResponse:
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
+    coach_lang = _coach_lang(lang) if coach else None
     suffix = _validate_upload(audio)
     content = await audio.read()
     if not content:
@@ -167,6 +210,13 @@ async def evaluate_english(
         ollama = await _ollama_field(result, settings)
         if ollama is not None:
             response = response.model_copy(update={"ollama_assessment": ollama})
+        if coach_lang is not None:
+            try:
+                comment = await _coach_comment(result.target_text, result, settings, coach_lang)
+                response = response.model_copy(update={"coach": CoachComment(
+                    assessment=comment.assessment, suggestion=comment.suggestion, lang=coach_lang)})
+            except CoachingUnavailableError as e:
+                response = response.model_copy(update={"coach_error": str(e)})
         return response
     except EmptyTargetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -181,19 +231,22 @@ async def evaluate_english(
 
 @router.post(
     "/evaluate-v2",
-    response_model=EvaluateV2Response,
+    response_model=EnglishEvaluateV2Response,
     summary="Chấm đọc tiếng Anh v2: Qwen3-ASR (Ollama) + căn thời gian + nhận xét qwen3 (Ollama)",
 )
 async def evaluate_english_v2(
     text: str = Form(...),
     audio: UploadFile = File(...),
     lang: str = Form("vi", description="Feedback / improvements language: vi | en | ja"),
-    feedback: bool = Form(True, description="Also ask OLLAMA_MODEL for a written comment"),
+    feedback: bool = Form(True, description="Also return the AI comment (`coach`)"),
     asr: EnglishASRService = Depends(get_english_asr_service),
     settings: Settings = Depends(get_settings),
-) -> EvaluateV2Response:
-    """en-reading-v2: separate from /evaluate, whose fields are unchanged."""
-    from app.services.english_evaluate_v2 import evaluate_v2, measure_acoustics
+) -> EnglishEvaluateV2Response:
+    """en-reading-v2, returned in the /evaluate shape (same fields, values
+    from v2) plus `coach` (the comment /coach would give) and
+    `v2_assessment` (the full v2 report): a client switches between the two
+    endpoints without other changes."""
+    from app.services.english_evaluate_v2 import evaluate_v2, legacy_fields, measure_acoustics
     from app.services.english_text import expand_for_speech, normalize_english
 
     text = (text or "").strip()
@@ -201,8 +254,7 @@ async def evaluate_english_v2(
         raise HTTPException(status_code=400, detail="Field 'text' must not be empty.")
     if not normalize_english(expand_for_speech(text)):
         raise HTTPException(status_code=400, detail="Target text contains no pronounceable English content.")
-    lang = (lang or "vi").strip().lower()
-    lang = "ja" if lang == "jp" else lang
+    lang = _coach_lang(lang)
     suffix = _validate_upload(audio)
     content = await audio.read()
     if not content:
@@ -222,7 +274,17 @@ async def evaluate_english_v2(
             )
         # After gpu_session: wav2vec2 is offloaded before the Ollama models load.
         report = await evaluate_v2(acoustics, settings, lang=lang, with_feedback=feedback)
-        return EvaluateV2Response.model_validate(json.loads(json.dumps(report, default=lambda v: v.item())))
+        if report["status"] == "asr_unavailable":
+            # No transcript, no score: an error, as /coach does when Ollama is down.
+            raise HTTPException(status_code=503, detail=(report.get("asr") or {}).get("error") or "Qwen3-ASR unavailable")
+        data = legacy_fields(report, acoustics)
+        analysis = acoustics.analysis
+        if analysis is not None and analysis.words:
+            data["intonation"] = build_intonation(analysis, acoustics.intonation)
+        data["v2_assessment"] = report
+        return EnglishEvaluateV2Response.model_validate(
+            json.loads(json.dumps(data, default=_jsonable))
+        )
     except HTTPException:
         raise
     except RuntimeError as e:
@@ -285,26 +347,7 @@ async def coach_english(
             f.write(content)
         with gpu_session():
             result = EvaluateEnglishUseCase(asr).execute(text, tmp_path)
-        pitch_points = [
-            {"semitone": p.get("semitone"), "voiced": p.get("voiced")}
-            for p in (result.measured_pitch or [])
-        ]
-        facts = build_facts(
-            text=text,
-            score=result.score.score,
-            level=result.score.level,
-            moras=words,
-            errors=result.score.errors,
-            duration_issues=[],
-            pitch_points=pitch_points or None,
-        )
-        try:
-            facts.extra_lines = coach_facts(result.reading_assessment)
-        except Exception:  # noqa: BLE001 -- extra facts must not cost the comment
-            logger.warning("English coach facts failed; using the basic facts", exc_info=True)
-        comment = await generate_comment(
-            facts, settings, lang=lang, target_lang="en"
-        )
+        comment = await _coach_comment(text, result, settings, lang, words)
         return CoachResponse(
             assessment=comment.assessment, suggestion=comment.suggestion, lang=lang
         )
