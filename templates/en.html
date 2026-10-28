@@ -439,7 +439,12 @@
               </div>
             </div>
 
-            <p class="note">
+            <p class="note" id="result-note-v2" hidden>
+              Chấm bằng /evaluate-v2: Qwen3-ASR (Ollama) chép lời và chấm phát âm từng từ,
+              wav2vec2 chỉ căn thời gian, điểm tổng = 25% nội dung + 30% phát âm + 15% trọng
+              âm + 15% nhịp điệu/ngữ điệu + 15% trôi chảy; nhận xét do Ollama viết.
+            </p>
+            <p class="note" id="result-note-v1">
               Vòng tròn là CER chữ cái, nhưng từ nào sai quá 25% chữ cái thì
               mất toàn bộ chữ của từ đó; nói thừa chữ cũng bị trừ. Ngữ điệu
               chấm theo đỉnh nhấn câu, trọng âm từ (CMUdict), chỗ ngắt cụm và

@@ -409,7 +409,7 @@ async function startRecording() {
     }
 
     showPlayback(wav);
-    await Promise.all([evaluate(wav), comparePitch(), requestCoach()]);
+    await Promise.all([evaluate(wav), comparePitch(), TARGET_LANG === "en" ? null : requestCoach()]);
   };
 
   startedAt = Date.now();
@@ -476,7 +476,7 @@ async function submitFile(file) {
   }
 
   showPlayback(wav);
-  await Promise.all([evaluate(wav), comparePitch(), requestCoach()]);
+  await Promise.all([evaluate(wav), comparePitch(), TARGET_LANG === "en" ? null : requestCoach()]);
 }
 
 /* ------------------------------------------------------------ Evaluate */
@@ -491,16 +491,24 @@ async function evaluate(wav) {
     if (englishReference) renderPitchChart();
   }
 
+  // English: the AI comment comes back inside the evaluate response (`coach`).
+  if (TARGET_LANG === "en") coachPending();
   try {
-    // English page: "Cách chấm" switches between /evaluate and /evaluate-v2.
-    if (TARGET_LANG === "en" && API_V2_URL && apiMode() === "v2") {
-      // /evaluate-v2 answers in the /evaluate shape; the v2 details ride in v2_assessment.
-      const data = await postEvaluate(API_V2_URL, wav, { feedback: "true" });
-      renderV2(data.v2_assessment || data);
-      return;
-    }
-    const result = await postEvaluate(API_URL, wav);
+    // English page: "Cách chấm" switches between /evaluate and /evaluate-v2;
+    // both answer in the same shape, v2 adds its details in v2_assessment.
+    const v2 = TARGET_LANG === "en" && Boolean(API_V2_URL) && apiMode() === "v2";
+    const result = v2
+      ? await postEvaluate(API_V2_URL, wav, { feedback: "true" })
+      : await postEvaluate(API_URL, wav, TARGET_LANG === "en" ? { coach: "true" } : {});
     renderResult(result);
+    const noteV1 = $("result-note-v1");
+    const noteV2 = $("result-note-v2");
+    if (noteV1 && noteV2) {
+      noteV1.hidden = v2;
+      noteV2.hidden = !v2;
+    }
+    if (TARGET_LANG === "en") showCoachFrom(result);
+    if (v2 && result.v2_assessment) renderV2(result.v2_assessment, { showFeedback: false });
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
     learnerPitch = result.measured_pitch ?? [];
@@ -512,6 +520,7 @@ async function evaluate(wav) {
     else if (referencePattern || englishTake) renderPitchChart();
   } catch (error) {
     showError(error instanceof Error ? error.message : "Đã có lỗi xảy ra.");
+    resetCoach();
   } finally {
     setStatus("idle");
   }
@@ -971,7 +980,7 @@ function v2BarsHtml(criteria) {
   }).join("");
 }
 
-function renderV2(report) {
+function renderV2(report, { showFeedback = true } = {}) {
   const card = $("result-v2");
   if (!card) return;
   const overall = report.overall_score;
@@ -997,7 +1006,7 @@ function renderV2(report) {
     e.expected ? ` (đúng: ${escapeHtml(e.expected)})` : ""}</li>`).join("");
   const tips = (report.improvements || []).map((i) =>
     `<li data-priority="${escapeHtml(i.priority)}">${escapeHtml(i.message)}</li>`).join("");
-  const fb = report.feedback;
+  const fb = showFeedback ? report.feedback : null;
   let feedback = "";
   if (fb && fb.status === "generated") {
     feedback = `<div class="coach__panel">
@@ -1045,10 +1054,46 @@ function resetCoach() {
   el.coachBtn.disabled = false;
 }
 
+/** English: the comment is being written as part of the evaluate request. */
+function coachPending() {
+  el.coachPanel.hidden = false;
+  el.coachAssessmentBlock.hidden = true;
+  el.coachSuggestionBlock.hidden = true;
+  el.coachStatus.hidden = false;
+  el.coachStatus.classList.remove("is-error");
+  el.coachStatus.textContent = "Đang phân tích và viết nhận xét…";
+  el.coachBtn.disabled = true;
+}
+
+/** English: show the `coach` comment (or `coach_error`) the evaluate
+ *  response carried. The button can still regenerate it through /coach. */
+function showCoachFrom(result) {
+  el.coachBtn.disabled = false;
+  const coach = result && result.coach;
+  if (coach) {
+    el.coachPanel.hidden = false;
+    el.coachAssessment.textContent = coach.assessment || "";
+    el.coachAssessmentBlock.hidden = !coach.assessment;
+    el.coachSuggestion.textContent = coach.suggestion || "";
+    el.coachSuggestionBlock.hidden = !coach.suggestion;
+    el.coachStatus.hidden = true;
+  } else if (result && result.coach_error) {
+    el.coachPanel.hidden = false;
+    el.coachAssessmentBlock.hidden = true;
+    el.coachSuggestionBlock.hidden = true;
+    el.coachStatus.hidden = false;
+    el.coachStatus.textContent = result.coach_error;
+    el.coachStatus.classList.add("is-error");
+  } else {
+    resetCoach();
+  }
+}
+
 /** Ask the locally-run Ollama model (see app/services/coaching.py) for a
  *  natural-language comment on the take just scored, in `el.coachLang`'s
  *  language. Fired automatically alongside evaluate()/comparePitch() for
- *  every take (see the two Promise.all([...]) call sites), and also
+ *  every take on the non-English pages (see the two Promise.all([...]) call
+ *  sites; English gets `coach` inside the evaluate response), and also
  *  re-triggered by the coach button (e.g. to regenerate after switching
  *  language) -- the `disabled` guard below keeps a manual click a no-op
  *  while a request from either source is already in flight. */
