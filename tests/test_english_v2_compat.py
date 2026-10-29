@@ -53,6 +53,35 @@ def test_legacy_fields_have_every_evaluate_field(monkeypatch):
     assert len(out.measured_pitch) == len(out.mora_status)
 
 
+def test_top_level_criterion_scores_rebuild_the_overall(monkeypatch):
+    report, acoustics = _report(monkeypatch, _reply("I would like a glass of water.", {4: {"grass": 0.0013}}))
+    data = v2.legacy_fields(report, acoustics)
+    criteria = report["criteria"]
+    assert data["content_score"] == criteria["content_accuracy"]["score"]
+    assert data["word_stress_score"] == criteria["word_stress"]["score"]
+    assert data["intonation_criterion_score"] == criteria["intonation"]["score"]
+    five = {"content_accuracy": data["content_score"], "pronunciation": data["pronunciation_score"],
+            "word_stress": data["word_stress_score"], "intonation": data["intonation_criterion_score"],
+            "fluency": data["fluency_score"]}
+    used = {k: s for k, s in five.items() if s is not None}
+    rebuilt = sum(v2.WEIGHTS[k] * s for k, s in used.items()) / sum(v2.WEIGHTS[k] for k in used)
+    assert abs(rebuilt - report["overall_score"]) < 0.01
+
+
+def test_top_level_criterion_scores_are_null_when_not_scored(monkeypatch):
+    report, acoustics = _report(monkeypatch, _reply("The cat is sleeping on the sofa today."), feedback=False)
+    data = v2.legacy_fields(report, acoustics)
+    assert data["content_score"] == report["criteria"]["content_accuracy"]["score"] is not None
+    assert data["word_stress_score"] is None and data["intonation_criterion_score"] is None  # gated
+    # A failed gate: the overall is content alone; fluency_score keeps the /evaluate 0.
+    assert report["status"] == "content_mismatch"
+    assert data["overall_score"] == data["content_score"] and data["fluency_score"] == 0.0
+    report, acoustics = _report(monkeypatch, _reply("x"), acoustics=_acoustics(voiced=False), feedback=False)
+    data = v2.legacy_fields(report, acoustics)
+    assert data["content_score"] is None and data["word_stress_score"] is None
+    assert data["intonation_criterion_score"] is None
+
+
 def test_legacy_fields_for_misreading_and_no_voice(monkeypatch):
     report, acoustics = _report(monkeypatch, _reply("The cat is sleeping on the sofa today."), feedback=False)
     data = v2.legacy_fields(report, acoustics)
@@ -96,6 +125,8 @@ def test_evaluate_v2_route_returns_the_evaluate_shape_with_coach(monkeypatch):
     assert set(EnglishEvaluateResponse.model_fields) <= set(body)
     assert body["coach"] == {"assessment": "Nhận xét.", "suggestion": "Gợi ý.", "lang": "vi"}
     assert body["v2_assessment"]["scoring_version"] == "en-reading-v2"
+    assert body["content_score"] == body["v2_assessment"]["criteria"]["content_accuracy"]["score"]
+    assert "word_stress_score" in body and "intonation_criterion_score" in body
     assert [m["mora"] for m in body["mora_status"]][3] == "a" and body["mora_status"][3]["ok"] is False
     # feedback=false: no comment, no error.
     body = _post(client, "/en/evaluate-v2", feedback="false").json()

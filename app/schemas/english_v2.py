@@ -95,6 +95,18 @@ class EnglishEvaluateV2Response(EnglishEvaluateResponse):
     from en-reading-v2) plus `coach` and the full v2 report, so a client can
     switch between /evaluate and /evaluate-v2 without other changes."""
 
+    # The criteria the /evaluate fields have no place for (null when not
+    # scored). With pronunciation_score and fluency_score they rebuild
+    # overall_score when the content gate passed and the overall was
+    # computed. Otherwise those two keep their /evaluate fallbacks
+    # (pronunciation_score = content when P is missing, fluency_score = 0
+    # when gated): on a failed gate overall_score is content_score alone, and
+    # without P it is 0 (v2_assessment.status says why).
+    content_score: float | None = Field(default=None, description="v2 content accuracy, 100 x (1 - WER)")
+    word_stress_score: float | None = Field(default=None, description="v2 word stress")
+    intonation_criterion_score: float | None = Field(
+        default=None, description="v2 intonation criterion: 0.6 sentence intonation + 0.4 rhythm / linking",
+    )
     v2_assessment: EvaluateV2Response | None = Field(
         default=None, description="Full en-reading-v2 report (criteria, word results, errors)",
     )

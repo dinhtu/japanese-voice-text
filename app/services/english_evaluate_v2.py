@@ -617,6 +617,9 @@ def legacy_fields(report: dict, acoustics: Acoustics) -> dict:
         fluency_score           v2 fluency (0 when gated: other words read)
         rhythm_score            the rhythm part of v2 intonation (null if not measured)
         intonation_score        the intonation part of v2 intonation (null if not measured)
+        content_score / word_stress_score / intonation_criterion_score
+                                v2 content accuracy, word stress and the whole
+                                intonation criterion as scored (null if not)
         cer / distance / errors letter diff of the Qwen3-ASR transcript, as /evaluate
         mora_status             one item per target word from v2 word_results
         measured_pitch / intonation   the same pitch measures as /evaluate
@@ -683,6 +686,9 @@ def legacy_fields(report: dict, acoustics: Acoustics) -> dict:
         "intonation_score": tone if tone is not None else _criterion_score(criteria, "intonation"),
         "rhythm_measured": rhythm is not None,
         "intonation_measured": tone is not None or _criterion_score(criteria, "intonation") is not None,
+        "content_score": _criterion_score(criteria, "content_accuracy"),
+        "word_stress_score": _criterion_score(criteria, "word_stress"),
+        "intonation_criterion_score": _criterion_score(criteria, "intonation"),
         "aspect_method": "qwen3-asr" + ("+wav2vec2-align" if report.get("alignment", {}).get("aligned") else "")
                          + ("+vad" if vad is not None else ""),
         "vad_method": vad.method if vad is not None else None,
