@@ -145,3 +145,28 @@ def test_evaluate_coach_flag_returns_the_comment_without_rescoring(monkeypatch):
     # Without the flag /evaluate is as before: no comment, no Ollama chat call.
     body = _post(client, "/en/evaluate").json()
     assert body["coach"] is None and len(calls) == 1
+
+
+def test_silent_take_still_gets_the_coach_comment(monkeypatch):
+    seen = {}
+
+    async def fake_comment(facts, settings, lang="vi", target_lang="ja"):
+        seen["lines"] = "\n".join(facts.extra_lines)
+        return coaching.CoachingComment("Không nghe thấy giọng.", "Hãy đọc to hơn.")
+
+    report, acoustics = _report(monkeypatch, _reply("x"), acoustics=_acoustics(voiced=False))
+    monkeypatch.setattr(coaching, "generate_comment", fake_comment)
+    report = asyncio.run(v2.evaluate_v2(acoustics, _settings(), with_feedback=True))
+    assert report["status"] == "no_voice" and report["feedback"]["status"] == "generated"
+    assert "Không nghe thấy giọng đọc" in seen["lines"] and "Không phát hiện từ nào" not in seen["lines"]
+    data = v2.legacy_fields(report, acoustics)
+    assert data["score"] == 0 and data["coach"]["assessment"] == "Không nghe thấy giọng."
+    assert data["coach_error"] is None
+
+
+def test_evaluate_v2_route_silent_take_has_coach(monkeypatch):
+    client = _client(monkeypatch, _reply("x"))
+    monkeypatch.setattr(v2, "measure_acoustics", lambda *a, **k: _acoustics(voiced=False))
+    body = _post(client, "/en/evaluate-v2").json()
+    assert body["v2_assessment"]["status"] == "no_voice" and body["score"] == 0
+    assert body["coach"] == {"assessment": "Nhận xét.", "suggestion": "Gợi ý.", "lang": "vi"}

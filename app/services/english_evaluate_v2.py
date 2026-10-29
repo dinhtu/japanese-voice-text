@@ -442,7 +442,10 @@ def feedback_lines(report: dict) -> list[str]:
                      + (f" (đúng: {e['expected']})" if e.get("expected") else "")
                      for e in items[:8]]
             lines.append(f"{label}: " + ", ".join(shown))
-    if report["status"] == "language_mismatch":
+    if report["status"] == "no_voice":
+        lines.append("Không nghe thấy giọng đọc trong bản ghi (im lặng, quá nhỏ hoặc chỉ thì thầm): "
+                     "chưa chấm được tiêu chí nào. Hãy nhắc người học đọc to, rõ, gần micro rồi thử lại.")
+    elif report["status"] == "language_mismatch":
         lines.append(f"Bản ghi là tiếng {report.get('detected_language')}, không phải câu tiếng Anh mẫu: "
                      "chưa chấm được phát âm, trọng âm, ngữ điệu hay độ trôi chảy.")
     elif not any(e["type"] in ("omission", "substitution", "mispronunciation") for e in errors) and report["word_results"]:
@@ -507,6 +510,9 @@ async def evaluate_v2(acoustics: Acoustics, settings: "Settings", lang: str = "v
                                    "message": _msg(msg_lang, "no_voice"), "words": [],
                                    "evidence": f"voice_presence:{acoustics.presence.verdict}"}]
         report["overall_score"] = 0.0
+        # The comment too, as /coach gives one for a silent take.
+        if with_feedback and getattr(settings, "en_v2_feedback", True):
+            report["feedback"] = await _feedback(report, settings, lang)
         return report
     try:
         heard = await qwen3_asr.transcribe(acoustics.samples, acoustics.sample_rate, settings, ASR_LANGUAGE)
