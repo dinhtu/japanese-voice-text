@@ -708,7 +708,7 @@ function renderResult(result) {
     );
   }
 
-  if (TARGET_LANG === "en") renderProsody(result.intonation || null);
+  if (TARGET_LANG === "en") renderProsody(result);
 
   el.diffs.hidden = result.errors.length === 0;
   if (result.errors.length > 0) {
@@ -2131,10 +2131,12 @@ function englishWordCellHtml(m) {
   return `<span class="syll__word">${word}</span>${ipa}${stress}`;
 }
 
-/* "Trọng âm & ngữ điệu" in the result card: the take's own checks (peaks,
- * word_stress, breaks, ends, missing) laid out word by word, model above,
- * learner below, so the learner sees where it went off. Nothing is
- * re-scored here; every verdict comes from /evaluate `intonation`. */
+/* "Trọng âm & ngữ điệu" in the result card: the take's own checks laid out
+ * word by word, model above, learner below, so the learner sees where it
+ * went off. Nothing is re-scored here. Word stress comes from mora_status
+ * (gated like the score); peaks, breaks, sentence ends and missing words
+ * from `intonation`. Verdicts the scorer would not trust (no F0, no
+ * syllable timing, v2 content gate failed, misread word) stay grey. */
 
 const prosodyEl = {
   root: $("prosody"),
@@ -2143,225 +2145,306 @@ const prosodyEl = {
   list: $("prosody-list"),
 };
 
+/** FINAL_MIN_ST in app/services/english_intonation.py: a sentence end must move this far. */
+const END_MIN_ST = 2;
+
 /** "ROB·ber·y" with syllable `index` in capitals (lower-case otherwise). */
 function syllablesWith(word, index) {
+  if (word.syllables.length <= 1) return index === 0 ? word.text.toUpperCase() : word.text;
   return word.syllables
     .map((s, i) => (i === index ? s.text.toUpperCase() : s.text.toLowerCase()))
     .join("·");
 }
 
-/** Same as syllablesWith, as HTML with the capital syllable in <b>. */
-function syllablesHtml(word, index) {
-  return word.syllables
-    .map((s, i) => (i === index
-      ? `<b class="pros__stress">${escapeHtml(s.text.toUpperCase())}</b>`
-      : escapeHtml(s.text.toLowerCase())))
+/**
+ * The word as HTML, one piece per syllable: syllable `stress` bold in
+ * capitals, and `mark` ({ index, glyph, tone }) drawn over (model row) or
+ * under (learner row) its syllable. A one-syllable word keeps its spelling.
+ */
+function syllablesHtml(word, stress, mark = null) {
+  const sylls = word.syllables.length ? word.syllables : [{ text: word.text }];
+  const single = sylls.length === 1;
+  return sylls
+    .map((s, i) => {
+      const text = single ? s.text : i === stress ? s.text.toUpperCase() : s.text.toLowerCase();
+      let html = escapeHtml(text);
+      if (!single && i === stress) html = `<b class="pros__stress">${html}</b>`;
+      if (mark && mark.index === i) {
+        html = `<span class="pros__syl" data-mark="${mark.glyph}" data-tone="${mark.tone}">${html}</span>`;
+      }
+      return html;
+    })
     .join('<span class="syll__dot">·</span>');
 }
 
-/** Learner's pitch movement at a sentence end, from `delta` (end minus nucleus, st). */
-function heardEnding(end) {
-  if (end.delta == null) return end.creaky ? "↘" : "?";
-  if (end.creaky || end.delta <= -1) return "↘";
-  if (end.delta >= 1) return "↗";
-  return "→";
+/** A failed sentence end, worded against the 2-semitone bar (delta is the
+ *  most favourable movement the scorer found, not a direction). */
+function endMiss(end) {
+  const d = end.delta;
+  if (end.expected === "rise") {
+    return d != null && d > 0
+      ? { short: "lên chưa đủ", long: `giọng chỉ lên ${d.toFixed(1)} nửa cung, cần ít nhất ${END_MIN_ST}` }
+      : { short: "chưa lên giọng", long: "giọng không đi lên ở cuối" };
+  }
+  if (end.expected === "either") {
+    return { short: "chưa lên/xuống rõ", long: `giọng chưa lên hoặc xuống đủ ${END_MIN_ST} nửa cung` };
+  }
+  return d != null && d < 0
+    ? { short: "hạ chưa đủ", long: `giọng chỉ hạ ${Math.abs(d).toFixed(1)} nửa cung, cần ít nhất ${END_MIN_ST}` }
+    : { short: "chưa hạ giọng", long: "giọng không đi xuống ở cuối" };
 }
 
-const HEARD_ENDING = { "↘": "xuống giọng", "↗": "lên giọng", "→": "giữ ngang", "?": "không đo được" };
-
-/** Every check of the take, keyed the way the track and the list need them. */
-function prosodyChecks(take) {
+/** Everything the block shows, one verdict per word / break / end:
+ *  true, false, null (should have been measured, could not) or undefined
+ *  (nothing to check here). */
+function prosodyModel(result) {
+  const take = result.intonation;
+  const words = take.words;
+  const voiced = Boolean(take.learner && take.learner.some((m) => m.semitone !== null));
+  const gate = result.v2_assessment && result.v2_assessment.content_gate;
+  const gated = Boolean(gate && gate.passed === false);
+  const aligned = take.aligned !== false;
+  const judge = voiced && !gated;
+  const timed = judge && aligned;
+  const missing = new Set(take.missing || []);
+  const mora = Array.isArray(result.mora_status) && result.mora_status.length === words.length
+    ? result.mora_status : null;
+  const rawStress = new Map((take.word_stress || []).map((c) => [c.word, c]));
   const peaks = new Map();
   for (const c of take.peaks || []) if (!peaks.has(c.word)) peaks.set(c.word, c);
-  return {
-    missing: new Set(take.missing || []),
-    peaks,
-    stress: new Map((take.word_stress || []).map((c) => [c.word, c])),
-    breaks: new Map((take.breaks || []).map((c) => [c.after_word, c])),
-    ends: new Map(englishEnds(take).map((c) => [c.phrase, c])),
-  };
+  const breaks = new Map((take.breaks || []).map((c) => [c.after_word, c]));
+  const ends = englishEnds(take);
+  const endByPhrase = new Map(ends.map((c) => [c.phrase, c]));
+  const endOrder = new Map([...ends].sort((a, b) => a.phrase - b.phrase).map((c, k) => [c.phrase, k + 1]));
+
+  const items = words.map((word, i) => {
+    const m = mora ? mora[i] : null;
+    const multi = word.syllables.length > 1;
+    const isMissing = missing.has(word.index);
+    const misread = !isMissing && Boolean(m && m.ok === false);
+    const said = !isMissing && !misread;
+    const raw = rawStress.get(word.index);
+    // The accepted reading (heteronyms, ties) is what both rows show when it passed.
+    const expected = m && m.stress_index != null ? m.stress_index : raw ? raw.expected : word.stress_index;
+    const heard = m ? m.heard_stress_index ?? null : raw ? raw.heard : null;
+    let stressOk;
+    if (multi && timed && said) stressOk = m ? m.stress_ok ?? null : raw ? raw.ok : null;
+    const peakCheck = peaks.get(word.index);
+    let peakOk;
+    if (peakCheck && timed && said) peakOk = peakCheck.ok;
+    return {
+      word, multi, isMissing, misread, said, expected, heard, stressOk, peakOk,
+      peakSyllable: peakCheck ? peakCheck.syllable : multi ? expected : 0,
+      phraseEnd: !words[i + 1] || words[i + 1].phrase !== word.phrase,
+    };
+  });
+
+  const seps = new Map();
+  items.forEach((it, i) => {
+    if (!it.phraseEnd) return;
+    const next = items[i + 1];
+    const ending = take.phrase_ends[it.word.phrase];
+    let end = null;
+    if (ending && ending !== "continue") {
+      const check = endByPhrase.get(it.word.phrase);
+      let ok;
+      if (it.isMissing) ok = "missing";
+      else if (check && judge) ok = check.ok;
+      end = { expected: ending, check, ok, order: endOrder.get(it.word.phrase), many: ends.length > 1 };
+    }
+    let brk = null;
+    if (next) {
+      const check = breaks.get(it.word.index);
+      let ok;
+      if (check && timed && it.said && next.said) ok = check.ok;
+      brk = { check, ok };
+    }
+    seps.set(i, { end, brk });
+  });
+  return { take, items, seps, voiced, gated, aligned, judge, timed, missing };
 }
 
-/** One word column: marks, model, learner, verdict. */
-function prosodyWordHtml(word, checks) {
-  const multi = word.syllables.length > 1;
-  const plain = escapeHtml(word.syllables[0]?.text || word.text);
-  const model = multi ? syllablesHtml(word, word.stress_index) : plain;
-  const mark = word.nucleus ? "◉" : word.sentence_stress ? "●" : "";
-  const peak = checks.peaks.get(word.index);
-  const ws = multi ? checks.stress.get(word.index) : null;
+function prosodyWordHtml(it, model) {
+  const { word } = it;
+  const glyph = word.nucleus ? "◉" : word.sentence_stress ? "●" : "";
+  const modelHtml = syllablesHtml(word, it.multi ? it.expected : -1,
+    glyph ? { index: it.peakSyllable, glyph, tone: "ref" } : null);
   const tags = [];
-  // Unjudged: no stress mark on the learner row, it was not measured.
-  let you = multi ? syllablesHtml(word, -1) : plain;
-  let state = "plain";
-
-  if (checks.missing.has(word.index)) {
+  let you;
+  if (it.isMissing) {
     you = "—";
-    state = "bad";
     tags.push(["bad", "bỏ sót"]);
+  } else if (!model.judge) {
+    you = "—";
+  } else if (it.misread) {
+    you = syllablesHtml(word, -1);
+    tags.push(["na", "đọc sai từ"]);
   } else {
-    if (ws && ws.ok === false && ws.heard != null) {
-      you = syllablesHtml(word, ws.heard);
-      tags.push(["bad", "sai trọng âm"]);
-    } else if (ws && ws.ok === true) {
-      you = syllablesHtml(word, ws.heard ?? word.stress_index);
-    } else if (ws) {
-      tags.push(["na", "trọng âm ?"]);
-    }
-    if (peak && peak.ok === false) tags.push(["bad", "thiếu nhấn"]);
-    else if (peak && peak.ok === null) tags.push(["na", "nhấn ?"]);
-    const judged = (ws && ws.ok !== null) || (peak && peak.ok !== null);
-    if (tags.some(([tone]) => tone === "bad")) state = "bad";
-    else if (judged) state = "ok";
+    const mark = it.peakOk === true ? { index: it.peakSyllable, glyph: "●", tone: "ok" }
+      : it.peakOk === false ? { index: it.peakSyllable, glyph: "○", tone: "bad" } : null;
+    const stress = it.stressOk === true ? it.expected
+      : it.stressOk === false && it.heard != null ? it.heard : -1;
+    you = syllablesHtml(word, stress, mark);
+    if (it.stressOk === false) tags.push(["bad", "sai trọng âm"]);
+    else if (it.multi && it.stressOk === null) tags.push(["na", "trọng âm ?"]);
+    if (it.peakOk === false) tags.push(["bad", "thiếu nhấn"]);
+    else if (it.peakOk === null) tags.push(["na", "nhấn ?"]);
   }
+  const judged = it.stressOk === true || it.peakOk === true;
+  const state = tags.some(([tone]) => tone === "bad") ? "bad" : judged ? "ok" : "plain";
   if (state === "ok") tags.push(["ok", "✓"]);
-  const youMark = !mark || checks.missing.has(word.index)
-    ? ""
-    : peak && peak.ok === true ? "●" : peak && peak.ok === false ? "○" : "";
-  return `<div class="pros__word" data-state="${state}">
-    <span class="pros__mark">${mark}</span>
-    <span class="pros__model">${model}</span>
+  return `<div class="pros__col pros__word" data-state="${state}">
+    <span class="pros__model">${modelHtml}</span>
     <span class="pros__you">${you}</span>
-    <span class="pros__mark pros__mark--you" data-ok="${peak ? String(peak.ok) : ""}">${youMark}</span>
     <span class="pros__tags">${tags.map(([tone, text]) => `<i class="pros__tag pros__tag--${tone}">${text}</i>`).join("")}</span>
   </div>`;
 }
 
-/** The ‖ between two phrases, with the break check under it. */
-function prosodyBreakHtml(check) {
-  const state = !check || check.ok === null ? "na" : check.ok ? "ok" : "bad";
-  const text = check ? { na: "?", ok: "✓ ngắt", bad: "chưa ngắt" }[state] : "";
-  return `<div class="pros__sep" data-state="${state}">
-    <span class="pros__mark"></span>
-    <span class="pros__model">‖</span>
-    <span class="pros__you">${!check ? "" : state === "bad" ? "→" : "‖"}</span>
-    <span class="pros__mark"></span>
-    <span class="pros__tags">${text ? `<i class="pros__tag pros__tag--${state}">${text}</i>` : ""}</span>
-  </div>`;
-}
-
 /** The phrase-end arrow: expected above, what the take did below. */
-function prosodyEndHtml(expected, check) {
-  const state = !check || check.ok === null ? "na" : check.ok ? "ok" : "bad";
-  const heard = check ? heardEnding(check) : "";
-  const text = check ? { na: "?", ok: "✓", bad: HEARD_ENDING[heard] }[state] : "";
-  return `<div class="pros__sep pros__sep--end" data-state="${state}">
-    <span class="pros__mark"></span>
-    <span class="pros__model">${ENDING_ARROW[expected] || ""}</span>
-    <span class="pros__you">${state === "ok" ? ENDING_ARROW[expected] || "" : heard}</span>
-    <span class="pros__mark"></span>
-    <span class="pros__tags">${text ? `<i class="pros__tag pros__tag--${state}">${escapeHtml(text)}</i>` : ""}</span>
+function prosodyEndHtml(end) {
+  const arrow = ENDING_ARROW[end.expected] || "";
+  const map = {
+    true: ["ok", arrow, "✓"],
+    false: ["bad", "✗", end.check ? endMiss(end.check).short : ""],
+    null: ["na", "?", "?"],
+    missing: ["na", "—", "bỏ sót"],
+    undefined: ["plain", "", ""],
+  };
+  const [state, you, tag] = map[String(end.ok)];
+  return `<div class="pros__col pros__sep pros__sep--end" data-state="${state}">
+    <span class="pros__model">${arrow}</span>
+    <span class="pros__you">${you}</span>
+    <span class="pros__tags">${tag ? `<i class="pros__tag pros__tag--${state === "plain" ? "na" : state}">${escapeHtml(tag)}</i>` : ""}</span>
   </div>`;
 }
 
-function prosodyTrackHtml(take, checks) {
-  const cells = ['<div class="pros__rowlabels"><span></span><span>Mẫu</span><span>Bạn</span></div>'];
-  take.words.forEach((word, i) => {
-    cells.push(prosodyWordHtml(word, checks));
-    const next = take.words[i + 1];
-    if (next && next.phrase === word.phrase) return;
-    const ending = take.phrase_ends[word.phrase];
-    if (ending && ending !== "continue") cells.push(prosodyEndHtml(ending, checks.ends.get(word.phrase)));
-    if (next) cells.push(prosodyBreakHtml(checks.breaks.get(word.index)));
+/** The ‖ between two phrases, with the break check under it. */
+function prosodyBreakHtml(brk) {
+  const map = {
+    true: ["ok", "‖", "✓ ngắt"],
+    false: ["bad", "liền", "chưa ngắt"],
+    null: ["na", "?", "?"],
+    undefined: ["plain", "", ""],
+  };
+  const [state, you, tag] = map[String(brk.ok)];
+  return `<div class="pros__col pros__sep" data-state="${state}">
+    <span class="pros__model">‖</span>
+    <span class="pros__you">${you}</span>
+    <span class="pros__tags">${tag ? `<i class="pros__tag pros__tag--${state}">${tag}</i>` : ""}</span>
+  </div>`;
+}
+
+function prosodyTrackHtml(model) {
+  const cells = ['<div class="pros__col pros__rowlabels"><span>Mẫu</span><span>Bạn</span><span></span></div>'];
+  model.items.forEach((it, i) => {
+    cells.push(prosodyWordHtml(it, model));
+    const sep = model.seps.get(i);
+    if (!sep) return;
+    if (sep.end) cells.push(prosodyEndHtml(sep.end));
+    if (sep.brk) cells.push(prosodyBreakHtml(sep.brk));
   });
   return cells.join("");
 }
 
-/** x/y over the checks that could be measured; null when none could. */
-function tally(items) {
-  const known = items.filter((c) => c && c.ok !== null);
-  return known.length ? { ok: known.filter((c) => c.ok).length, of: known.length } : null;
+/** x/y over the verdicts that are true / false; null when none are. */
+function tally(verdicts) {
+  const known = verdicts.filter((v) => v === true || v === false);
+  return known.length ? { ok: known.filter(Boolean).length, of: known.length } : null;
 }
 
-function prosodySummaryHtml(take, checks) {
+function prosodySummaryHtml(model) {
   const chips = [];
-  const chip = (label, t) => {
-    if (!t) return chips.push(["na", `${label}: không đo được`]);
-    return chips.push([t.ok === t.of ? "ok" : "bad", `${label}: ${t.ok}/${t.of}`]);
-  };
-  const multiStress = (take.word_stress || []).filter((c) => !checks.missing.has(c.word));
-  if (multiStress.length) chip("Trọng âm từ", tally(multiStress));
-  else chips.push(["na", "Trọng âm từ: câu không có từ nhiều âm tiết"]);
-  const peaks = (take.peaks || []).filter((c) => !checks.missing.has(c.word));
-  if (peaks.length) chip("Nhấn câu", tally(peaks));
-  if ((take.breaks || []).length) chip("Ngắt cụm", tally(take.breaks));
-  const ends = englishEnds(take);
-  if (ends.length) chip(ends.length > 1 ? "Lên/xuống cuối cụm" : "Lên/xuống cuối câu", tally(ends));
-  if (checks.missing.size) chips.push(["bad", `Bỏ sót ${checks.missing.size} từ`]);
-  return chips.map(([tone, text]) => `<span class="eni-chip eni-chip--${tone}"><i></i>${escapeHtml(text)}</span>`).join("");
+  const add = (tone, text) => chips.push(`<span class="eni-chip eni-chip--${tone}"><i></i>${escapeHtml(text)}</span>`);
+  const count = (label, t) => (t ? add(t.ok === t.of ? "ok" : "bad", `${label}: ${t.ok}/${t.of}`) : null);
+  if (model.gated) add("na", "Đọc sai quá nửa số từ: chưa chấm trọng âm và ngữ điệu");
+  else if (!model.voiced) add("na", "Không đo được cao độ trong bản ghi, chỉ hiện mẫu");
+  else if (!model.aligned) add("na", "Không dóng được thời gian từng âm tiết: chỉ chấm lên/xuống cuối câu");
+  if (model.timed) {
+    const multi = model.items.filter((it) => it.multi);
+    const stress = tally(multi.map((it) => it.stressOk));
+    if (!multi.length) add("na", "Trọng âm từ: câu không có từ nhiều âm tiết");
+    else if (stress) count("Trọng âm từ", stress);
+    else add("na", "Trọng âm từ: không chấm được");
+    count("Nhấn câu", tally(model.items.map((it) => it.peakOk)));
+    count("Ngắt cụm", tally([...model.seps.values()].map((s) => s.brk && s.brk.ok)));
+  }
+  if (model.judge) count("Lên/xuống cuối câu", tally([...model.seps.values()].map((s) => s.end && s.end.ok)));
+  if (model.missing.size) add("bad", `Bỏ sót ${model.missing.size} từ`);
+  return chips.join("");
 }
 
-/** Every deviation, in sentence order, as "where — what to do". */
-function prosodyIssues(take, checks) {
-  const items = [];
+/** Every deviation, in sentence order, as [where, what to do]. */
+function prosodyIssues(model) {
+  const { take, items } = model;
+  const bad = [];
   const unmeasured = [];
-  if (checks.missing.size) {
-    items.push(["Bỏ sót", `${listWords([...checks.missing].map((i) => `“${take.words[i]?.text || ""}”`), 5)} — đọc đủ cả câu thì mới so được ngữ điệu.`]);
+  if (model.missing.size) {
+    bad.push(["Bỏ sót", `${listWords([...model.missing].map((i) => `“${take.words[i]?.text || ""}”`), 5)}: đọc đủ cả câu thì mới so được ngữ điệu.`]);
   }
-  take.words.forEach((word, i) => {
-    if (checks.missing.has(word.index)) return;
-    const ws = word.syllables.length > 1 ? checks.stress.get(word.index) : null;
-    const peak = checks.peaks.get(word.index);
-    if (ws && ws.ok === false && ws.heard != null) {
-      items.push([
+  items.forEach((it, i) => {
+    const { word } = it;
+    if (it.stressOk === false) {
+      bad.push([
         `Trọng âm “${word.text}”`,
-        `Nhấn ${syllablesWith(word, ws.expected)}, bạn đang nhấn ${syllablesWith(word, ws.heard)}.`,
+        it.heard != null
+          ? `Nhấn ${syllablesWith(word, it.expected)}, bạn đang nhấn ${syllablesWith(word, it.heard)}.`
+          : `Nhấn ${syllablesWith(word, it.expected)}: âm tiết này cần to, cao và dài hơn.`,
       ]);
-    } else if (ws && ws.ok === null) {
+    } else if (it.multi && it.stressOk === null) {
       unmeasured.push(`trọng âm “${word.text}”`);
     }
-    if (peak && peak.ok === false) {
-      const where = word.syllables.length > 1 ? syllablesWith(word, peak.syllable) : word.text.toUpperCase();
-      items.push([
+    if (it.peakOk === false) {
+      bad.push([
         `Nhấn câu “${word.text}”`,
-        `Giọng gần như phẳng ở ${where}. ${word.nucleus ? "Đây là từ nhấn chính: n" : "N"}âng cao và kéo dài âm tiết này hơn các từ xung quanh.`,
+        `Giọng gần như phẳng ở ${syllablesWith(word, it.peakSyllable)}. ${word.nucleus ? "Đây là từ nhấn chính: n" : "N"}âng cao và kéo dài âm tiết này hơn các từ xung quanh.`,
       ]);
-    } else if (peak && peak.ok === null) {
+    } else if (it.peakOk === null) {
       unmeasured.push(`nhấn “${word.text}”`);
     }
-    const next = take.words[i + 1];
-    if (next && next.phrase === word.phrase) return;
-    const end = checks.ends.get(word.phrase);
-    const expected = take.phrase_ends[word.phrase];
+    const sep = model.seps.get(i);
+    if (!sep) return;
+    const end = sep.end;
+    const where = end && end.many ? `Cuối câu ${end.order} (“${word.text}”)` : `Cuối câu “${word.text}”`;
     if (end && end.ok === false) {
-      const want = ENDING_VERB[end.expected] || ENDING_VERB[expected] || ENDING_VERB.fall;
-      items.push([
-        `Cuối ${next ? "cụm" : "câu"} “${word.text}”`,
-        `${want} ${ENDING_ARROW[end.expected] || ""}, bạn đang ${HEARD_ENDING[heardEnding(end)]} ${heardEnding(end)}.`,
-      ]);
+      const want = ENDING_VERB[end.expected] || ENDING_VERB.fall;
+      bad.push([where, `${want} ${ENDING_ARROW[end.expected] || ""}: ${endMiss(end.check).long}.`]);
     } else if (end && end.ok === null) {
-      unmeasured.push(`cuối ${next ? "cụm" : "câu"}`);
+      unmeasured.push(end.many ? `cuối câu ${end.order}` : "cuối câu");
     }
-    const br = next ? checks.breaks.get(word.index) : null;
-    if (br && br.ok === false) {
-      const pause = br.pause != null ? ` (bạn dừng ${br.pause.toFixed(2)}s)` : "";
-      items.push([`Sau “${word.text}”`, `Chưa ngắt cụm${pause}: dừng ngắn, hạ giọng ở cuối cụm rồi mới đọc tiếp.`]);
-    } else if (br && br.ok === null) {
+    const brk = sep.brk;
+    if (brk && brk.ok === false) {
+      const pause = brk.check.pause != null ? ` (bạn dừng ${brk.check.pause.toFixed(2)}s)` : "";
+      bad.push([`Sau “${word.text}”`, `Chưa ngắt cụm${pause}: dừng ngắn, hạ giọng ở cuối cụm rồi mới đọc tiếp.`]);
+    } else if (brk && brk.ok === null) {
       unmeasured.push(`ngắt sau “${word.text}”`);
     }
   });
-  return { items, unmeasured };
+  return { bad, unmeasured };
 }
 
-function renderProsody(take) {
+function renderProsody(result) {
   if (!prosodyEl.root) return;
-  const words = take && Array.isArray(take.words) ? take.words : [];
-  prosodyEl.root.hidden = !words.length;
-  if (!words.length) return;
-  const checks = prosodyChecks(take);
-  const measured = Boolean(take.learner && take.learner.some((m) => m.semitone !== null));
-  prosodyEl.summary.innerHTML = measured
-    ? prosodySummaryHtml(take, checks)
-    : '<span class="eni-chip eni-chip--na"><i></i>Không đo được cao độ trong bản ghi, chỉ hiện mẫu</span>';
-  prosodyEl.track.innerHTML = prosodyTrackHtml(take, measured ? checks : prosodyChecks({ words }));
-  const { items, unmeasured } = measured ? prosodyIssues(take, checks) : { items: [], unmeasured: [] };
-  const rows = items.map(([where, text]) =>
+  const take = result && result.intonation;
+  const ok = Boolean(take && Array.isArray(take.words) && take.words.length);
+  prosodyEl.root.hidden = !ok;
+  if (!ok) return;
+  const model = prosodyModel(result);
+  prosodyEl.summary.innerHTML = prosodySummaryHtml(model);
+  prosodyEl.track.innerHTML = prosodyTrackHtml(model);
+  const { bad, unmeasured } = prosodyIssues(model);
+  const rows = bad.map(([where, text]) =>
     `<li class="pros__issue"><b>${escapeHtml(where)}</b><span>${escapeHtml(text)}</span></li>`);
-  if (measured && !items.length) {
-    rows.push('<li class="pros__issue pros__issue--ok"><b>Khớp mẫu</b><span>Trọng âm, chỗ nhấn, chỗ ngắt và lên/xuống giọng cuối câu đều đúng.</span></li>');
+  if (model.judge && !model.aligned) {
+    rows.push('<li class="pros__issue pros__issue--na"><b>Chưa chấm</b><span>Không dóng được thời gian từng âm tiết, nên chưa chấm trọng âm, chỗ nhấn và chỗ ngắt.</span></li>');
   }
   if (unmeasured.length) {
-    rows.push(`<li class="pros__issue pros__issue--na"><b>Không đo được</b><span>${escapeHtml(listWords(unmeasured, 6))} (giọng quá nhỏ hoặc không có cao độ).</span></li>`);
+    rows.push(`<li class="pros__issue pros__issue--na"><b>Không đo được</b><span>${escapeHtml(listWords(unmeasured, 6))}: không đủ dữ liệu cao độ để chấm.</span></li>`);
+  }
+  if (model.judge && !bad.length) {
+    const all = model.aligned && !unmeasured.length;
+    rows.unshift(`<li class="pros__issue pros__issue--ok"><b>Khớp mẫu</b><span>${all
+      ? "Trọng âm, chỗ nhấn, chỗ ngắt và lên/xuống giọng cuối câu đều đúng."
+      : "Những phần đo được đều khớp mẫu."}</span></li>`);
   }
   prosodyEl.list.innerHTML = rows.join("");
   prosodyEl.list.hidden = !rows.length;
