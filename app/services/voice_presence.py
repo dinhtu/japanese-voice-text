@@ -28,6 +28,12 @@ MIN_VOICED_SHARE = 0.1
 # this much voiced time is required instead.
 MIN_VOICED_S = 0.05
 
+# feedback.message of a take with no voice, by VoicePresence.verdict.
+NO_VOICE_MESSAGES = {
+    "silent": "No voice was heard. Read the sentence aloud, close to the microphone.",
+    "whisper": "Only whispering was heard. Read the sentence aloud in your normal voice.",
+}
+
 _FRAME_S = 0.04
 _HOP_S = 0.01
 

@@ -24,6 +24,15 @@ class CoachResponse(BaseModel):
     )
 
 
+class CoachComment(BaseModel):
+    """The /coach comment ({assessment, suggestion, lang}), returned inside
+    the evaluate response so a client makes one call."""
+
+    assessment: str
+    suggestion: str = ""
+    lang: str
+
+
 class CategoryGuideResponse(BaseModel):
     success: bool = True
     category_name: str = Field(description="Name of the study category/topic")
