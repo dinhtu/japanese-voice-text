@@ -31,9 +31,12 @@ _TONE_CONTOURS = {
 }
 # A third tone with more speech after it in the phrase only dips (21).
 _HALF_THIRD = [2, 1, 1]
-# 一 keeps its first tone in numbers: after these, or before a digit (十一, 一二三).
-_NUMBER_BEFORE = set("零〇一二三四五六七八九十百千万亿两第")
-_DIGITS = set("零〇一二三四五六七八九十两")
+# 一 keeps yī in numbers and where it ends a word: after these (十一, 第一,
+# 星期一, 唯一, 统一, 万一) or before these (一二三, 一月, 一日, 一号).
+_YI_KEEPS_AFTER = set("零〇一二三四五六七八九十百千万亿两第期唯统之单同")
+_YI_KEEPS_BEFORE = set("零〇一二三四五六七八九十两月日号")
+# 儿 after these is the -r of erhua (一点儿, 这儿), not a syllable of its own.
+_ERHUA_AFTER = set("点会块玩哪这那边空事")
 
 
 def _phrase_finals(text: str) -> list[bool]:
@@ -45,26 +48,38 @@ def _phrase_finals(text: str) -> list[bool]:
     ]
 
 
+def _yi_tone(chars: str, k: int, tones: list[int], final: bool) -> int:
+    before = chars[k - 1] if k else ""
+    after = "" if final else chars[k + 1]
+    if not after or before in _YI_KEEPS_AFTER or after in _YI_KEEPS_BEFORE:
+        return 1
+    if before == after and (k < 2 or chars[k - 2] != "一"):  # 看一看, not 一天一天
+        return 5
+    if tones[k + 1] == 5:
+        return tones[k]
+    return 2 if tones[k + 1] == 4 else 4
+
+
 def _surface_tones(chars: str, tones: list[int], finals: list[bool]) -> list[int]:
-    """Tone sandhi inside a phrase: 3+3 -> 2+3, 不 before a 4th tone -> 2,
-    一 -> 2 before a 4th tone and -> 4 before 1/2/3, except in numbers
-    (第一, 十一, a counted 一) and in V一V, where it is neutral. pypinyin's
-    phrase dictionary already applies some of these (不是 bú, 一个 yí)."""
+    """Tone sandhi inside a phrase: 3+3 -> 2+3; 不 -> 2 before a 4th tone and
+    neutral in V不V; 一 -> 2 before a 4th tone and -> 4 before 1/2/3, except
+    in numbers and word-final 一 (yī) and in V一V (neutral); erhua 儿 is
+    neutral. pypinyin's phrase dictionary already applies some of these
+    (不是 bú, 一个 yí)."""
     surface = tones.copy()
-    for k in range(len(tones) - 1):
-        if finals[k]:
-            continue
-        after = tones[k + 1]
-        if tones[k] == 3 and after == 3:
+    for k, char in enumerate(chars):
+        before = chars[k - 1] if k else ""
+        after = "" if finals[k] else chars[k + 1]
+        if char == "一":
+            surface[k] = _yi_tone(chars, k, tones, finals[k])
+        elif char == "不" and before and before == after:
+            surface[k] = 5
+        elif char == "不" and after and tones[k + 1] == 4:
             surface[k] = 2
-        elif chars[k] == "不" and tones[k] == 4 and after == 4:
+        elif char == "儿" and before in _ERHUA_AFTER:
+            surface[k] = 5
+        elif after and tones[k] == 3 and tones[k + 1] == 3:
             surface[k] = 2
-        elif chars[k] == "一" and tones[k] == 1:
-            before = chars[k - 1] if k else ""
-            if before and before == chars[k + 1]:
-                surface[k] = 5
-            elif before not in _NUMBER_BEFORE and chars[k + 1] not in _DIGITS and after != 5:
-                surface[k] = 2 if after == 4 else 4
     return surface
 
 
@@ -123,9 +138,11 @@ def score_syllables(target: list[str], heard: list[str]) -> ScoreResult:
     return ScoreResult(score, round(error_rate, 4), distance, len(target), level, message, errors)
 
 
-# A syllable's F0 shape (start / middle / end, semitones) fits its tone
-# when the error below is at most TONE_TOLERANCE semitones.
+# A syllable's F0 shape (start / middle / end, semitones from the clip mean)
+# fits its tone when the error below is under TONE_TOLERANCE semitones and
+# no other tone fits better by more than TONE_MARGIN.
 TONE_TOLERANCE = 1.5
+TONE_MARGIN = 0.5
 
 
 def _tone_error(start: float, middle: float, end: float, tone: int) -> float:
@@ -140,8 +157,10 @@ def _tone_error(start: float, middle: float, end: float, tone: int) -> float:
 
 
 def _half_third_error(start: float, middle: float, end: float) -> float:
-    """21: falls low and stays there."""
-    return max(0.0, 0.8 - (start - min(middle, end))) + max(0.0, end - start)
+    """21: starts mid or low, falls and stays low (a high fall is tone 4)."""
+    low = min(middle, end)
+    return (max(0.0, 0.8 - (start - low)) + max(0.0, end - start)
+            + max(0.0, low + 0.5) + max(0.0, start - 1.0))
 
 
 def tone_check(values: list[float | None], tone: int, final: bool = True) -> tuple[bool | None, int | None]:
@@ -152,9 +171,9 @@ def tone_check(values: list[float | None], tone: int, final: bool = True) -> tup
     if tone == 5 or len(values) != 3 or any(value is None for value in values):
         return None, None
     start, middle, end = (float(value) for value in values)
-    error = _tone_error(start, middle, end, tone)
+    errors = {t: _tone_error(start, middle, end, t) for t in (1, 2, 3, 4)}
     if tone == 3 and not final:
-        error = min(error, _half_third_error(start, middle, end))
-    heard = min((1, 2, 3, 4), key=lambda t: _tone_error(start, middle, end, t))
-    return error <= TONE_TOLERANCE, heard
-
+        errors[3] = min(errors[3], _half_third_error(start, middle, end))
+    closest = min(errors, key=lambda t: (errors[t], t != tone))
+    ok = errors[tone] < TONE_TOLERANCE and errors[tone] <= errors[closest] + TONE_MARGIN
+    return ok, tone if ok else closest

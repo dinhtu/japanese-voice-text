@@ -38,9 +38,19 @@ def test_tone_check_skips_unmeasured_and_neutral():
 
 
 def test_half_third_is_accepted_mid_phrase_only():
-    half = [2.0, -1.0, -2.0]  # 21: dips and stays low, no rise
+    half = [0.5, -1.5, -2.0]  # 21: falls low and stays there
     assert tone_check(half, 3, final=False)[0] is True
     assert tone_check(half, 3, final=True)[0] is False
+
+
+def test_mid_phrase_third_tone_still_rejects_level_and_high_fall():
+    assert tone_check([2.0, 2.0, 2.0], 3, final=False) == (False, 1)
+    assert tone_check([2.0, 0.0, -2.0], 3, final=False) == (False, 4)
+
+
+def test_a_flat_syllable_is_not_a_rise_or_fall():
+    assert tone_check([0.0, 0.0, 0.0], 2) == (False, 1)
+    assert tone_check([0.0, 0.0, 0.0], 4) == (False, 1)
 
 
 def test_chinese_pitch_pattern_and_third_tone_sandhi():
@@ -77,6 +87,15 @@ def test_yi_and_bu_sandhi():
     assert spoken("第一") == [4, 1]
     assert spoken("十一") == [2, 1]
     assert spoken("一二三") == [1, 4, 1]
+    assert spoken("十一个") == [2, 1, 4]
+    assert spoken("一月一日") == [1, 4, 1, 4]
+    # Word-final 一 keeps yī; 一天一天 is not V一V.
+    assert spoken("星期一我去")[2] == 1
+    assert spoken("唯一方法")[1] == 1
+    assert spoken("一天一天") == [4, 1, 4, 1]
+    # V不V and erhua are neutral, so they are not judged.
+    assert spoken("去不去") == [4, 5, 4]
+    assert spoken("一点儿")[2] == 5
 
 
 def test_normalize_chinese_keeps_hanzi_only():

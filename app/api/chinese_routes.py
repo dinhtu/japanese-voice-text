@@ -86,8 +86,14 @@ def _tone_facts(result: EvaluationResult) -> list[str]:
     if result.aspects.method.startswith("no-voice"):
         return ["Không nghe thấy giọng đọc trong bản ghi (im lặng, quá nhỏ hoặc chỉ thì thầm): "
                 "chưa chấm được gì. Hãy nhắc người học đọc to, rõ, gần micro rồi thử lại."]
-    judged = [t for t in result.tones or [] if t["ok"] is not None]
+    tones = result.tones or []
+    judged = [t for t in tones if t["ok"] is not None]
     if not judged:
+        statuses = {t["status"] for t in tones}
+        if statuses == {"neutral"}:
+            return ["Thanh điệu: câu chỉ có thanh nhẹ, không chấm thanh điệu."]
+        if "misread" in statuses and statuses <= {"misread", "neutral"}:
+            return ["Thanh điệu: chưa chấm vì các âm tiết bị đọc thành âm khác."]
         return ["Thanh điệu: không đo được (thiếu cao độ hoặc không dóng được thời gian từng âm tiết)."]
     bad = [t for t in judged if not t["ok"]]
     line = f"Thanh điệu (đo từ đường F0 từng âm tiết): đúng {len(judged) - len(bad)}/{len(judged)} âm tiết"
@@ -110,6 +116,8 @@ async def _coach_comment(result: EvaluationResult, settings: Settings, lang: str
         moras=units, errors=result.score.errors, duration_issues=[], pitch_points=None,
     )
     facts.extra_lines = _tone_facts(result)
+    # Nothing heard: the no-voice line alone, not every syllable as missing.
+    facts.facts_only = result.aspects.method.startswith("no-voice")
     return await generate_comment(facts, settings, lang=lang, target_lang="zh")
 
 
