@@ -5,10 +5,11 @@ import os
 import tempfile
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
-from app.schemas.chinese import ChineseEvaluateResponse
+from app.schemas.chinese import ChineseEvaluateResponse, ChineseEvaluateV2Response
 from app.schemas.coaching import CoachComment, CoachResponse, TextGuideResponse
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
 from app.services.coaching import (
@@ -17,8 +18,10 @@ from app.services.coaching import (
 )
 from app.services.chinese_asr import ChineseASRService, get_chinese_asr_service
 from app.services.chinese_text import chinese_pitch_pattern, normalize_chinese
-from app.services.chinese_use_cases import EvaluateChineseUseCase
+from app.services.chinese_use_cases import EvaluateChineseUseCase, score_chinese
+from app.services.cjk_evaluate_v2 import AsrUnavailableError, evaluate_v2, measure_locked
 from app.services.use_cases import EmptyTargetError, EvaluationResult
+from app.services.voice_presence import NO_VOICE_FACT
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -84,8 +87,7 @@ def _score(asr: ChineseASRService, text: str, path: str) -> EvaluationResult:
 def _tone_facts(result: EvaluationResult) -> list[str]:
     """The tone checks, for the coach (the score itself ignores tones)."""
     if result.aspects.method.startswith("no-voice"):
-        return ["Không nghe thấy giọng đọc trong bản ghi (im lặng, quá nhỏ hoặc chỉ thì thầm): "
-                "chưa chấm được gì. Hãy nhắc người học đọc to, rõ, gần micro rồi thử lại."]
+        return [NO_VOICE_FACT]
     tones = result.tones or []
     judged = [t for t in tones if t["ok"] is not None]
     if not judged:
@@ -121,6 +123,29 @@ async def _coach_comment(result: EvaluationResult, settings: Settings, lang: str
     return await generate_comment(facts, settings, lang=lang, target_lang="zh")
 
 
+def _response(result: EvaluationResult, cls: type[ChineseEvaluateResponse] = ChineseEvaluateResponse,
+              **extra):
+    """The /evaluate shape: a mora_status item per Hanzi and the tone checks
+    (`extra`: the v2 fields)."""
+    bad = {e.position for e in result.score.errors if e.type in ("sub", "del")}
+    return cls.model_validate({
+        **EvaluateResponse.from_result(result).model_dump(),
+        "mora_status": [MoraStatusItem(mora=c, ok=i not in bad) for i, c in enumerate(result.target_hiragana)],
+        "tones": result.tones or [],
+        **extra,
+    })
+
+
+async def _add_coach(response: ChineseEvaluateResponse, result: EvaluationResult,
+                     settings: Settings, lang: str) -> None:
+    """`coach` from the result just scored, or `coach_error` when Ollama fails."""
+    try:
+        comment = await _coach_comment(result, settings, lang)
+        response.coach = CoachComment(assessment=comment.assessment, suggestion=comment.suggestion, lang=lang)
+    except CoachingUnavailableError as e:
+        response.coach_error = str(e)
+
+
 @router.post("/evaluate", response_model=ChineseEvaluateResponse)
 async def evaluate_chinese(
     text: str = Form(...), audio: UploadFile = File(...),
@@ -134,24 +159,56 @@ async def evaluate_chinese(
     tmp_path = await _save_upload(audio, settings, "zh_pronunciation_")
     try:
         result = _score(asr, text, tmp_path)
-        bad = {e.position for e in result.score.errors if e.type in ("sub", "del")}
-        response = ChineseEvaluateResponse.model_validate({
-            **EvaluateResponse.from_result(result).model_dump(),
-            "mora_status": [MoraStatusItem(mora=c, ok=i not in bad) for i, c in enumerate(result.target_hiragana)],
-            "tones": result.tones or [],
-        })
+        response = _response(result)
         if coach_lang is not None:
-            try:
-                comment = await _coach_comment(result, settings, coach_lang)
-                response.coach = CoachComment(
-                    assessment=comment.assessment, suggestion=comment.suggestion, lang=coach_lang)
-            except CoachingUnavailableError as e:
-                response.coach_error = str(e)
+            await _add_coach(response, result, settings, coach_lang)
         return response
     except (EmptyTargetError, ValueError) as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
         logger.exception("Chinese evaluate failed")
+        raise HTTPException(500, f"Inference failed: {e}") from e
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+@router.post(
+    "/evaluate-v2",
+    response_model=ChineseEvaluateV2Response,
+    summary="Chấm đọc tiếng Trung v2: transcript từ Qwen3-ASR (Ollama) + nhận xét AI",
+)
+async def evaluate_chinese_v2(
+    text: str = Form(...), audio: UploadFile = File(...),
+    lang: str = Form("vi", description="Coach comment language: vi | en | ja | ko | tw"),
+    feedback: bool = Form(True, description="Also return the AI comment (`coach`)"),
+    asr: ChineseASRService = Depends(get_chinese_asr_service),
+    settings: Settings = Depends(get_settings),
+) -> ChineseEvaluateV2Response:
+    """The /evaluate fields scored on Qwen3-ASR's transcript (the CTC model
+    only times the syllables for the tone checks), plus `coach` and
+    `v2_assessment`: a client switches endpoints without other changes."""
+    text = _target(text)
+    lang = _coach_lang(lang)
+    tmp_path = await _save_upload(audio, settings, "zh_v2_")
+    try:
+        with gpu_session():
+            take = await run_in_threadpool(
+                measure_locked, EvaluateChineseUseCase(asr).measure, text, tmp_path, alignment_optional=True)
+        # After gpu_session: the CTC model is offloaded before Ollama loads Qwen3-ASR.
+        result, assessment = await evaluate_v2(take, "zh", score_chinese, settings, settings.zh_asr_model)
+        response = _response(result, ChineseEvaluateV2Response, v2_assessment=assessment)
+        if feedback:
+            await _add_coach(response, result, settings, lang)
+        return response
+    except AsrUnavailableError as e:
+        # No transcript, no score: an error, as English /evaluate-v2.
+        raise HTTPException(503, str(e) or "Qwen3-ASR unavailable") from e
+    except (EmptyTargetError, ValueError) as e:
+        raise HTTPException(400, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(422, f"Could not read the audio: {e}") from e
+    except Exception as e:
+        logger.exception("Chinese evaluate-v2 failed")
         raise HTTPException(500, f"Inference failed: {e}") from e
     finally:
         Path(tmp_path).unlink(missing_ok=True)

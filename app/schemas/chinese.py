@@ -1,8 +1,10 @@
-"""The Mandarin /evaluate response: EvaluateResponse plus a tone check per
-syllable and the optional coach comment."""
+"""The Mandarin /evaluate and /evaluate-v2 responses: EvaluateResponse plus
+a tone check per syllable and the optional coach comment (and, for v2, what
+v2 did)."""
 
 from pydantic import BaseModel, Field
 
+from app.schemas.cjk_v2 import CjkV2Assessment
 from app.schemas.coaching import CoachComment
 from app.schemas.pronunciation import EvaluateResponse
 
@@ -34,3 +36,12 @@ class ChineseEvaluateResponse(EvaluateResponse):
         default=None, description="AI comment (same fields as POST /coach); only with coach=true",
     )
     coach_error: str | None = Field(default=None, description="Why `coach` is null when it was asked for")
+
+
+class ChineseEvaluateV2Response(ChineseEvaluateResponse):
+    """POST /evaluate-v2: the /evaluate fields (values from the Qwen3-ASR
+    transcript) plus what v2 did; `coach` comes with feedback=true."""
+
+    v2_assessment: CjkV2Assessment | None = Field(
+        default=None, description="ASR engine / model, raw transcript, alignment used for timing",
+    )
