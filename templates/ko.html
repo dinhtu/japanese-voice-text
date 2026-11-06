@@ -18,6 +18,7 @@
   <body
     data-api-base="{{ api_base_url }}"
     data-evaluate-url="{{ api_base_url }}/api/pronunciation-ko/evaluate"
+    data-evaluate-v2-url="{{ api_base_url }}/api/pronunciation-ko/evaluate-v2"
     data-reading-url="{{ api_base_url }}/api/pronunciation-ko/reading"
     data-pitch-url="{{ api_base_url }}/api/pronunciation-ko/pitch-accent"
     data-text-guide-url="{{ api_base_url }}/api/pronunciation-ko/text-guide"
@@ -251,6 +252,18 @@
             </h2>
           </div>
           <div class="card__body recorder" id="recorder">
+            <fieldset class="api-mode" id="api-mode">
+              <legend class="api-mode__legend">Cách chấm</legend>
+              <label class="api-mode__opt">
+                <input type="radio" name="api-mode" value="v1" checked />
+                <span>Chuẩn <small>/evaluate</small></span>
+              </label>
+              <label class="api-mode__opt">
+                <input type="radio" name="api-mode" value="v2" />
+                <span>Ollama v2 <small>/evaluate-v2</small></span>
+              </label>
+            </fieldset>
+
             <div class="recorder__dial" id="dial">
               <span class="recorder__pulse"></span>
               <span class="recorder__level" id="level"></span>
@@ -408,10 +421,24 @@
               </div>
             </div>
 
-            <p class="note">
+            <p class="note" id="result-note-v2" hidden>
+              Chấm bằng /evaluate-v2: Qwen3-ASR (Ollama) chép lời, rồi chấm như /evaluate trên bản chép đó:
+              CER âm tiết Hangul (chuẩn hóa theo quy tắc phát âm chuẩn) và ngữ điệu theo đường F0 đo từ giọng
+              đọc. Mô hình CTC (wav2vec2 Korean) chỉ căn thời gian từng âm tiết, lời nó nghe không được chấm;
+              không căn được thì chia đều thời gian. Nhận xét do Ollama viết.
+            </p>
+            <p class="note" id="result-note-v1">
               Độ khớp âm tiết Hangul được chuẩn hóa theo quy tắc phát âm chuẩn tiếng Hàn (nối âm, biến âm, mũi hóa, nhược hóa). Cao độ mẫu hiển thị bậc âm điệu cụm từ (Accentual Phrase H/L) kết hợp với đường F0 thực tế đo từ giọng đọc của bạn.
             </p>
           </div>
+        </section>
+
+        <!-- 3b. Result from /evaluate-v2 (Qwen3-ASR + Ollama) -->
+        <section class="card rise" id="result-v2" hidden>
+          <div class="card__head">
+            <h2 class="card__title"><span class="step">v2</span> Kết quả chấm Ollama (Qwen3-ASR)</h2>
+          </div>
+          <div class="card__body" id="result-v2-body" aria-live="polite"></div>
         </section>
       </div>
 

@@ -38,3 +38,30 @@ def test_language_pages_use_their_own_endpoints():
     assert "data-text-guide-url=\"/api/pronunciation-zh/text-guide\"" in chinese
     assert "id=\"custom-input\"" in chinese
     assert "id=\"guide-btn\"" not in chinese
+
+
+def test_en_zh_ko_pages_offer_the_v1_v2_switch():
+    """en, zh and ko pick /evaluate or /evaluate-v2 ("Cách chấm"); ja has no v2."""
+    templates = Path(__file__).resolve().parents[1] / "templates"
+    env = Environment(loader=FileSystemLoader(templates), undefined=StrictUndefined)
+    context = {
+        "api_base_url": "",
+        "asset_url": lambda path: f"/static/{path}",
+        "default_text": {"id": "sample", "text": "hello", "reading": "", "meaning": ""},
+        "texts": [],
+    }
+    for page, lang in (("en.html", "en"), ("zh.html", "zh"), ("ko.html", "ko")):
+        html = env.get_template(page).render(context)
+        assert f"data-evaluate-v2-url=\"/api/pronunciation-{lang}/evaluate-v2\"" in html, page
+        assert "<fieldset class=\"api-mode\" id=\"api-mode\">" in html, page
+        assert "name=\"api-mode\" value=\"v1\" checked" in html, page
+        assert "name=\"api-mode\" value=\"v2\"" in html, page
+        assert "id=\"result-note-v1\"" in html, page
+        assert "id=\"result-note-v2\" hidden" in html, page
+        assert "id=\"result-v2\" hidden" in html, page
+        assert "id=\"result-v2-body\"" in html, page
+        assert "id=\"coach-lang\"" in html, page
+
+    japanese = (templates / "index.html").read_text(encoding="utf-8")
+    assert "data-evaluate-v2-url" not in japanese
+    assert "api-mode" not in japanese

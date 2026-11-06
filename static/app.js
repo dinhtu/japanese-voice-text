@@ -17,12 +17,16 @@ const COACH_API_URL = document.body.dataset.coachUrl
   || `${API_BASE}/api/pronunciation/coach`;
 const TEXT_GUIDE_API_URL = document.body.dataset.textGuideUrl
   || `${API_BASE}/api/pronunciation/text-guide`;
-/** English only: Qwen3-ASR + Ollama scoring (en-reading-v2). */
+/** Qwen3-ASR + Ollama scoring (/evaluate-v2): en, zh and ko pages only;
+ *  empty on the Japanese page, which then always uses /evaluate. */
 const API_V2_URL = document.body.dataset.evaluateV2Url || "";
 const TTS_LANG = document.body.dataset.ttsLang || "ja-JP";
 /** "Nghe mẫu": server-side proxy to the Qwen3-TTS service (app/api/tts_routes.py). */
 const SPEAK_API_URL = document.body.dataset.speakUrl || `${API_BASE}/api/tts`;
 const TARGET_LANG = document.body.dataset.targetLang || "ja";
+/** Pages whose evaluate request also returns the AI comment (`coach`), so
+ *  no second upload to /coach after a take. Japanese still calls /coach. */
+const INLINE_COACH = ["en", "zh", "ko"].includes(TARGET_LANG);
 /** Sample rate the ASR model runs at. */
 const TARGET_SAMPLE_RATE = 16_000;
 /** Stop on our own so a forgotten recording cannot exceed the upload limit. */
@@ -409,7 +413,7 @@ async function startRecording() {
     }
 
     showPlayback(wav);
-    await Promise.all([evaluate(wav), comparePitch(), TARGET_LANG === "en" ? null : requestCoach()]);
+    await Promise.all([evaluate(wav), comparePitch(), INLINE_COACH ? null : requestCoach()]);
   };
 
   startedAt = Date.now();
@@ -476,7 +480,7 @@ async function submitFile(file) {
   }
 
   showPlayback(wav);
-  await Promise.all([evaluate(wav), comparePitch(), TARGET_LANG === "en" ? null : requestCoach()]);
+  await Promise.all([evaluate(wav), comparePitch(), INLINE_COACH ? null : requestCoach()]);
 }
 
 /* ------------------------------------------------------------ Evaluate */
@@ -491,15 +495,16 @@ async function evaluate(wav) {
     if (englishReference) renderPitchChart();
   }
 
-  // English: the AI comment comes back inside the evaluate response (`coach`).
-  if (TARGET_LANG === "en") coachPending();
+  // en / zh / ko: the AI comment comes back inside the evaluate response (`coach`).
+  if (INLINE_COACH) coachPending();
   try {
-    // English page: "Cách chấm" switches between /evaluate and /evaluate-v2;
-    // both answer in the same shape, v2 adds its details in v2_assessment.
-    const v2 = TARGET_LANG === "en" && Boolean(API_V2_URL) && apiMode() === "v2";
+    // en / zh / ko pages: "Cách chấm" switches between /evaluate and
+    // /evaluate-v2; both answer in the same shape, v2 adds its details in
+    // v2_assessment. No v2 URL (Japanese page) = always /evaluate.
+    const v2 = Boolean(API_V2_URL) && apiMode() === "v2";
     const result = v2
       ? await postEvaluate(API_V2_URL, wav, { feedback: "true" })
-      : await postEvaluate(API_URL, wav, TARGET_LANG === "en" ? { coach: "true" } : {});
+      : await postEvaluate(API_URL, wav, INLINE_COACH ? { coach: "true" } : {});
     renderResult(result);
     const noteV1 = $("result-note-v1");
     const noteV2 = $("result-note-v2");
@@ -507,8 +512,11 @@ async function evaluate(wav) {
       noteV1.hidden = v2;
       noteV2.hidden = !v2;
     }
-    if (TARGET_LANG === "en") showCoachFrom(result);
-    if (v2 && result.v2_assessment) renderV2(result.v2_assessment, { showFeedback: false });
+    if (INLINE_COACH) showCoachFrom(result);
+    if (v2 && result.v2_assessment) {
+      if (TARGET_LANG === "en") renderV2(result.v2_assessment, { showFeedback: false });
+      else renderCjkV2(result.v2_assessment);
+    }
     // F0 measured from the WAV, one point per target mora — not the
     // dictionary H/L of whatever kana ASR printed.
     learnerPitch = result.measured_pitch ?? [];
@@ -531,8 +539,8 @@ async function postEvaluate(url, wav, extra = {}) {
   const formData = new FormData();
   formData.append("text", target.text);
   formData.append("audio", new File([wav], "recording.wav", { type: "audio/wav" }));
-  // English reports (improvements / Ollama feedback) follow the coach language.
-  if (TARGET_LANG === "en" && el.coachLang) formData.append("lang", el.coachLang.value);
+  // The inline AI comment (and the English reports) follow the coach language.
+  if (INLINE_COACH && el.coachLang) formData.append("lang", el.coachLang.value);
   for (const [key, value] of Object.entries(extra)) formData.append(key, value);
   const response = await fetch(url, { method: "POST", body: formData });
   if (!response.ok) {
@@ -547,7 +555,8 @@ async function postEvaluate(url, wav, extra = {}) {
 
 /* ------------------------------------------------- Which API to score with */
 
-const API_MODE_KEY = "pronunciation-en-api-mode";
+/** Per page; English keeps its original "pronunciation-en-api-mode". */
+const API_MODE_KEY = `pronunciation-${TARGET_LANG}-api-mode`;
 
 function apiMode() {
   const checked = document.querySelector('input[name="api-mode"]:checked');
@@ -1042,6 +1051,48 @@ function renderV2(report, { showFeedback = true } = {}) {
   card.hidden = false;
 }
 
+const CJK_V2_TIMING = {
+  ctc_forced_alignment: "CTC forced alignment",
+  even_split: "chia đều theo thời lượng nói",
+};
+
+/** zh / ko /evaluate-v2: the scores, tones and pitch are in the result card
+ *  (same shape as /evaluate); this card says what produced them -- the
+ *  Qwen3-ASR transcript that was scored and the CTC model that only timed
+ *  the syllables (v2_assessment, app/schemas/cjk_v2.py). */
+function renderCjkV2(report) {
+  const card = $("result-v2");
+  if (!card) return;
+  const asr = report.asr || {};
+  const align = report.alignment || {};
+  const asrMeta = [
+    asr.model,
+    asr.language ? `giữ ngôn ngữ: ${asr.language}` : null,
+    asr.detected_language ? `nhận ra: ${asr.detected_language}` : null,
+    `${Number(asr.calls) || 0} lần gọi Ollama`,
+    asr.latency_ms != null ? `${(Number(asr.latency_ms) / 1000).toFixed(1)}s` : null,
+  ].filter(Boolean).join(" · ");
+  const timingMeta = [
+    align.model,
+    align.method ? CJK_V2_TIMING[align.method] || align.method : "không căn thời gian",
+    align.used_for_timing ? "đã dùng để căn thời gian âm tiết" : "không dùng để căn thời gian",
+    align.inference_ms != null ? `${Math.round(Number(align.inference_ms))} ms` : null,
+  ].filter(Boolean).join(" · ");
+  const heard = asr.status === "skipped"
+    ? "Không gọi Qwen3-ASR (không có giọng)."
+    : asr.transcript ? `Nghe được: “${escapeHtml(asr.transcript)}”` : "Không nghe thấy lời.";
+
+  $("result-v2-body").innerHTML = `
+    ${cmpCardHead(report.scoring_version || "reading-v2", report.status)}
+    <p class="label v2-label">Qwen3-ASR (Ollama) · bản chép lời được chấm</p>
+    <p class="cmp-card__meta">${escapeHtml(asrMeta)}</p>
+    <p class="cmp-card__summary">${heard}</p>
+    <p class="label v2-label">Căn thời gian (CTC, không chấm)</p>
+    <p class="cmp-card__meta">${escapeHtml(timingMeta)}</p>
+    ${align.transcript ? `<p class="cmp-card__summary">CTC nghe: “${escapeHtml(align.transcript)}”</p>` : ""}`;
+  card.hidden = false;
+}
+
 /* -------------------------------------------------------------- Coaching */
 
 function resetCoach() {
@@ -1056,7 +1107,7 @@ function resetCoach() {
   el.coachBtn.disabled = false;
 }
 
-/** English: the comment is being written as part of the evaluate request. */
+/** en / zh / ko: the comment is being written as part of the evaluate request. */
 function coachPending() {
   el.coachPanel.hidden = false;
   el.coachAssessmentBlock.hidden = true;
@@ -1067,7 +1118,7 @@ function coachPending() {
   el.coachBtn.disabled = true;
 }
 
-/** English: show the `coach` comment (or `coach_error`) the evaluate
+/** en / zh / ko: show the `coach` comment (or `coach_error`) the evaluate
  *  response carried. The button can still regenerate it through /coach. */
 function showCoachFrom(result) {
   el.coachBtn.disabled = false;
@@ -1094,8 +1145,8 @@ function showCoachFrom(result) {
 /** Ask the locally-run Ollama model (see app/services/coaching.py) for a
  *  natural-language comment on the take just scored, in `el.coachLang`'s
  *  language. Fired automatically alongside evaluate()/comparePitch() for
- *  every take on the non-English pages (see the two Promise.all([...]) call
- *  sites; English gets `coach` inside the evaluate response), and also
+ *  every take on the Japanese page (see the two Promise.all([...]) call
+ *  sites; en / zh / ko get `coach` inside the evaluate response), and also
  *  re-triggered by the coach button (e.g. to regenerate after switching
  *  language) -- the `disabled` guard below keeps a manual click a no-op
  *  while a request from either source is already in flight. */
