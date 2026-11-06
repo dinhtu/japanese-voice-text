@@ -228,21 +228,23 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = tuple(SYSTEM_PROMPTS)
 CHINESE_TARGET_PROMPTS = {
     "vi": (
         "Bạn là giáo viên phát âm tiếng Trung phổ thông cho người Việt. "
-        "Chỉ nhận xét dữ liệu đã đo: độ khớp âm tiết pinyin không dấu thanh qua ASR. "
-        "Không khẳng định lỗi thanh điệu, âm vị hay ngữ điệu vì chưa có phép đo này. "
+        "Chỉ nhận xét dữ liệu đã đo: độ khớp âm tiết pinyin không dấu thanh qua ASR và "
+        "dòng Thanh điệu (hình dạng F0 từng âm tiết). Chỉ nêu lỗi thanh điệu có trong dòng đó; "
+        "không suy đoán lỗi âm vị vì chưa có phép đo này. "
         "Trả về đúng JSON gồm assessment và suggestion bằng tiếng Việt, mỗi mục 1-2 câu; "
         "suggestion có thể là chuỗi rỗng. Không dùng bullet hay nhắc số liệu thô."
     ),
     "en": (
         "You teach Mandarin pronunciation to Vietnamese learners. "
-        "Only describe measured toneless pinyin syllable matches from ASR. Tone and intonation "
-        "errors have not been measured, so do not claim them. Return JSON with "
+        "Only describe what was measured: toneless pinyin syllable matches from ASR and the "
+        "tone line (each syllable's F0 shape). Name only tone errors listed there; phoneme "
+        "quality has not been measured, so do not claim it. Return JSON with "
         "assessment and suggestion in English, 1-2 sentences each; suggestion may "
         "be empty. No bullet points or raw numbers."
     ),
     "ja": (
         "あなたは標準中国語の発音教師です。ASRによって測定された声調なしピンイン音節の一致データのみを客観的に評価してください。"
-        "声調や音素の正確性、イントネーションは測定されていないため、それらの誤りを断定しないでください。"
+        "声調は「Thanh điệu」の行（各音節のF0の形）に挙がった誤りだけを述べてください。音素の正確性は測定されていないため、断定しないでください。"
         "日本語で「assessment」と「suggestion」（各1〜2文、suggestionは空文字列も可）のキーを持つJSONのみを返してください。"
         "箇条書きや生データ数値は使わず、自然な日本語で記述してください。"
     ),
@@ -442,7 +444,8 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
             "Đây là câu tiếng Anh. Đơn vị là từ (không phải mora tiếng Nhật)."
         )
     elif target_lang == "zh":
-        lines.append("Đây là câu tiếng Trung; chỉ đo độ khớp âm tiết pinyin không dấu thanh từ ASR, chưa đo thanh điệu hay chất lượng âm vị.")
+        lines.append("Đây là câu tiếng Trung; điểm tổng là độ khớp âm tiết pinyin không dấu thanh từ ASR. "
+                     "Thanh điệu đo riêng từ đường F0 từng âm tiết (dòng Thanh điệu); chưa đo chất lượng âm vị.")
 
     if facts.wrong_morae:
         lines.append(
@@ -467,7 +470,7 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
                 f"{issue.expected_seconds:.2f}s) - bị đọc rút ngắn rõ rệt."
             )
     elif target_lang == "zh":
-        lines.append("Chưa đo thời lượng từng âm tiết hoặc thanh điệu.")
+        lines.append("Chưa đo thời lượng từng âm tiết.")
     else:
         lines.append("Không phát hiện vấn đề về thời lượng ngắt/kéo dài.")
 
@@ -476,7 +479,7 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
             f"Cao độ: {facts.pitch_matched}/{facts.pitch_total} {unit} có audio "
             f"khớp đúng hướng cao/thấp so với mẫu."
         )
-    else:
+    elif target_lang != "zh":  # Mandarin: the tone line in extra_lines covers pitch
         lines.append("Không có đủ dữ liệu cao độ để đánh giá.")
 
     lines.extend(facts.extra_lines)

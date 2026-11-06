@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.coaching import CoachComment  # noqa: F401 -- re-exported
 from app.schemas.pronunciation import EvaluateResponse
 
 
@@ -191,15 +192,6 @@ class OllamaAssessment(BaseModel):
     latency_ms: float | None = None
     error: str | None = None
     scoring_version: str
-
-
-class CoachComment(BaseModel):
-    """The /coach comment ({assessment, suggestion, lang}), returned inside
-    the evaluate response so a client makes one call."""
-
-    assessment: str
-    suggestion: str = ""
-    lang: str
 
 
 class EnglishEvaluateResponse(EvaluateResponse):

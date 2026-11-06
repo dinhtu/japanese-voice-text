@@ -40,7 +40,7 @@ from app.services.english_text import (
 from app.services.scoring import ScoreResult
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 from app.services.vad_fluency import VadResult
-from app.services.voice_presence import VoicePresence, check_voice
+from app.services.voice_presence import NO_VOICE_MESSAGES, VoicePresence, check_voice
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +144,7 @@ def _vad(samples: np.ndarray | None, sample_rate: int | None) -> VadResult | Non
         return None
 
 
-_NO_VOICE_MESSAGES = {
-    "silent": "No voice was heard. Read the sentence aloud, close to the microphone.",
-    "whisper": "Only whispering was heard. Read the sentence aloud in your normal voice.",
-}
+_NO_VOICE_MESSAGES = NO_VOICE_MESSAGES
 
 
 def _gopt_detail(

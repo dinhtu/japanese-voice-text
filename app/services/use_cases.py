@@ -48,6 +48,8 @@ class EvaluationResult:
     gopt_assessment: dict | None = None
     # English only: english_assessment.AssessmentInputs (not serialized)
     assessment_inputs: object | None = None
+    # Mandarin only: one tone check per target Hanzi (see chinese_use_cases)
+    tones: list[dict] | None = None
 
 
 def _speech_span(windows: list[tuple[float, float]]) -> float | None:

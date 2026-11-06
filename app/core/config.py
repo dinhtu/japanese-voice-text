@@ -60,6 +60,8 @@ class Settings:
                            English /evaluate, 0 to skip.
         EN_OLLAMA_ASR_MODEL   Ollama ASR model for it (default frozenlab/qwen3-asr;
                            `ollama pull frozenlab/qwen3-asr`). Independent of OLLAMA_MODEL.
+                           Also the transcript of the /evaluate-v2 of every
+                           language (en, zh, ko), with its timeout below.
         EN_OLLAMA_ASSESSMENT_TIMEOUT_S  Its timeout in seconds (default 45).
         EN_V2_ALIGNER      /evaluate-v2 word timing: wav2vec2 (default) | none.
         EN_V2_FEEDBACK     1 (default) to add OLLAMA_MODEL feedback to /evaluate-v2, 0 to skip.

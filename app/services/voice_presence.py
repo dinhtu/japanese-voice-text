@@ -28,6 +28,12 @@ MIN_VOICED_SHARE = 0.1
 # this much voiced time is required instead.
 MIN_VOICED_S = 0.05
 
+# feedback.message of a take with no voice, by VoicePresence.verdict.
+NO_VOICE_MESSAGES = {
+    "silent": "No voice was heard. Read the sentence aloud, close to the microphone.",
+    "whisper": "Only whispering was heard. Read the sentence aloud in your normal voice.",
+}
+
 _FRAME_S = 0.04
 _HOP_S = 0.01
 
@@ -81,3 +87,37 @@ def check_voice(samples: np.ndarray, sample_rate: int, vad: VadResult) -> VoiceP
     if voiced < MIN_VOICED_SHARE * speech:
         return VoicePresence("whisper", speech, voiced)
     return VoicePresence("voice", speech, voiced)
+
+
+# The coach's only fact for such a take (Vietnamese, like the other facts).
+NO_VOICE_FACT = (
+    "Không nghe thấy giọng đọc trong bản ghi (im lặng, quá nhỏ hoặc chỉ thì thầm): "
+    "chưa chấm được gì. Hãy nhắc người học đọc to, rõ, gần micro rồi thử lại."
+)
+
+
+def no_voice_result(target_text: str, target: str, units: list[str], duration: float,
+                    vad: VadResult, presence: VoicePresence, **extra):
+    """The EvaluationResult of a take with no voice: score 0, every unit
+    (syllable) missing, the no-voice message, no ASR run. `extra` fills the
+    language's own fields (readings, tones)."""
+    from app.services.aspect_scoring import AspectScores
+    from app.services.scoring import PronunciationError, ScoreResult
+    from app.services.use_cases import EvaluationResult
+
+    errors = [PronunciationError("del", u, "", k) for k, u in enumerate(units)]
+    score = ScoreResult(0, 1.0, len(units), len(units), "mismatch",
+                        NO_VOICE_MESSAGES[presence.verdict], errors)
+    aspects = AspectScores(
+        overall_score=0.0, pronunciation_score=0.0, fluency_score=0.0,
+        rhythm_score=None, intonation_score=None,
+        rhythm_measured=False, intonation_measured=False,
+        method=f"no-voice:{presence.verdict}", vad_method=vad.method,
+        pause_count=0, speech_ratio=vad.speech_ratio,
+    )
+    return EvaluationResult(
+        target_text=target_text, target_hiragana=target,
+        recognized_text="", recognized_hiragana="",
+        score=score, aspects=aspects,
+        audio_duration=round(duration, 2), inference_ms=0.0, **extra,
+    )
