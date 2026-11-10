@@ -102,6 +102,14 @@ class EnglishEvaluateV2Response(EnglishEvaluateResponse):
     # (pronunciation_score = content when P is missing, fluency_score = 0
     # when gated): on a failed gate overall_score is content_score alone, and
     # without P it is 0 (v2_assessment.status says why).
+    # Null only when no voice was heard (v2_assessment.status = "no_voice"):
+    # nothing was scored. score / overall_score stay 0 there.
+    pronunciation_score: float | None = Field(
+        default=None, ge=0, le=100, description="v2 pronunciation (content accuracy when P is missing); null when no voice",
+    )
+    fluency_score: float | None = Field(
+        default=None, ge=0, le=100, description="v2 fluency (0 when gated); null when no voice",
+    )
     content_score: float | None = Field(default=None, description="v2 content accuracy, 100 x (1 - WER)")
     word_stress_score: float | None = Field(default=None, description="v2 word stress")
     intonation_criterion_score: float | None = Field(

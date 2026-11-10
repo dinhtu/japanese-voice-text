@@ -613,8 +613,8 @@ def legacy_fields(report: dict, acoustics: Acoustics) -> dict:
     client reads /evaluate-v2 exactly like /evaluate. Mapping:
 
         score / overall_score   v2 overall (0 when no voice)
-        pronunciation_score     v2 pronunciation, else content accuracy
-        fluency_score           v2 fluency (0 when gated: other words read)
+        pronunciation_score     v2 pronunciation, else content accuracy (null when no voice)
+        fluency_score           v2 fluency (0 when gated: other words read; null when no voice)
         rhythm_score            the rhythm part of v2 intonation (null if not measured)
         intonation_score        the intonation part of v2 intonation (null if not measured)
         content_score / word_stress_score / intonation_criterion_score
@@ -638,7 +638,8 @@ def legacy_fields(report: dict, acoustics: Acoustics) -> dict:
     overall = report.get("overall_score")
     score = int(round(overall)) if overall is not None else 0
     level, message = level_of(score)
-    if report.get("status") == "no_voice":
+    no_voice = report.get("status") == "no_voice"
+    if no_voice:
         level = "mismatch"
         message = _NO_VOICE_MESSAGES.get(acoustics.presence.verdict, message)
 
@@ -680,8 +681,10 @@ def legacy_fields(report: dict, acoustics: Acoustics) -> dict:
         "recognized_hiragana": recognized_norm,
         "score": score,
         "overall_score": float(score if overall is None else overall),
-        "pronunciation_score": float(pronunciation),
-        "fluency_score": float(_criterion_score(criteria, "fluency") or 0.0),
+        # No voice: nothing was scored, so these two are null (not a 0 the
+        # learner earned); score / overall_score stay 0 for clients that need a number.
+        "pronunciation_score": None if no_voice else float(pronunciation),
+        "fluency_score": None if no_voice else float(_criterion_score(criteria, "fluency") or 0.0),
         "rhythm_score": rhythm,
         "intonation_score": tone if tone is not None else _criterion_score(criteria, "intonation"),
         "rhythm_measured": rhythm is not None,

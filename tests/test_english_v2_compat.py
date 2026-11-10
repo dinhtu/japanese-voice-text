@@ -91,6 +91,12 @@ def test_legacy_fields_for_misreading_and_no_voice(monkeypatch):
     report, acoustics = _report(monkeypatch, _reply("x"), acoustics=_acoustics(voiced=False))
     data = v2.legacy_fields(report, acoustics)
     assert data["score"] == 0 and data["feedback"]["level"] == "mismatch"
+    # No voice: nothing scored, so pronunciation / fluency are null; score / overall stay 0.
+    assert data["overall_score"] == 0.0
+    assert data["pronunciation_score"] is None and data["fluency_score"] is None
+    data["v2_assessment"] = report
+    out = EnglishEvaluateV2Response.model_validate(json.loads(json.dumps(data)))
+    assert out.pronunciation_score is None and out.fluency_score is None and out.score == 0
 
 
 def _client(monkeypatch, reply=None, error=None):
