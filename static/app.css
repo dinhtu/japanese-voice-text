@@ -1388,12 +1388,10 @@ html[lang="en"] .pitch__label {
   max-width: 12rem;
 }
 
+/* Word stress: capitals + bold only. Underline is kept for the nucleus. */
 .syll__stressed {
   font-weight: 800;
   color: var(--brand-700);
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
 }
 
 .syll__cell--bad .syll__stressed {
@@ -2170,15 +2168,22 @@ html[lang="en"] .pitch__label {
   color: #b91c1c;
 }
 
+/* Bạn row: the syllable stressed in the word (capitals, bold). No underline:
+   underline means the nucleus, as in the sentence line at the top. */
 .pros__stress {
   font-weight: 800;
+}
+
+/* Mẫu row, same marks as .eni-sent__acc / .eni-sent__nuc at the top. */
+.pros__acc {
+  color: var(--brand-600);
+  font-weight: 800;
+}
+
+.pros__nuc {
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
-}
-
-.pros__model .pros__stress {
-  color: var(--brand-700);
 }
 
 /* Columns wrap onto more lines; the learner row is always a pill, so the

@@ -700,15 +700,19 @@ function renderResult(result) {
   // (see app/services/mora_diff.py) regrouped onto the target's morae, not
   // a fabricated confidence score.
   const moraStatus = result.mora_status || [];
+  // English: the dictionary stress per word, so a card shows the same
+  // syllable as its IPA and the Mẫu row even when another accepted reading passed.
+  const enWords = result.intonation && Array.isArray(result.intonation.words)
+    && result.intonation.words.length === moraStatus.length ? result.intonation.words : null;
   el.syll.hidden = moraStatus.length === 0;
   if (moraStatus.length > 0) {
     el.syllGrid.replaceChildren(
-      ...moraStatus.map((m) => {
+      ...moraStatus.map((m, i) => {
         const cell = document.createElement("span");
         cell.className = m.ok ? "syll__cell" : "syll__cell syll__cell--bad";
         if (Array.isArray(m.syllables) && m.syllables.length) {
           cell.classList.add("syll__cell--word");
-          cell.innerHTML = englishWordCellHtml(m);
+          cell.innerHTML = englishWordCellHtml(m, enWords ? enWords[i].stress_index : null);
         } else {
           cell.textContent = m.mora;
         }
@@ -1829,6 +1833,7 @@ function englishLayout(data, available) {
         syllable: i,
         phrase: word.phrase,
         text: syl.text,
+        plain: plainSyllable(word, syl.text),
         role: ref ? ref.role : "weak",
         ref,
         x0: x,
@@ -1843,8 +1848,16 @@ function englishLayout(data, available) {
   return { sylls, gaps, width: x + 12, col, columns: columns.join(" ") };
 }
 
+/** An unstressed syllable as shown: lower case inside a multi-syllable word
+ *  ("Hel·LO" -> "hel·LO"), so capitals only ever mean stress; a one-syllable
+ *  word ("I", "My") and a word written in capitals ("FBI") keep their spelling. */
+function plainSyllable(word, text) {
+  const keep = word.syllables.length <= 1 || word.text === word.text.toUpperCase();
+  return keep ? text : text.toLowerCase();
+}
+
 function syllableLabel(syl) {
-  return isAccent(syl.role) ? syl.text.toUpperCase() : syl.text;
+  return isAccent(syl.role) ? syl.text.toUpperCase() : syl.plain;
 }
 
 /** "my NAME is AN·na ‖ I WORK as a TEA·cher ↘" */
@@ -2154,16 +2167,19 @@ const ENGLISH_LEGEND = `
     <span><i class="eni-sw eni-sw--band"></i>Khoảng chấp nhận</span>
     <span><i class="eni-sw eni-sw--you"></i>Bạn (F0 đo)</span>
     <span><i class="eni-mark eni-mark--nuc"></i>Nhấn chính (nucleus)</span>
-    <span class="eni-legend__end">ˈ trọng âm từ (từ điển) · ● trọng âm câu</span>
+    <span class="eni-legend__end">ˈ trọng âm từ (từ điển) · ● nhấn câu</span>
   </div>`;
 
 /** "Từng từ" cell: TEA·cher, /ˈtiː.tʃɚ/, and whether the stress landed on
  *  the dictionary syllable (multi-syllable words only). */
-function englishWordCellHtml(m) {
+function englishWordCellHtml(m, dictStress = null) {
   const multi = m.syllables.length > 1;
   const marked = multi || (m.ipa || "").startsWith("ˈ");
+  // m.stress_index is the reading the learner used when it is an accepted
+  // one; the card shows the dictionary syllable, like its IPA.
+  const stressAt = dictStress ?? m.stress_index;
   const word = m.syllables
-    .map((s, i) => (marked && i === m.stress_index
+    .map((s, i) => (marked && i === stressAt
       ? `<b class="syll__stressed">${escapeHtml(s.toUpperCase())}</b>`
       : escapeHtml(s)))
     .join('<span class="syll__dot">·</span>');
@@ -2171,6 +2187,9 @@ function englishWordCellHtml(m) {
   let stress = "";
   if (!m.ok) {
     stress = ""; // not said (or misread): no verdict on its stress
+  } else if (multi && m.stress_ok === true && m.stress_index !== stressAt && m.syllables[m.stress_index]) {
+    const used = m.syllables[m.stress_index].toUpperCase();
+    stress = `<span class="syll__stress syll__stress--ok">✓ bạn nhấn ${escapeHtml(used)}, cũng đúng</span>`;
   } else if (multi && m.stress_ok === true) {
     stress = '<span class="syll__stress syll__stress--ok">✓ trọng âm</span>';
   } else if (multi && m.stress_ok === false) {
@@ -2203,7 +2222,7 @@ const END_MIN_ST = 2;
 function syllablesWith(word, index) {
   if (word.syllables.length <= 1) return index === 0 ? word.text.toUpperCase() : word.text;
   return word.syllables
-    .map((s, i) => (i === index ? s.text.toUpperCase() : s.text.toLowerCase()))
+    .map((s, i) => (i === index ? s.text.toUpperCase() : plainSyllable(word, s.text)))
     .join("·");
 }
 
@@ -2217,9 +2236,27 @@ function syllablesHtml(word, stress, mark = null) {
   const single = sylls.length === 1;
   return sylls
     .map((s, i) => {
-      const text = single ? s.text : i === stress ? s.text.toUpperCase() : s.text.toLowerCase();
+      const text = single ? s.text : i === stress ? s.text.toUpperCase() : plainSyllable(word, s.text);
       let html = escapeHtml(text);
       if (!single && i === stress) html = `<b class="pros__stress">${html}</b>`;
+      if (mark && mark.index === i) {
+        html = `<span class="pros__syl" data-mark="${mark.glyph}" data-tone="${mark.tone}">${html}</span>`;
+      }
+      return html;
+    })
+    .join('<span class="syll__dot">·</span>');
+}
+
+/** The Mẫu row, drawn like the sentence line at the top: capitals = accented
+ *  in the sentence (role stress / nucleus), underline = the phrase's nucleus.
+ *  So a one-syllable "LAN" is marked too, and a weak word stays plain. */
+function modelSyllablesHtml(word, roles, mark = null) {
+  const sylls = word.syllables.length ? word.syllables : [{ text: word.text }];
+  return sylls
+    .map((s, i) => {
+      const role = roles[i] || "weak";
+      let html = escapeHtml(isAccent(role) ? s.text.toUpperCase() : plainSyllable(word, s.text));
+      if (isAccent(role)) html = `<b class="pros__acc${role === "nucleus" ? " pros__nuc" : ""}">${html}</b>`;
       if (mark && mark.index === i) {
         html = `<span class="pros__syl" data-mark="${mark.glyph}" data-tone="${mark.tone}">${html}</span>`;
       }
@@ -2264,6 +2301,7 @@ function prosodyModel(result) {
   const peaks = new Map();
   for (const c of take.peaks || []) if (!peaks.has(c.word)) peaks.set(c.word, c);
   const breaks = new Map((take.breaks || []).map((c) => [c.after_word, c]));
+  const roleAt = new Map((take.reference || []).map((r) => [`${r.word}:${r.syllable}`, r.role]));
   const ends = englishEnds(take);
   const endByPhrase = new Map(ends.map((c) => [c.phrase, c]));
   const endOrder = new Map([...ends].sort((a, b) => a.phrase - b.phrase).map((c, k) => [c.phrase, k + 1]));
@@ -2275,17 +2313,28 @@ function prosodyModel(result) {
     const misread = !isMissing && Boolean(m && m.ok === false);
     const said = !isMissing && !misread;
     const raw = rawStress.get(word.index);
-    // The accepted reading (heteronyms, ties) is what both rows show when it passed.
+    // The reading the learner used when it is an accepted one ("REcord" for
+    // "reCORD"); the Bạn row shows it, the Mẫu row keeps the dictionary one.
     const expected = m && m.stress_index != null ? m.stress_index : raw ? raw.expected : word.stress_index;
     const heard = m ? m.heard_stress_index ?? null : raw ? raw.heard : null;
     let stressOk;
     if (multi && timed && said) stressOk = m ? m.stress_ok ?? null : raw ? raw.ok : null;
+    // Another accepted reading ("reCORD" for the dictionary "REcord"): the
+    // scorer still measures the sentence-stress peak on the dictionary
+    // syllable, which the learner left weak, so that verdict is not shown.
+    const altReading = stressOk === true && expected !== word.stress_index;
     const peakCheck = peaks.get(word.index);
     let peakOk;
-    if (peakCheck && timed && said) peakOk = peakCheck.ok;
+    if (peakCheck && timed && said) peakOk = altReading ? null : peakCheck.ok;
+    const roles = word.syllables.map((_s, s) => roleAt.get(`${word.index}:${s}`) || "weak");
+    const accentAt = roles.findIndex(isAccent);
+    // The Mẫu row's ◉/● sits on its capitals (the dictionary syllable), never
+    // on the learner's reading.
+    const modelSyllable = accentAt >= 0 ? accentAt : multi ? word.stress_index : 0;
     return {
-      word, multi, isMissing, misread, said, expected, heard, stressOk, peakOk,
-      peakSyllable: peakCheck ? peakCheck.syllable : multi ? expected : 0,
+      word, multi, isMissing, misread, said, expected, heard, stressOk, peakOk, altReading,
+      roles, modelSyllable,
+      peakSyllable: peakCheck ? peakCheck.syllable : modelSyllable,
       phraseEnd: !words[i + 1] || words[i + 1].phrase !== word.phrase,
     };
   });
@@ -2318,8 +2367,8 @@ function prosodyModel(result) {
 function prosodyWordHtml(it, model) {
   const { word } = it;
   const glyph = word.nucleus ? "◉" : word.sentence_stress ? "●" : "";
-  const modelHtml = syllablesHtml(word, it.multi ? it.expected : -1,
-    glyph ? { index: it.peakSyllable, glyph, tone: "ref" } : null);
+  const modelHtml = modelSyllablesHtml(word, it.roles,
+    glyph ? { index: it.modelSyllable, glyph, tone: "ref" } : null);
   const tags = [];
   let you;
   if (it.isMissing) {
@@ -2333,10 +2382,14 @@ function prosodyWordHtml(it, model) {
   } else {
     const mark = it.peakOk === true ? { index: it.peakSyllable, glyph: "●", tone: "ok" }
       : it.peakOk === false ? { index: it.peakSyllable, glyph: "○", tone: "bad" } : null;
-    const stress = it.stressOk === true ? it.expected
+    // A right stress is capitalised only where the Mẫu row capitalises too
+    // (a word accented in the sentence), so a weak "about" stays plain in both
+    // rows; a wrong one is always shown, on the syllable the learner stressed.
+    const stress = it.stressOk === true && word.sentence_stress ? it.expected
       : it.stressOk === false && it.heard != null ? it.heard : -1;
     you = syllablesHtml(word, stress, mark);
     if (it.stressOk === false) tags.push(["bad", "sai trọng âm"]);
+    else if (it.altReading && word.sentence_stress) tags.push(["na", "cách nhấn khác, vẫn đúng"]);
     else if (it.multi && it.stressOk === null) tags.push(["na", "trọng âm ?"]);
     if (it.peakOk === false) tags.push(["bad", "thiếu nhấn"]);
     else if (it.peakOk === null) tags.push(["na", "nhấn ?"]);
