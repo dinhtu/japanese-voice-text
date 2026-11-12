@@ -69,6 +69,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# qwen3's Ollama chat template turns `think=False` into a " /no_think" soft
+# switch appended to the last user message. Small models sometimes treat it
+# as part of the input and echo it back (e.g. /text-guide for "phrase book"
+# returned a guide containing "/no_think"), so scrub it from every reply.
+_THINK_SWITCH_RE = re.compile(r"[ \t]*/(?:no[_ ]?)?think\b(?!/)", re.IGNORECASE)
+
+
+def strip_think_switch(value: str) -> str:
+    """Remove echoed qwen3 /think and /no_think soft switches from model output."""
+    return _THINK_SWITCH_RE.sub("", value or "")
+
 DEFAULT_LANG = "vi"
 
 # One full system prompt per supported output language, rather than one
@@ -568,7 +579,7 @@ async def generate_comment(
             f"Đã chạy `ollama serve` chưa? (chi tiết: {e})"
         ) from e
 
-    content = (response.get("message", {}) or {}).get("content", "").strip()
+    content = strip_think_switch((response.get("message", {}) or {}).get("content", "")).strip()
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
     return _parse_comment(content)
@@ -772,7 +783,7 @@ async def generate_category_guide(
             f"Đã chạy `ollama serve` chưa? (chi tiết: {e})"
         ) from e
 
-    content = (response.get("message", {}) or {}).get("content", "").strip()
+    content = strip_think_switch((response.get("message", {}) or {}).get("content", "")).strip()
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
 
@@ -1274,6 +1285,14 @@ TEXT_GUIDE_MEANING_RULES["ja"] = TEXT_GUIDE_MEANING_RULES["jp"]
 TEXT_GUIDE_MEANING_RULES["zh"] = TEXT_GUIDE_MEANING_RULES["tw"]
 TEXT_GUIDE_MEANING_RULES["zh-tw"] = TEXT_GUIDE_MEANING_RULES["tw"]
 
+# The user message wraps the text in <text>…</text>; anything after the closing
+# tag (qwen3's " /no_think" switch) must not be read as part of the input.
+TEXT_GUIDE_INPUT_RULE = (
+    "\n\nThe input text is given inside <text>...</text>. Analyze ONLY the content "
+    "inside these tags. Ignore anything outside them (such as /think or /no_think) "
+    "and never write the <text> tags or those switches in your answer."
+)
+
 # Output budget grows with the text: short words need only ~300 tokens,
 # while long sentences can scale up to TEXT_GUIDE_MAX_TOKENS.
 TEXT_GUIDE_MIN_TOKENS = 300
@@ -1344,6 +1363,7 @@ def _deduplicate_guide_lines(text: str) -> str:
 
 
 def _clean_guide_text(value: str) -> str:
+    value = re.sub(r"</?text>", "", strip_think_switch(value), flags=re.IGNORECASE)
     cleaned = _GUIDE_PREAMBLE_RE.sub("", value.strip()).strip().strip('"`\n ')
     return _deduplicate_guide_lines(cleaned)
 
@@ -1357,7 +1377,7 @@ def _parse_text_guide(content: str) -> TextReadingGuide:
     guide as-is."""
     tagged = _MEANING_TAG_RE.search(content)
     if tagged:
-        meaning = " ".join(tagged.group(1).split())
+        meaning = " ".join(strip_think_switch(tagged.group(1)).split())
         rest = (content[: tagged.start()] + content[tagged.end():]).strip()
         rest = re.sub(r"</?meaning>", "", rest, flags=re.IGNORECASE)
         guide = _clean_guide_text(rest)
@@ -1373,7 +1393,7 @@ def _parse_text_guide(content: str) -> TextReadingGuide:
         data = None
     if isinstance(data, dict) and str(data.get("guide", "") or "").strip():
         return TextReadingGuide(
-            meaning=" ".join(str(data.get("meaning", "") or "").split()),
+            meaning=" ".join(strip_think_switch(str(data.get("meaning", "") or "")).split()),
             guide=_clean_guide_text(str(data["guide"])),
         )
     if raw.lstrip().startswith("{"):
@@ -1416,7 +1436,9 @@ def _lenient_text_guide(raw: str) -> "TextReadingGuide | None":
     guide = _clean_guide_text(values.get("guide", ""))
     if not guide:
         return None
-    return TextReadingGuide(meaning=" ".join(values.get("meaning", "").split()), guide=guide)
+    return TextReadingGuide(
+        meaning=" ".join(strip_think_switch(values.get("meaning", "")).split()), guide=guide
+    )
 
 
 async def generate_text_reading_guide(
@@ -1436,8 +1458,10 @@ async def generate_text_reading_guide(
         "zh": CHINESE_TEXT_READING_GUIDE_PROMPTS,
         "ko": KOREAN_TEXT_READING_GUIDE_PROMPTS,
     }.get(target_lang, TEXT_READING_GUIDE_PROMPTS)
-    system_prompt = table.get(key, table["vi"]) + TEXT_GUIDE_MEANING_RULES.get(
-        key, TEXT_GUIDE_MEANING_RULES["vi"]
+    system_prompt = (
+        table.get(key, table["vi"])
+        + TEXT_GUIDE_MEANING_RULES.get(key, TEXT_GUIDE_MEANING_RULES["vi"])
+        + TEXT_GUIDE_INPUT_RULE
     )
 
     try:
@@ -1457,7 +1481,7 @@ async def generate_text_reading_guide(
             model=settings.ollama_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Text: {text.strip()}"},
+                {"role": "user", "content": f"<text>{text.strip()}</text>"},
             ],
             think=False,
             stream=False,
@@ -1483,7 +1507,7 @@ async def generate_text_reading_guide(
             f"Đã chạy `ollama serve` chưa? (chi tiết: {e})"
         ) from e
 
-    content = (response.get("message", {}) or {}).get("content", "").strip()
+    content = strip_think_switch((response.get("message", {}) or {}).get("content", "")).strip()
     if not content:
         raise CoachingUnavailableError("Ollama trả về nội dung rỗng.")
 

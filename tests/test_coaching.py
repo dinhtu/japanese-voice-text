@@ -366,3 +366,24 @@ def test_deduplicate_guide_lines_removes_repetition_loops():
     assert "🎯 Từ/Cụm từ cần chú trọng phát âm:" in cleaned
     assert "- ちかてつ: Lưu ý phát âm chuẩn." in cleaned
 
+
+
+def test_parse_text_guide_strips_echoed_no_think_switch():
+    # qwen3's template appends " /no_think" to the user turn when think=False;
+    # short Latin inputs ("phrase book") made the model echo it in the answer.
+    from app.services.coaching import _parse_text_guide
+    result = _parse_text_guide(
+        "<meaning>Sách cụm từ /no_think</meaning>\n"
+        "• <text>phrase book /no_think</text>: Đọc là \"phây-zơ búc\".\n"
+        "🎯 Chú ý: phrase /no_think"
+    )
+    assert result.meaning == "Sách cụm từ"
+    assert "no_think" not in result.guide
+    assert "<text>" not in result.guide
+    assert "phrase book: Đọc là" in result.guide
+
+
+def test_strip_think_switch_keeps_normal_words():
+    from app.services.coaching import strip_think_switch
+    assert strip_think_switch("I think so /think") == "I think so"
+    assert strip_think_switch("a /no_think b /nothink") == "a b"
