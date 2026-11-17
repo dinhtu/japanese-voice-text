@@ -22,7 +22,8 @@ Comparison rules:
   The G2P (pykakasi / UniDic) spells readings with kana; the ASR can write
   ー. Both sides need the same preceding vowel for the match.
 - Among the alignments with the fewest edits, the one with the most
-  matched morae wins (ties go to the learner).
+  matched morae wins, then the one whose matches are not っ (ties go to
+  the learner: a matched っ can still be lost to the rule below).
 - っ is only kept ✓ when at least one neighbouring mora is ✓: a bare gap
   is weak evidence on its own.
 """
@@ -73,54 +74,59 @@ def _lengthens(mora: str, vowel: str | None) -> bool:
 
 
 def _same(t: str, h: str, t_prev: str | None, h_prev: str | None) -> bool:
-    if t == h:
-        return True
-    return t_prev is not None and t_prev == h_prev and _lengthens(t, t_prev) and _lengthens(h, h_prev)
+    if "ー" in (t, h) or (t != h and t_prev is not None):
+        # A long vowel (written ー or as a kana) is only the same sound
+        # after the same vowel: けーき vs かーき is not a match at ー.
+        return t_prev is not None and t_prev == h_prev and _lengthens(t, t_prev) and _lengthens(h, h_prev)
+    return t == h
+
+
+def _step(cost: tuple[int, int, int], edit: bool, mora: str | None = None) -> tuple[int, int, int]:
+    """Cost after one op: (edits, -matches, -matches other than っ)."""
+    e, k, s = cost
+    if edit:
+        return (e + 1, k, s)
+    return (e, k - 1, s - (mora != "っ"))
 
 
 def _align(tm: list[str], hm: list[str]) -> list[tuple[str, int, int | None]]:
     """Mora edit ops in target order: (op, target_idx, hyp_idx), op in
-    match/sub/del/ins. Cost is (edits, -matches): fewest edits first, then
-    the most matched morae. For ins, target_idx is the next target mora."""
+    match/sub/del/ins. Cost is (edits, -matches, -non-っ matches): fewest
+    edits, then the most matched morae, then the most matches a っ cannot
+    lose to the weak rule. For ins, target_idx is the next target mora."""
     n, m = len(tm), len(hm)
     tv, hv = _vowels(tm), _vowels(hm)
     same = [
         [_same(tm[i], hm[j], tv[i - 1] if i else None, hv[j - 1] if j else None) for j in range(m)]
         for i in range(n)
     ]
-    inf = (n + m + 1, 0)
+    inf = (n + m + 1, 0, 0)
     d = [[inf] * (m + 1) for _ in range(n + 1)]
-    d[0][0] = (0, 0)
+    d[0][0] = (0, 0, 0)
     for i in range(n + 1):
         for j in range(m + 1):
             if i == 0 and j == 0:
                 continue
             best = inf
             if i and j:
-                e, k = d[i - 1][j - 1]
-                best = min(best, (e, k - 1) if same[i - 1][j - 1] else (e + 1, k))
+                match = same[i - 1][j - 1]
+                best = min(best, _step(d[i - 1][j - 1], not match, tm[i - 1]))
             if i:
-                e, k = d[i - 1][j]
-                best = min(best, (e + 1, k))
+                best = min(best, _step(d[i - 1][j], True))
             if j:
-                e, k = d[i][j - 1]
-                best = min(best, (e + 1, k))
+                best = min(best, _step(d[i][j - 1], True))
             d[i][j] = best
 
     ops: list[tuple[str, int, int | None]] = []
     i, j = n, m
     while i or j:
         if i and j:
-            e, k = d[i - 1][j - 1]
-            if same[i - 1][j - 1] and d[i][j] == (e, k - 1):
-                ops.append(("match", i - 1, j - 1))
+            match = same[i - 1][j - 1]
+            if d[i][j] == _step(d[i - 1][j - 1], not match, tm[i - 1]):
+                ops.append(("match" if match else "sub", i - 1, j - 1))
                 i, j = i - 1, j - 1
                 continue
-            if not same[i - 1][j - 1] and d[i][j] == (e + 1, k):
-                ops.append(("sub", i - 1, j - 1))
-                i, j = i - 1, j - 1
-                continue
-        if i and d[i][j] == (d[i - 1][j][0] + 1, d[i - 1][j][1]):
+        if i and d[i][j] == _step(d[i - 1][j], True):
             ops.append(("del", i - 1, None))
             i -= 1
             continue
@@ -135,7 +141,8 @@ def score_japanese(target_hiragana: str, recognized_hiragana: str) -> ScoreResul
 
     `errors` are mora-level (target / recognized are mora texts, position is
     the mora's first character in `target_hiragana`; an ins sits before the
-    next target mora). `mora_ok` is the grid, one flag per target mora.
+    next target mora, and ins are only listed once there are more than
+    FREE_INSERTIONS of them). `mora_ok` is the grid, one flag per target mora.
     `distance` counts mora edits and `cer` is distance / target morae.
 
     Raises:
@@ -162,16 +169,19 @@ def score_japanese(target_hiragana: str, recognized_hiragana: str) -> ScoreResul
     for i in weak:
         ok[i] = False
 
+    # Free extra sounds are ASR noise by the spec: left out of `errors`, so
+    # the coach, the rhythm head and the diff list do not count them either.
+    n_ins = sum(1 for op, _i, _j in ops if op == "ins")
+    report_ins = n_ins > FREE_INSERTIONS
     errors: list[PronunciationError] = []
-    n_ins = 0
     for op, i, j in ops:
         if op == "sub":
             errors.append(PronunciationError("sub", tm[i], hm[j], starts[i]))
         elif op == "del":
             errors.append(PronunciationError("del", tm[i], "", starts[i]))
         elif op == "ins":
-            n_ins += 1
-            errors.append(PronunciationError("ins", "", hm[j], starts[i]))
+            if report_ins:
+                errors.append(PronunciationError("ins", "", hm[j], starts[i]))
         elif i in weak:
             errors.append(PronunciationError(WEAK, tm[i], hm[j], starts[i]))
 

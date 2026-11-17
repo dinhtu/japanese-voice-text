@@ -170,7 +170,8 @@ def test_evaluate_score_matches_the_mora_grid(monkeypatch):
     assert [m["mora"] for m in body["mora_status"]] == ["が", "っ", "ぺ", "い"]
     ok = [m["ok"] for m in body["mora_status"]]
     assert body["score"] == round(100 * sum(ok) / len(ok)) == body["overall_score"]
-    assert {"sub", "ins", "weak"} <= {e["type"] for e in body["errors"]}
+    # One extra sound (た) is free, so it is not listed; っ alone is weak.
+    assert {e["type"] for e in body["errors"]} == {"sub", "weak"}
 
 
 @pytest.mark.parametrize("verdict", ["silent", "whisper"])

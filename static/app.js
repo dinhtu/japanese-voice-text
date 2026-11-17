@@ -675,14 +675,18 @@ function renderResult(result) {
 
   el.feedback.textContent = result.feedback.message;
   el.mCer.textContent = result.cer.toFixed(3);
-  const distanceUnit = { zh: "âm tiết", ja: "mora" }[document.body.dataset.targetLang] ?? "ký tự";
+  const distanceUnit = { zh: "âm tiết", ja: "mora" }[TARGET_LANG] ?? "ký tự";
   el.mDistance.textContent = `${result.distance} ${distanceUnit}`;
   el.mDuration.textContent = `${result.audio_duration.toFixed(2)}s`;
   renderAspects(result);
 
   // Mark the target characters the model did not hear as expected.
+  // Japanese errors are per mora: mark every kana of it (しゃ, not just し).
   const wrong = new Set(
-    result.errors.filter((error) => error.type !== "ins").map((error) => error.position),
+    result.errors.filter((error) => error.type !== "ins").flatMap((error) => {
+      const span = TARGET_LANG === "ja" ? Math.max(1, [...(error.target || "")].length) : 1;
+      return Array.from({ length: span }, (_, k) => error.position + k);
+    }),
   );
   const targetUnits = document.body.dataset.targetLang === "zh" && result.target_reading
     ? result.target_reading.split(" ") : [...result.target_hiragana];

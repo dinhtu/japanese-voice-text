@@ -56,11 +56,30 @@ def test_yoon_mora_counts_once():
     assert [(e.type, e.target, e.recognized) for e in result.errors] == [("sub", "しゃ", "さ")]
 
 
-def test_a_few_extra_sounds_are_free():
+def test_a_few_extra_sounds_are_free_and_not_reported():
     for extra in range(FREE_INSERTIONS + 1):
         result = score_japanese("がっぺい", "がっ" + "つ" * extra + "ぺい")
         assert result.score == 100 and grid(result) == "oooo"
-        assert sum(e.type == "ins" for e in result.errors) == extra
+        # Not in errors either, so the coach / rhythm do not count them.
+        assert result.errors == [] and result.distance == 0
+
+
+def test_charged_extra_sounds_are_all_reported():
+    result = score_japanese("がっぺい", "がっぺいたつけ")
+    assert [e.recognized for e in result.errors if e.type == "ins"] == ["た", "つ", "け"]
+
+
+def test_sokuon_tie_prefers_a_match_the_weak_rule_cannot_take():
+    # Both alignments: 3 edits, 1 match. Matching て keeps 1/3; matching っ
+    # (no ✓ neighbour, so weak) would leave 0/3.
+    assert score_japanese("きって", "かてっ").score == 33
+    assert score_japanese("がっこう", "ここっう").score == 50
+
+
+def test_written_long_vowel_needs_the_same_vowel_before_it_too():
+    # かーき is "kaaki": the ー lengthens a, not e, whether written ー or あ.
+    assert score_japanese("けーき", "かーき").mora_ok == score_japanese("けーき", "かあき").mora_ok
+    assert score_japanese("けーき", "けえき").score == 100
 
 
 def test_more_extra_sounds_cost_a_little_and_are_capped():
