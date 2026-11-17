@@ -1,25 +1,27 @@
 """Pronunciation evaluation use case.
 
-    WAV -> ASR -> recognized kana
+    WAV -> voice check (VAD + voiced time; silence / whisper stop here)
+        -> ASR -> recognized kana
                       |
     target text -> normalization <- normalization
                       |
-                  CER / score
+                  per-mora score (ja_scoring)
                       |
                   aspect scores (fluency / rhythm / intonation / overall)
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.services.aspect_scoring import AspectScores, score_aspects
 from app.services.asr_service import ASRService
 from app.services.coaching import pitch_direction_match
+from app.services.ja_scoring import score_japanese
 from app.services.mora_diff import split_mora_spans
 from app.services.mora_timing import resolve_mora_windows
 from app.services.normalization import to_hiragana
-from app.services.scoring import ScoreResult, score_pronunciation
+from app.services.scoring import PronunciationError, ScoreResult
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +62,70 @@ def _speech_span(windows: list[tuple[float, float]]) -> float | None:
     return span if span > 0 else None
 
 
+@dataclass
+class VoiceCheck:
+    """The audio and VAD read once before the ASR, reused by the aspects."""
+
+    samples: object = None
+    sample_rate: int | None = None
+    vad: object = None
+    presence: object = None  # voice_presence.VoicePresence, None if unknown
+
+    @property
+    def no_voice(self) -> bool:
+        return self.presence is not None and not self.presence.voiced
+
+
+def check_japanese_voice(audio_path: str | Path) -> VoiceCheck:
+    """Load the take, run the VAD and the voice check.
+
+    Raises:
+        RuntimeError: Audio could not be decoded (the ASR would fail too).
+    A VAD / voice-check failure only means the take is scored ungated.
+    """
+    from src.asr.inference import load_audio
+
+    check = VoiceCheck()
+    check.samples, check.sample_rate = load_audio(audio_path)
+    try:
+        from app.services import vad_fluency, voice_presence
+
+        check.vad = vad_fluency.analyze_vad(check.samples, check.sample_rate)
+        check.presence = voice_presence.check_voice(check.samples, check.sample_rate, check.vad)
+    except Exception:  # noqa: BLE001
+        logger.warning("Japanese voice check unavailable", exc_info=True)
+    return check
+
+
+def _no_voice(target_text: str, target_hiragana: str, check: VoiceCheck) -> EvaluationResult:
+    """Silence or a whisper: no ASR, score 0, every mora missing."""
+    from app.services.voice_presence import no_voice_result
+
+    presence = check.presence
+    logger.info("Japanese evaluate: no voice (%s, speech %.2fs, voiced %.2fs)",
+                presence.verdict, presence.speech_s, presence.voiced_s)
+    spans = split_mora_spans(target_hiragana)
+    duration = len(check.samples) / check.sample_rate if check.sample_rate else 0.0
+    result = no_voice_result(
+        target_text, target_hiragana, [text for text, _s, _e in spans],
+        duration, check.vad, presence,
+    )
+    # Positions are character offsets in target_hiragana, as for a scored take.
+    result.score = replace(
+        result.score,
+        errors=[PronunciationError("del", text, "", start) for text, start, _e in spans],
+        mora_ok=[False] * len(spans),
+    )
+    return result
+
+
 def _measure_aspects(
     target_text: str,
     target_hiragana: str,
     score: ScoreResult,
     recognition,
     audio_path: str | Path,
+    check: VoiceCheck | None = None,
 ) -> tuple[AspectScores, list[dict]]:
     """Best-effort extras around the CER score. Never raises to the caller."""
     n_morae = len(split_mora_spans(target_hiragana))
@@ -99,14 +159,15 @@ def _measure_aspects(
             logger.warning("Aspect mora windows failed", exc_info=True)
             windows = None
 
-    samples = None
-    sample_rate = None
-    try:
-        from src.asr.inference import load_audio
+    samples = check.samples if check else None
+    sample_rate = check.sample_rate if check else None
+    if samples is None:
+        try:
+            from src.asr.inference import load_audio
 
-        samples, sample_rate = load_audio(audio_path)
-    except Exception:  # noqa: BLE001
-        logger.warning("Aspect audio reload failed", exc_info=True)
+            samples, sample_rate = load_audio(audio_path)
+        except Exception:  # noqa: BLE001
+            logger.warning("Aspect audio reload failed", exc_info=True)
 
     if windows is not None and moras is not None and len(windows) == len(moras):
         try:
@@ -160,7 +221,7 @@ def _measure_aspects(
         try:
             from app.services.vad_fluency import analyze_vad
 
-            vad = analyze_vad(samples, sample_rate)
+            vad = check.vad if check and check.vad is not None else analyze_vad(samples, sample_rate)
             vad_method = vad.method
             pause_count = vad.pause_count
             speech_ratio = vad.speech_ratio
@@ -222,6 +283,10 @@ class EvaluatePronunciationUseCase:
                 "Target text contains no pronounceable Japanese content."
             )
 
+        check = check_japanese_voice(audio_path)
+        if check.no_voice:
+            return _no_voice(target_text, target_hiragana, check)
+
         recognition = self.asr_service.recognize(
             audio_path, with_timing=True, align_to=target_hiragana
         )
@@ -232,7 +297,7 @@ class EvaluatePronunciationUseCase:
             target_hiragana, recognized_hiragana, recognition.inference_time * 1000,
         )
 
-        score = score_pronunciation(target_hiragana, recognized_hiragana)
+        score = score_japanese(target_hiragana, recognized_hiragana)
         measured_pitch: list[dict] = []
         try:
             aspects, measured_pitch = _measure_aspects(
@@ -241,6 +306,7 @@ class EvaluatePronunciationUseCase:
                 score,
                 recognition,
                 audio_path,
+                check,
             )
         except Exception:  # noqa: BLE001
             logger.warning("Aspect scoring failed; falling back to CER-only mix", exc_info=True)

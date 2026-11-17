@@ -424,6 +424,8 @@ def build_facts(
             wrong_morae.append(f"{e.target}→(mất âm)")
         elif e.type == "ins":
             wrong_morae.append(f"(âm thừa){e.recognized}")
+        elif e.type == "weak":
+            wrong_morae.append(f"{e.target}→(không rõ, hai mora bên cạnh đều sai)")
 
     pitch_matched = pitch_total = None
     if pitch_points is not None:

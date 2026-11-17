@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.english_intonation import EnglishIntonation
 from app.schemas.pitch_accent import MoraPitchItem
-from app.services.mora_diff import mora_status
+from app.services.mora_diff import mora_status, split_mora_spans
 from app.services.pitch_accent import MoraPitch
 from app.services.use_cases import EvaluationResult
 
@@ -12,7 +12,10 @@ from app.services.use_cases import EvaluationResult
 class PronunciationErrorItem(BaseModel):
     """One character-level mismatch, for future phoneme-level feedback."""
 
-    type: str = Field(description='"sub" | "del" | "ins"')
+    type: str = Field(
+        description='"sub" | "del" | "ins" | "weak" (Japanese: a っ heard, but '
+        "both neighbouring morae wrong, so it is not counted)"
+    )
     target: str
     recognized: str
     position: int
@@ -52,6 +55,20 @@ class MeasuredPitchItem(BaseModel):
     expected: str = Field(description='"H" | "L" from the reference accent pattern')
 
 
+def _mora_status(result: EvaluationResult) -> list[MoraStatusItem]:
+    """The grid: Japanese carries the one its score was counted from
+    (ja_scoring); other callers rebuild it from the character errors."""
+    score = result.score
+    if score.mora_ok is not None:
+        spans = split_mora_spans(result.target_hiragana)
+        if len(spans) == len(score.mora_ok):
+            return [MoraStatusItem(mora=text, ok=ok) for (text, _s, _e), ok in zip(spans, score.mora_ok)]
+    return [
+        MoraStatusItem(mora=m.mora, ok=m.ok)
+        for m in mora_status(result.target_hiragana, score.errors)
+    ]
+
+
 class Feedback(BaseModel):
     level: str = Field(description="excellent | good | fair | poor | mismatch")
     message: str
@@ -65,10 +82,15 @@ class EvaluateResponse(BaseModel):
     recognized_hiragana: str = Field(description="ASR output normalized the same way")
     target_reading: str | None = Field(default=None, description="Optional target pinyin syllables")
     recognized_reading: str | None = Field(default=None, description="Optional ASR pinyin syllables")
-    score: int = Field(ge=0, le=100, description="CER read-aloud match, 0-100")
+    score: int = Field(
+        ge=0, le=100,
+        description="Read-aloud match, 0-100. Japanese: share of mora_status "
+        "cells ok, minus a small penalty for many extra sounds; other "
+        "languages: character/syllable CER",
+    )
     overall_score: float = Field(
         ge=0, le=100,
-        description="Same as score: CER read-aloud match, 0-100",
+        description="Same as score",
     )
     pronunciation_score: float = Field(
         ge=0, le=100, description="Kana CER mixed with phoneme GOP when available",
@@ -106,8 +128,14 @@ class EvaluateResponse(BaseModel):
     speech_ratio: float | None = Field(
         default=None, description="Voiced/speech seconds divided by file length, 0-1"
     )
-    cer: float = Field(description="Character error rate against the target reading")
-    distance: int = Field(description="Levenshtein distance in characters")
+    cer: float = Field(
+        description="Error rate against the target reading (Japanese: mora "
+        "edits / target morae; other languages: per character or syllable)"
+    )
+    distance: int = Field(
+        description="Edit count (Japanese: mora edits incl. extra sounds; "
+        "other languages: characters or syllables)"
+    )
     audio_duration: float = Field(description="Audio length in seconds")
     inference_ms: float
     feedback: Feedback
@@ -186,10 +214,7 @@ class EvaluateResponse(BaseModel):
             inference_ms=result.inference_ms,
             feedback=Feedback(level=score.level, message=score.message),
             errors=[PronunciationErrorItem(**vars(e)) for e in score.errors],
-            mora_status=[
-                MoraStatusItem(mora=m.mora, ok=m.ok)
-                for m in mora_status(result.target_hiragana, score.errors)
-            ],
+            mora_status=_mora_status(result),
             recognized_pitch_pattern=primary_moras,
             recognized_pitch_patterns=all_patterns,
             measured_pitch=[

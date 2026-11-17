@@ -53,8 +53,19 @@ def make_tone_wav(freq_hz: float = 220.0, seconds: float = 1.0, sample_rate: int
     return _wav_header(len(frames), sample_rate) + bytes(frames)
 
 
+def _voice(monkeypatch, verdict: str = "voice"):
+    """The test WAVs are silent: stand in for the VAD and the voice check."""
+    from app.services import vad_fluency, voice_presence
+    from app.services.vad_fluency import VadResult
+    from app.services.voice_presence import VoicePresence
+
+    monkeypatch.setattr(vad_fluency, "analyze_vad", lambda s, sr: VadResult(0.9, 0, 0.9, "silero"))
+    monkeypatch.setattr(voice_presence, "check_voice", lambda s, sr, vad: VoicePresence(verdict, 0.9, 0.5))
+
+
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    _voice(monkeypatch)
     app.dependency_overrides[get_asr_service] = lambda: StubASRService()
     with TestClient(app) as c:
         yield c
@@ -76,9 +87,11 @@ def test_evaluate_returns_full_result(client):
     body = response.json()
     assert body["success"] is True
     assert body["target_text"] == TARGET
-    assert body["target_hiragana"] == "げんきょーもいちにちがんばりましょー"
+    assert body["target_hiragana"] == TARGET
+    # The ASR writes the long vowels with ー: the same sounds, still 100.
     assert body["recognized_text"] == "げんきょーもいちにちがんばりましょー"
     assert body["score"] == 100
+    assert all(m["ok"] for m in body["mora_status"])
     assert body["pronunciation_score"] == 100.0
     assert body["cer"] == 0.0
     assert body["feedback"]["level"] == "excellent"
@@ -143,6 +156,45 @@ def test_evaluate_recognized_pitch_pattern_is_empty_when_recognition_is_empty():
             assert isinstance(body["measured_pitch"], list)
     finally:
         app.dependency_overrides.clear()
+
+
+def test_evaluate_score_matches_the_mora_grid(monkeypatch):
+    """合併 read with one extra sound: the ring and the grid agree."""
+    _voice(monkeypatch)
+    app.dependency_overrides[get_asr_service] = lambda: StubASRService(kana="あったけん")
+    try:
+        with TestClient(app) as c:
+            body = post(c, text="がっぺい").json()
+    finally:
+        app.dependency_overrides.clear()
+    assert [m["mora"] for m in body["mora_status"]] == ["が", "っ", "ぺ", "い"]
+    ok = [m["ok"] for m in body["mora_status"]]
+    assert body["score"] == round(100 * sum(ok) / len(ok)) == body["overall_score"]
+    assert {"sub", "ins", "weak"} <= {e["type"] for e in body["errors"]}
+
+
+@pytest.mark.parametrize("verdict", ["silent", "whisper"])
+def test_evaluate_without_a_voice_is_not_sent_to_the_asr(monkeypatch, verdict):
+    from app.services.voice_presence import NO_VOICE_MESSAGES
+
+    class FailingASR(StubASRService):
+        def recognize(self, *args, **kwargs):
+            raise AssertionError("the ASR must not run on a take with no voice")
+
+    _voice(monkeypatch, verdict)
+    app.dependency_overrides[get_asr_service] = lambda: FailingASR()
+    try:
+        with TestClient(app) as c:
+            response = post(c, text="しゃしん")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["score"] == 0 and body["overall_score"] == 0
+    assert body["feedback"]["message"] == NO_VOICE_MESSAGES[verdict]
+    assert [(m["mora"], m["ok"]) for m in body["mora_status"]] == [("しゃ", False), ("し", False), ("ん", False)]
+    assert [(e["type"], e["position"]) for e in body["errors"]] == [("del", 0), ("del", 2), ("del", 3)]
+    assert body["aspect_method"] == f"no-voice:{verdict}"
 
 
 def test_empty_text_is_rejected(client):

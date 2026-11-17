@@ -22,7 +22,7 @@ _FEEDBACK_LEVELS: list[tuple[int, str, str]] = [
 class PronunciationError:
     """One character-level mismatch between target and recognized reading."""
 
-    type: str  # "sub" | "del" | "ins"
+    type: str  # "sub" | "del" | "ins" | "weak" (ja_scoring: っ with no ✓ neighbour)
     target: str
     recognized: str
     position: int
@@ -37,6 +37,9 @@ class ScoreResult:
     level: str
     message: str
     errors: list[PronunciationError] = field(default_factory=list)
+    # Japanese (ja_scoring): the per-mora grid the score was counted from.
+    # None elsewhere: the grid is rebuilt from `errors` (mora_diff).
+    mora_ok: list[bool] | None = None
 
 
 def _feedback(score: int) -> tuple[str, str]:

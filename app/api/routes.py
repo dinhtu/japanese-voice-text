@@ -22,11 +22,13 @@ from app.services.normalization import to_hiragana
 from app.services.pitch_accent import pitch_accent_pattern, pitch_accent_patterns
 from app.services.pitch_extraction import extract_pitch_for_windows, extract_pitch_per_mora
 from app.services.prosody_issues import detect_duration_issues
-from app.services.scoring import score_pronunciation
+from app.services.ja_scoring import score_japanese
 from app.services.use_cases import (
     EmptyTargetError,
     EvaluatePronunciationUseCase,
+    check_japanese_voice,
 )
+from app.services.voice_presence import NO_VOICE_FACT
 from app.core.config import Settings, get_settings
 from src.asr.kana_converter import last_g2p_engine, use_ollama_g2p
 from app.core.vram import gpu_session
@@ -342,12 +344,27 @@ async def coach_pronunciation(
         with os.fdopen(fd, "wb") as f:
             f.write(content)
 
+        # Same gate as /evaluate: silence or a whisper is not sent to the ASR,
+        # and the coach is told only that no voice was heard.
+        check = check_japanese_voice(tmp_path)
+        if check.no_voice:
+            facts = build_facts(
+                text=text, score=0, level="mismatch", moras=moras, errors=[],
+                duration_issues=[], pitch_points=None,
+            )
+            facts.extra_lines = [NO_VOICE_FACT]
+            facts.facts_only = True
+            comment = await generate_comment(facts, settings, lang=lang)
+            return CoachResponse(
+                assessment=comment.assessment, suggestion=comment.suggestion, lang=lang
+            )
+
         with gpu_session():
             recognition = asr_service.recognize(
                 tmp_path, with_timing=True, align_to=target_hiragana
             )
             recognized_hiragana = to_hiragana(recognition.kana)
-            score = score_pronunciation(target_hiragana, recognized_hiragana)
+            score = score_japanese(target_hiragana, recognized_hiragana)
 
         # Sokuon/chouon duration and pitch-direction facts both need real
         # per-mora timing (app.services.mora_timing) -- optional, same
@@ -358,7 +375,9 @@ async def coach_pronunciation(
         pitch_points = None
         if recognition.char_spans is not None or recognition.aligned_char_spans:
             try:
-                samples, sample_rate = load_audio(tmp_path)
+                samples, sample_rate = check.samples, check.sample_rate
+                if samples is None:
+                    samples, sample_rate = load_audio(tmp_path)
                 duration = len(samples) / sample_rate
                 windows = resolve_mora_windows(
                     target_hiragana,

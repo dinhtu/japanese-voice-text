@@ -21,9 +21,13 @@ def test_exact_match_scores_100():
     assert result.errors == []
 
 
-def test_long_vowel_variant_is_absorbed_by_normalization():
-    """しょう vs しょー is a writing difference, not a pronunciation error."""
-    result = evaluate(TARGET, "げんきょーもいちにちがんばりましょー")
+def test_long_vowel_variant_is_not_an_error():
+    """しょう vs しょー is a writing difference, not a pronunciation error.
+    The G2P spells readings with kana, so the Japanese scorer (not the
+    normalizer) treats the two as one sound."""
+    from app.services.ja_scoring import score_japanese
+
+    result = score_japanese(to_hiragana(TARGET), to_hiragana("げんきょーもいちにちがんばりましょー"))
     assert result.score == 100
     assert result.cer == 0.0
 

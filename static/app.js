@@ -675,7 +675,8 @@ function renderResult(result) {
 
   el.feedback.textContent = result.feedback.message;
   el.mCer.textContent = result.cer.toFixed(3);
-  el.mDistance.textContent = `${result.distance} ${document.body.dataset.targetLang === "zh" ? "âm tiết" : "ký tự"}`;
+  const distanceUnit = { zh: "âm tiết", ja: "mora" }[document.body.dataset.targetLang] ?? "ký tự";
+  el.mDistance.textContent = `${result.distance} ${distanceUnit}`;
   el.mDuration.textContent = `${result.audio_duration.toFixed(2)}s`;
   renderAspects(result);
 

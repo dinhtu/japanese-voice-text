@@ -8,8 +8,10 @@ from app.services.normalization import to_hiragana
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ("げんきょうもいちにちがんばりましょう", "げんきょーもいちにちがんばりましょー"),
-        ("今日も一日頑張りましょう", "きょーもいちにちがんばりましょー"),
+        # Kana readings keep their spelling (no おう -> おー folding since the
+        # G2P moved to pykakasi / UniDic); ja_scoring treats them as one sound.
+        ("げんきょうもいちにちがんばりましょう", "げんきょうもいちにちがんばりましょう"),
+        ("今日も一日頑張りましょう", "きょうもいちにちがんばりましょう"),
         # Already-normalized ASR output must pass through unchanged.
         ("げんきょーもいちにちがんばりましょー", "げんきょーもいちにちがんばりましょー"),
         ("コンピューター", "こんぴゅーたー"),
