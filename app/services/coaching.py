@@ -1295,6 +1295,61 @@ TEXT_GUIDE_INPUT_RULE = (
     "and never write the <text> tags or those switches in your answer."
 )
 
+# Small local models guess kanji readings and get sound-change words wrong
+# (合併 -> "ごうへい" instead of がっぺい, 合戦 -> "ごうせん"). For Japanese
+# input we look the readings up in UniDic (fugashi, already used for pitch
+# accent) and hand them to the model as fixed facts.
+TEXT_GUIDE_JA_READING_RULE = (
+    "\n\nThe dictionary reading of every kanji word is given inside <reading>...</reading> "
+    "as 漢字(よみ). These readings are authoritative: base the Rōmaji and the phonetic "
+    "transcription EXACTLY on them and never substitute another reading "
+    "(e.g. 合併 is がっぺい / gappei, not ごうへい). Never write the <reading> tag in your answer."
+)
+
+# Words whose most common reading differs from the one UniDic picks first.
+_JA_READING_OVERRIDES: dict[str, str] = {
+    "日本": "にほん",
+}
+# 何 is なん before だ/で/の/な/と/て/ど and counters, なに otherwise (何を, 何が, 何も).
+_NAN_NEXT_KANA = ("ダ", "デ", "ノ", "ナ", "ト", "テ", "ド", "ジ", "ニン", "カイ", "マイ", "ボン", "ヒキ")
+_KANJI_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff々〆]")
+
+
+def _kata_to_hira(text: str) -> str:
+    return "".join(chr(ord(ch) - 0x60) if 0x30A1 <= ord(ch) <= 0x30F6 else ch for ch in text)
+
+
+def japanese_reading_hint(text: str) -> str:
+    """`text` with each kanji word followed by its UniDic reading in hiragana,
+    e.g. 高校(こうこう)で英語(えいご)を勉強(べんきょう)します。
+
+    Returns "" when the text has no kanji or fugashi/UniDic is unavailable,
+    so the guide still works (the model then reads the kanji itself)."""
+    if not _KANJI_RE.search(text or ""):
+        return ""
+    try:
+        from app.services.pitch_accent import _fugashi_tagger
+    except Exception:  # noqa: BLE001 -- fugashi / unidic-lite not installed
+        logger.warning("fugashi unavailable; text guide falls back to model readings", exc_info=True)
+        return ""
+
+    nodes = list(_fugashi_tagger(text.strip()))
+    parts: list[str] = []
+    for i, node in enumerate(nodes):
+        surface = node.surface
+        parts.append(getattr(node, "white_space", "") or "")  # keep the input's spaces
+        kana = getattr(node.feature, "kana", None) or ""
+        if not _KANJI_RE.search(surface) or not kana or kana == "*":
+            parts.append(surface)
+            continue
+        reading = _JA_READING_OVERRIDES.get(surface) or _kata_to_hira(kana)
+        if surface == "何":
+            next_kana = (getattr(nodes[i + 1].feature, "kana", "") or "") if i + 1 < len(nodes) else ""
+            reading = "なん" if next_kana.startswith(_NAN_NEXT_KANA) else "なに"
+        parts.append(f"{surface}({reading})")
+    return "".join(parts)
+
+
 # Output budget grows with the text: short words need only ~300 tokens,
 # while long sentences can scale up to TEXT_GUIDE_MAX_TOKENS.
 TEXT_GUIDE_MIN_TOKENS = 300
@@ -1365,7 +1420,7 @@ def _deduplicate_guide_lines(text: str) -> str:
 
 
 def _clean_guide_text(value: str) -> str:
-    value = re.sub(r"</?text>", "", strip_think_switch(value), flags=re.IGNORECASE)
+    value = re.sub(r"</?(?:text|reading)>", "", strip_think_switch(value), flags=re.IGNORECASE)
     cleaned = _GUIDE_PREAMBLE_RE.sub("", value.strip()).strip().strip('"`\n ')
     return _deduplicate_guide_lines(cleaned)
 
@@ -1465,6 +1520,12 @@ async def generate_text_reading_guide(
         + TEXT_GUIDE_MEANING_RULES.get(key, TEXT_GUIDE_MEANING_RULES["vi"])
         + TEXT_GUIDE_INPUT_RULE
     )
+    user_content = f"<text>{text.strip()}</text>"
+    if target_lang == "ja":
+        reading_hint = japanese_reading_hint(text)
+        if reading_hint:
+            system_prompt += TEXT_GUIDE_JA_READING_RULE
+            user_content += f"\n<reading>{reading_hint}</reading>"
 
     try:
         from ollama import AsyncClient, ResponseError
@@ -1483,7 +1544,7 @@ async def generate_text_reading_guide(
             model=settings.ollama_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"<text>{text.strip()}</text>"},
+                {"role": "user", "content": user_content},
             ],
             think=False,
             stream=False,

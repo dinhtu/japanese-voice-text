@@ -387,3 +387,16 @@ def test_strip_think_switch_keeps_normal_words():
     from app.services.coaching import strip_think_switch
     assert strip_think_switch("I think so /think") == "I think so"
     assert strip_think_switch("a /no_think b /nothink") == "a b"
+
+
+def test_japanese_reading_hint_uses_dictionary_readings():
+    from app.services.coaching import japanese_reading_hint
+    assert japanese_reading_hint("合併") == "合併(がっぺい)"
+    assert japanese_reading_hint("合戦") == "合戦(かっせん)"
+    assert japanese_reading_hint("高校で英語を勉強します。") == (
+        "高校(こうこう)で英語(えいご)を勉強(べんきょう)します。"
+    )
+    assert japanese_reading_hint("日本の大統領") == "日本(にほん)の大統領(だいとうりょう)"
+    assert japanese_reading_hint("何を食べる") == "何(なに)を食べる(たべる)"
+    assert japanese_reading_hint("何ですか") == "何(なん)ですか"
+    assert japanese_reading_hint("ちかてつ") == ""
