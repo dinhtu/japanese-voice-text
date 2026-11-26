@@ -48,6 +48,7 @@ const el = {
   chips: $("chips"),
   targetText: $("target-text"),
   targetReading: $("target-reading"),
+  targetTranscription: $("target-transcription"),
   targetMeaning: $("target-meaning"),
   speak: $("speak"),
   speakIcon: $("speak-icon"),
@@ -91,7 +92,11 @@ const el = {
   aspectsMethod: $("aspects-method"),
   rTarget: $("r-target"),
   rHeard: $("r-heard"),
+  rTranscription: $("r-transcription"),
+  rTranscriptionLine: $("r-transcription-line"),
   syll: $("syll"),
+  syllLabel: $("syll-label"),
+  syllLegendNa: $("syll-legend-na"),
   syllGrid: $("syll-grid"),
   diffs: $("diffs"),
   diffsLabel: $("diffs-label"),
@@ -275,17 +280,35 @@ function setTarget({ text, reading = "", meaning = "", chip = null }) {
   resetPitch();
   resetTextGuide();
   if (speakState !== "idle") stopSpeak();
-  if (document.body.dataset.readingUrl && !reading) {
+  showKoTranscription(el.targetTranscription, null);
+  // Korean: /reading also carries the IPA and romanization, so ask even
+  // when the sample chip already brought its Hangul reading.
+  if (document.body.dataset.readingUrl && (!reading || TARGET_LANG === "ko")) {
     fetch(`${document.body.dataset.readingUrl}?text=${encodeURIComponent(text)}`)
       .then((response) => response.ok ? response.json() : null)
       .then((data) => {
-        if (target.text === text && data?.reading) {
+        if (target.text !== text || !data) return;
+        if (data.reading && !reading) {
           el.targetReading.textContent = data.reading;
           el.targetReading.hidden = false;
         }
+        if (TARGET_LANG === "ko") showKoTranscription(el.targetTranscription, data);
       })
       .catch(() => {});
   }
+}
+
+/** Korean: one "romanization [IPA]" line. Null fields (a sentence with
+ *  Latin letters, or an older server) hide the line instead of guessing. */
+function showKoTranscription(node, data) {
+  if (!node) return;
+  const romanization = data?.romanization;
+  const ipa = data?.ipa;
+  const parts = [];
+  if (romanization) parts.push(`<span class="ko-trans__rom">${escapeHtml(romanization)}</span>`);
+  if (ipa) parts.push(`<span class="ko-trans__ipa">${escapeHtml(ipa)}</span>`);
+  node.innerHTML = parts.join(" ");
+  node.hidden = parts.length === 0;
 }
 
 function showError(message) {
@@ -709,8 +732,17 @@ function renderResult(result) {
   // syllable as its IPA and the Mẫu row even when another accepted reading passed.
   const enWords = result.intonation && Array.isArray(result.intonation.words)
     && result.intonation.words.length === moraStatus.length ? result.intonation.words : null;
+  if (TARGET_LANG === "ko" && el.rTranscription) {
+    showKoTranscription(el.rTranscriptionLine, {
+      romanization: result.target_romanization, ipa: result.target_ipa,
+    });
+    el.rTranscription.hidden = el.rTranscriptionLine.hidden;
+  }
   el.syll.hidden = moraStatus.length === 0;
-  if (moraStatus.length > 0) {
+  if (el.syllLegendNa) el.syllLegendNa.hidden = true;
+  if (TARGET_LANG === "ko" && moraStatus.length > 0) {
+    renderKoreanGrid(result, moraStatus);
+  } else if (moraStatus.length > 0) {
     el.syllGrid.replaceChildren(
       ...moraStatus.map((m, i) => {
         const cell = document.createElement("span");
@@ -752,6 +784,66 @@ function renderResult(result) {
 
   if (TARGET_LANG === "en") renderComparison(result);
   el.result.hidden = false;
+}
+
+/** Korean grid, built the way the mobile app is told to (inf_jlpt_admin
+ *  CLAUDE.md, "App ghép phiên âm thế nào (ko)"): one group per entry of
+ *  result.words, headed by the word's own romanization and IPA; each
+ *  syllable cell takes `ok` from mora_status[mora_index]. A syllable read
+ *  out of a digit (세 in 3개) has mora_index null and stays neutral. The
+ *  word-level strings are never split per syllable. Without words (null for
+ *  a sentence with Latin letters, or an older server) it falls back to one
+ *  cell per mora_status item. */
+function renderKoreanGrid(result, moraStatus) {
+  const words = Array.isArray(result.words) ? result.words : [];
+  let neutral = false;
+  const cellOf = (text, romanization, ipa, ok) => {
+    const node = document.createElement("span");
+    node.className = "syll__cell syll__cell--ko";
+    if (ok === false) node.classList.add("syll__cell--bad");
+    if (ok == null) {
+      node.classList.add("syll__cell--na");
+      neutral = true;
+    }
+    node.innerHTML = `<span class="syll__hangul">${escapeHtml(text)}</span>${
+      romanization ? `<span class="syll__rom">${escapeHtml(romanization)}</span>` : ""}${
+      ipa ? `<span class="syll__ipa">${escapeHtml(ipa)}</span>` : ""}`;
+    return node;
+  };
+
+  if (words.length === 0) {
+    if (el.syllLabel) el.syllLabel.textContent = "Từng âm tiết";
+    el.syllGrid.replaceChildren(
+      ...moraStatus.map((m) => cellOf(m.mora, m.romanization, m.ipa, m.ok)),
+    );
+  } else {
+    if (el.syllLabel) el.syllLabel.textContent = "Từng từ";
+    el.syllGrid.replaceChildren(
+      ...words.map((w) => {
+        const cells = Array.isArray(w.syllables) && w.syllables.length
+          ? w.syllables.map((s) => {
+            const m = s.mora_index == null ? null : moraStatus[s.mora_index];
+            return cellOf(s.text, s.romanization, s.ipa, m ? m.ok : null);
+          })
+          // Older payload without syllables: the word's own mora_status range.
+          : moraStatus.slice(w.start, w.end).map((m) => cellOf(m.mora, m.romanization, m.ipa, m.ok));
+        const group = document.createElement("div");
+        group.className = "ko-word";
+        if (cells.some((c) => c.classList.contains("syll__cell--bad"))) group.classList.add("ko-word--bad");
+        const head = document.createElement("div");
+        head.className = "ko-word__head";
+        head.innerHTML = `<span class="ko-word__text">${escapeHtml(w.text)}</span>${
+          w.romanization ? `<span class="ko-word__rom">${escapeHtml(w.romanization)}</span>` : ""}${
+          w.ipa ? `<span class="ko-word__ipa">[${escapeHtml(w.ipa)}]</span>` : ""}`;
+        const row = document.createElement("div");
+        row.className = "ko-word__cells";
+        row.replaceChildren(...cells);
+        group.append(head, row);
+        return group;
+      }),
+    );
+  }
+  if (el.syllLegendNa) el.syllLegendNa.hidden = !neutral;
 }
 
 /* ------------------------------------------- Score reports, side by side */
@@ -1285,7 +1377,12 @@ function patternDots(pattern, points, variant) {
 
 function patternLabels(pattern, variant) {
   const cls = variant === "you" ? "pitch__label pitch__label--you" : "pitch__label";
-  const labels = pattern.map((mora) => `<span class="${cls}">${mora.mora}</span>`).join("");
+  // Korean /pitch-accent items carry romanization + IPA per syllable:
+  // romanization under the Hangul, IPA on hover.
+  const labels = pattern.map((mora) => mora.romanization || mora.ipa
+    ? `<span class="${cls}"${mora.ipa ? ` title="[${escapeHtml(mora.ipa)}]"` : ""}>${mora.mora}${
+      mora.romanization ? `<small class="pitch__rom">${escapeHtml(mora.romanization)}</small>` : ""}</span>`
+    : `<span class="${cls}">${mora.mora}</span>`).join("");
   const rowCls = variant === "you" ? "pitch__labels pitch__labels--you" : "pitch__labels";
   return `<div class="${rowCls}" style="grid-template-columns: repeat(${pattern.length}, 1fr)">${labels}</div>`;
 }

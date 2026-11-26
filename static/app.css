@@ -1452,6 +1452,115 @@ html[lang="en"] .pitch__label {
   border-color: #f3b4b4;
 }
 
+/* ---------- Korean transcription (romanization + IPA) ---------- */
+
+.ko-trans {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ko-trans__rom {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ko-trans__ipa {
+  margin-left: 0.35rem;
+}
+
+.ko-trans-block {
+  margin-top: 1rem;
+}
+
+.ko-trans-block .ko-trans {
+  font-size: 1rem;
+}
+
+/* One word: head line (text · romanization · [IPA]) over its syllable cells. */
+.ko-word {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.45rem 0.55rem 0.55rem;
+  border: 1px dashed color-mix(in srgb, var(--line) 85%, transparent);
+  border-radius: 0.625rem;
+}
+
+.ko-word--bad {
+  border-color: #f3b4b4;
+}
+
+.ko-word__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ko-word__text {
+  font-family: var(--font-jp);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ko-word__rom {
+  font-weight: 600;
+}
+
+.ko-word__cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.syll__cell--ko {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  min-width: 2.5rem;
+}
+
+.syll__rom {
+  font-family: var(--font-sans, inherit);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.syll__cell--ko.syll__cell--bad .syll__rom,
+.syll__cell--ko.syll__cell--bad .syll__ipa {
+  color: inherit;
+}
+
+/* Read out of a digit (세 in 3개): shown, but nothing was scored. */
+.syll__cell--na {
+  border-style: dashed;
+  background: transparent;
+  color: var(--ink-muted);
+}
+
+.syll__swatch--na {
+  border-style: dashed;
+  background: transparent;
+}
+
+.pitch__rom {
+  display: block;
+  font-family: var(--font-sans, inherit);
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--ink-muted);
+}
+
 .diffs {
   margin-top: 1.25rem;
   padding-top: 1.25rem;
