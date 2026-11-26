@@ -155,7 +155,7 @@ expected when only Mandarin is configured.
 [Chinese XLSR-53 CTC checkpoint](https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn)
 (about 1.28 GB of PyTorch weights); `ZH_ASR_MODEL` overrides it. CUDA inference
 uses FP16 and moves the model back to CPU when the request finishes. Recordings
-are limited to 30 seconds to keep inference practical on an RTX 3060 with roughly
+are limited to 60 seconds to keep inference practical on an RTX 3060 with roughly
 10 GB of VRAM.
 
 `POST /api/pronunciation-zh/evaluate` accepts the same `text` and WAV `audio`
