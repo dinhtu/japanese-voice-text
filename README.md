@@ -154,9 +154,9 @@ expected when only Mandarin is configured.
 `/zh` serves Mandarin read-aloud practice. The first evaluation downloads the
 [Chinese XLSR-53 CTC checkpoint](https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn)
 (about 1.28 GB of PyTorch weights); `ZH_ASR_MODEL` overrides it. CUDA inference
-uses FP16 and moves the model back to CPU when the request finishes. Recordings
-are limited to 60 seconds to keep inference practical on an RTX 3060 with roughly
-10 GB of VRAM.
+uses FP16 and moves the model back to CPU when the request finishes. As with
+English, recordings have no duration limit; only the upload size (`MAX_AUDIO_MB`)
+is capped.
 
 `POST /api/pronunciation-zh/evaluate` accepts the same `text` and WAV `audio`
 fields as the Japanese endpoint. It compares Mandarin pinyin syllables without

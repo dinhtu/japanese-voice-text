@@ -9,10 +9,6 @@ from pathlib import Path
 from app.core.config import Settings, get_settings
 from src.asr.inference import load_audio, resolve_device
 
-# Longest accepted recording: XLSR-53 CTC has no fixed input window and
-# takes the whole clip in one forward pass; the cap bounds VRAM and time.
-MAX_SECONDS = 60
-
 
 @dataclass
 class ChineseRecognition:
@@ -51,8 +47,6 @@ class ChineseASRService:
         import torch
         samples, sample_rate = load_audio(audio_path)
         duration = len(samples) / sample_rate if sample_rate else 0.0
-        if duration > MAX_SECONDS:
-            raise ValueError(f"Chinese recordings must be {MAX_SECONDS} seconds or shorter.")
         self.load()
         inputs = self._processor(samples, sampling_rate=sample_rate, return_tensors="pt", padding=True)
         values = inputs.input_values.to(self._device)

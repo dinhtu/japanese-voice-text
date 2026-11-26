@@ -10,13 +10,14 @@ from pathlib import Path
 from app.core.config import Settings, get_settings
 from src.asr.inference import load_audio, resolve_device
 
-# Longest accepted recording. Whisper only sees 30 s of audio per pass (its
-# feature extractor pads / truncates every input to 30 s), so longer takes
-# are split into WHISPER_WINDOW_S windows at quiet points and transcribed as
-# one batch; the CTC path takes the whole clip in one forward pass.
-MAX_SECONDS = 60
+# No duration limit (as English / Chinese; only the upload size is capped).
+# Whisper only sees 30 s of audio per pass (its feature extractor pads /
+# truncates every input to 30 s), so longer takes are split into
+# WHISPER_WINDOW_S windows at quiet points and transcribed WHISPER_BATCH
+# windows at a time; the CTC path takes the whole clip in one forward pass.
 # Under 30 s: audio_windows may fold a tail of up to 1 s into the last window.
 WHISPER_WINDOW_S = 29.0
+WHISPER_BATCH = 8
 
 
 @dataclass
@@ -75,8 +76,6 @@ class KoreanASRService:
 
         samples, sample_rate = load_audio(audio_path)
         duration = len(samples) / sample_rate if sample_rate else 0.0
-        if duration > MAX_SECONDS:
-            raise ValueError(f"Korean recordings must be {MAX_SECONDS} seconds or shorter.")
 
         # Audio amplitude peak normalization to prevent low-volume mic drops
         if len(samples) > 0:
@@ -91,20 +90,23 @@ class KoreanASRService:
             from app.services.qwen3_asr import audio_windows
 
             windows = audio_windows(samples, sample_rate, WHISPER_WINDOW_S) if len(samples) else [samples]
-            inputs = self._processor(windows, sampling_rate=sample_rate, return_tensors="pt")
-            features = inputs.input_features.to(self._device)
-            if self._device.type == "cuda" and self.settings.ko_asr_fp16:
-                features = features.half()
-            with torch.inference_mode():
-                predicted_ids = self._model.generate(
-                    features,
-                    language="korean",
-                    task="transcribe",
-                    no_repeat_ngram_size=3,
-                )
-            parts = self._processor.batch_decode(predicted_ids, skip_special_tokens=True)
+            parts: list[str] = []
+            for start in range(0, len(windows), WHISPER_BATCH):
+                batch = windows[start:start + WHISPER_BATCH]
+                inputs = self._processor(batch, sampling_rate=sample_rate, return_tensors="pt")
+                features = inputs.input_features.to(self._device)
+                if self._device.type == "cuda" and self.settings.ko_asr_fp16:
+                    features = features.half()
+                with torch.inference_mode():
+                    predicted_ids = self._model.generate(
+                        features,
+                        language="korean",
+                        task="transcribe",
+                        no_repeat_ngram_size=3,
+                    )
+                parts += self._processor.batch_decode(predicted_ids, skip_special_tokens=True)
+                del features, predicted_ids
             text = " ".join(part.strip() for part in parts if part.strip())
-            del features, predicted_ids
             return KoreanRecognition(text.strip(), duration, time.perf_counter() - t0, None)
 
         # Wav2Vec2 CTC path
