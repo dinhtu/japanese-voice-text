@@ -80,8 +80,15 @@ class EvaluateResponse(BaseModel):
     target_hiragana: str = Field(description="Target normalized to a hiragana reading")
     recognized_text: str = Field(description="Raw kana from the ASR model")
     recognized_hiragana: str = Field(description="ASR output normalized the same way")
-    target_reading: str | None = Field(default=None, description="Optional target pinyin syllables")
-    recognized_reading: str | None = Field(default=None, description="Optional ASR pinyin syllables")
+    target_reading: str | None = Field(
+        default=None,
+        description="Optional reading of the target: Chinese pinyin syllables; Korean the "
+        "standard pronunciation in Hangul, one group per word (감사합니다 -> 감사함니다)",
+    )
+    recognized_reading: str | None = Field(
+        default=None,
+        description="Optional reading of the ASR transcript, in the same form as target_reading",
+    )
     score: int = Field(
         ge=0, le=100,
         description="Read-aloud match, 0-100. Japanese: share of mora_status "

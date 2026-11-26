@@ -225,6 +225,53 @@ def _ko_candidates(match: re.Match) -> list[str]:
     return _dedupe(whole)
 
 
+# Counters read with native numbers below 100 (세 개, 두 명, 다섯 시); every
+# other number is Sino-Korean (삼 층, 오 분, 이천 원, 삼 개월). Longer first.
+_KO_SINO_COUNTERS = ("개월", "개국", "번지", "번 출구", "번 버스", "번 출")
+_KO_NATIVE_COUNTERS = (
+    "개", "명", "마리", "살", "시간", "시", "권", "잔", "병", "벌", "장", "대", "켤레", "송이",
+    "그릇", "사람", "번", "달", "군데", "가지", "곳", "채", "통", "자루", "봉지", "접시", "판", "칸",
+    "쌍", "조각", "다발", "갑", "척", "줄", "끼",
+)
+KO_NUMBER = _NUMBER
+
+
+def to_ascii_digits(text: str) -> str:
+    """Fullwidth digits and number signs as ASCII, char for char."""
+    return (text or "").translate(_FULLWIDTH)
+
+
+# Numbers joined by -, / or ~ (010-1234-5678, 1/2, 3~4명, 2020-2021).
+_KO_LINKED = re.compile(r"\d[\d,.:]*(?:[-/~]\d[\d,.:]*)+")
+
+
+def ko_number_reading(match: re.Match, following: str, text: str = "") -> str:
+    """How a number of the target text itself is read: native before a
+    native counter (3개 -> 세, 20살 -> 스무), Sino-Korean otherwise
+    (3층 -> 삼, 2026년 -> 이천이십육). '' when it cannot be spelled.
+
+    `text`, the string `match` was found in, shows the numbers joined to it:
+    a phone number (a group starting with 0, or three groups) is read digit
+    by digit (010-1234-5678 -> 공일공 일이삼사 오육칠팔); a fraction, a
+    range or another pair (1/2, 3~4명, 2020-2021) gets '' (not guessed)."""
+    for linked in _KO_LINKED.finditer(text):
+        if linked.start() < match.end() and match.start() < linked.end():
+            groups = re.split(r"[-/~]", linked.group())
+            phone = linked.group().count("/") == linked.group().count("~") == 0 and (
+                groups[0].startswith("0") or len(groups) >= 3) and all(g.isdigit() for g in groups)
+            date = len(groups) == 3 and len(groups[0]) == 4 and all(len(g) <= 2 for g in groups[1:])
+            return ko_digits(match.group(0)) if phone and not date else ""
+    if match.group("h") or match.group("frac") or match.group("pct"):
+        return (_ko_candidates(match) or [""])[0]
+    digits, n = _integer(match)
+    if len(digits) > 1 and digits.startswith("0"):
+        return ko_digits(digits)  # 010: a code, digit by digit
+    if 0 < n < 100 and following.startswith(_KO_NATIVE_COUNTERS) \
+            and not following.startswith(_KO_SINO_COUNTERS):
+        return ko_native(n, True)
+    return ko_sino(n)
+
+
 def spell_numbers_ko(text: str, target_text: str) -> str:
     """`text` with each Arabic number written in Hangul (Sino-Korean or
     native, whichever is closer to `target_text`)."""
