@@ -14,9 +14,21 @@ from app.api.routes import _validate_upload
 from app.core.config import Settings, get_settings
 from app.core.vram import gpu_session
 from app.schemas.coaching import CoachComment, CoachResponse, TextGuideResponse
-from app.schemas.korean import KoreanEvaluateResponse, KoreanEvaluateV2Response
-from app.schemas.pitch_accent import MoraPitchItem, PitchAccentResponse
-from app.schemas.pronunciation import MoraStatusItem
+from app.schemas.korean import (
+    KoreanEvaluateResponse,
+    KoreanEvaluateV2Response,
+    KoreanMoraPitchItem,
+    KoreanMoraStatusItem,
+    KoreanPitchAccentResponse,
+    KoreanReadingResponse,
+    KoreanTranscribeRequest,
+    KoreanTranscribeResponse,
+    KoreanTranscriptionItem,
+    KoreanWordItem,
+    KoreanWordSyllableItem,
+)
+from app.schemas.pitch_accent import MoraPitchItem
+from app.schemas.pronunciation import EvaluateResponse
 from app.services.cjk_evaluate_v2 import AsrUnavailableError, evaluate_v2, measure_locked
 from app.services.coaching import (
     SUPPORTED_LANGUAGES,
@@ -28,9 +40,11 @@ from app.services.coaching import (
 from app.services.english_text import WordPitch
 from app.services.korean_asr import KoreanASRService, get_korean_asr_service
 from app.services.korean_text import (
+    KoreanSyllable,
+    KoreanTranscription,
     korean_pitch_pattern,
-    korean_pronunciation,
     normalize_korean,
+    transcribe_korean,
 )
 from app.services.korean_use_cases import EvaluateKoreanUseCase, score_korean
 from app.services.use_cases import EmptyTargetError, EvaluationResult
@@ -69,35 +83,87 @@ async def _save_upload(audio: UploadFile, settings: Settings, prefix: str) -> st
     return path
 
 
+def _words(tr: KoreanTranscription) -> list[KoreanWordItem] | None:
+    """The word list of a transcription; None when it is unsupported."""
+    if not tr.supported:
+        return None
+    return [
+        KoreanWordItem(
+            text=w.text, reading=w.reading, ipa=w.ipa, romanization=w.romanization,
+            start=w.start, end=w.end, space_after=w.space_after,
+            syllables=[
+                KoreanWordSyllableItem(text=s.text, reading=s.reading, ipa=s.ipa,
+                                       romanization=s.romanization, mora_index=s.mora_index)
+                for s in w.syllables
+            ],
+        )
+        for w in tr.words
+    ]
+
+
+def _cells(tr: KoreanTranscription, n: int) -> list[KoreanSyllable | None]:
+    """One transcribed syllable per Hangul syllable of the text (n of them),
+    or all None when the transcription is unsupported or does not line up."""
+    return tr.per_mora(n) or [None] * n
+
+
 @router.get(
     "/reading",
-    summary="Lấy cách đọc chuẩn theo quy tắc phát âm tiếng Hàn",
+    response_model=KoreanReadingResponse,
+    summary="Lấy cách đọc chuẩn (Hangul), IPA và phiên âm Latin (Revised Romanization) của câu tiếng Hàn",
 )
-def korean_reading(text: str = Query(..., min_length=1, max_length=200)) -> dict[str, str]:
+def korean_reading(text: str = Query(..., min_length=1, max_length=200)) -> KoreanReadingResponse:
     text = _check_text(text)
-    reading = korean_pronunciation(text)
-    return {"reading": reading}
+    tr = transcribe_korean(text)
+    return KoreanReadingResponse(reading=tr.reading, ipa=tr.ipa, romanization=tr.romanization, words=_words(tr))
 
 
 @router.get(
     "/pitch-accent",
-    response_model=PitchAccentResponse,
-    summary="Lấy cao độ mẫu Accentual Phrase (H/L) của câu tiếng Hàn",
+    response_model=KoreanPitchAccentResponse,
+    summary="Lấy cao độ mẫu Accentual Phrase (H/L) của câu tiếng Hàn, kèm IPA / phiên âm Latin từng âm tiết",
 )
-def korean_pitch_accent(text: str = Query(..., min_length=1, max_length=200)) -> PitchAccentResponse:
+def korean_pitch_accent(text: str = Query(..., min_length=1, max_length=200)) -> KoreanPitchAccentResponse:
     text = _check_text(text)
     pattern = korean_pitch_pattern(text)
     if not pattern:
         raise HTTPException(400, "No Hangul characters found.")
-    return PitchAccentResponse(
+    tr = transcribe_korean(text)
+    cells = _cells(tr, len(pattern))
+    return KoreanPitchAccentResponse(
         success=True,
         text=text,
         reading=" ".join(item["mora"] for item in pattern),
         pattern=[
-            MoraPitchItem(mora=item["mora"], pitch=item["pitch"], phrase=item["phrase"])
-            for item in pattern
+            KoreanMoraPitchItem(
+                mora=item["mora"], pitch=item["pitch"], phrase=item["phrase"],
+                ipa=cell.ipa if cell else None, romanization=cell.romanization if cell else None,
+            )
+            for item, cell in zip(pattern, cells)
         ],
+        ipa=tr.ipa,
+        romanization=tr.romanization,
+        words=_words(tr),
     )
+
+
+@router.post(
+    "/transcribe",
+    response_model=KoreanTranscribeResponse,
+    summary="IPA (kana) và Revised Romanization (romaji) cho nhiều câu tiếng Hàn một lần",
+)
+def korean_transcribe(body: KoreanTranscribeRequest) -> KoreanTranscribeResponse:
+    """The exercise `kana` / `romaji` of each text, keyed by the caller's id.
+    Texts the transcriber cannot read (empty, no Hangul, Latin letters,
+    symbols) are listed in `unsupported` instead of being guessed."""
+    response = KoreanTranscribeResponse()
+    for key, text in body.items.items():
+        tr = transcribe_korean(text) if normalize_korean(text) else None
+        if tr is None or not tr.supported or not tr.ipa or not tr.romanization:
+            response.unsupported.append(key)
+            continue
+        response.results[key] = KoreanTranscriptionItem(kana=tr.ipa, romaji=tr.romanization, reading=tr.reading)
+    return response
 
 
 def _score(asr: KoreanASRService, text: str, path: str) -> EvaluationResult:
@@ -107,18 +173,28 @@ def _score(asr: KoreanASRService, text: str, path: str) -> EvaluationResult:
 
 def _response(result: EvaluationResult, cls: type[KoreanEvaluateResponse] = KoreanEvaluateResponse,
               **extra) -> KoreanEvaluateResponse:
-    """The /evaluate shape: the recognized text's AP pattern and a
-    mora_status item per Hangul syllable (`extra`: the v2 fields)."""
+    """The /evaluate shape: the recognized text's AP pattern, a mora_status
+    item per Hangul syllable with its IPA / romanization, the target's
+    transcription (`extra`: the v2 fields)."""
     rec_moras = [
         MoraPitchItem(mora=item["mora"], pitch=item["pitch"], phrase=item["phrase"])
         # recognized_hiragana: the transcript with its numbers spelled out.
         for item in (korean_pitch_pattern(result.recognized_hiragana) if result.recognized_text else [])
     ]
-    data = cls.from_result(result, recognized_moras=rec_moras).model_dump()
+    data = EvaluateResponse.from_result(result, recognized_moras=rec_moras).model_dump()
     bad = {e.position for e in result.score.errors if e.type in ("sub", "del")}
+    tr = transcribe_korean(result.target_text)
+    cells = _cells(tr, len(result.target_hiragana))
     return cls.model_validate({
         **data,
-        "mora_status": [MoraStatusItem(mora=c, ok=i not in bad) for i, c in enumerate(result.target_hiragana)],
+        "mora_status": [
+            KoreanMoraStatusItem(mora=c, ok=i not in bad, ipa=cell.ipa if cell else None,
+                                 romanization=cell.romanization if cell else None)
+            for i, (c, cell) in enumerate(zip(result.target_hiragana, cells))
+        ],
+        "target_ipa": tr.ipa,
+        "target_romanization": tr.romanization,
+        "words": _words(tr),
         **extra,
     })
 

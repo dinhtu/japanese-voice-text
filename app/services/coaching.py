@@ -1350,6 +1350,26 @@ def japanese_reading_hint(text: str) -> str:
     return "".join(parts)
 
 
+TEXT_GUIDE_KO_READING_RULE = (
+    "\n\nThe standard pronunciation (표준 발음법) of every word is given inside <reading>...</reading> "
+    "as word(Hangul pronunciation / Revised Romanization), e.g. 한국어를(한구거를 / hangugeoreul). "
+    "It is authoritative: base the romanization and the sound-change notes EXACTLY on it. "
+    "Never write the <reading> tag in your answer."
+)
+
+
+def korean_reading_hint(text: str) -> str:
+    """Each Korean word followed by its standard pronunciation and Revised
+    Romanization, e.g. 감사합니다(감사함니다 / gamsahamnida). "" when the
+    text has something the transcriber cannot read (the model then does it)."""
+    from app.services.korean_text import transcribe_korean
+
+    tr = transcribe_korean(text or "")
+    if not tr.supported:
+        return ""
+    return " ".join(f"{w.text}({w.reading} / {w.romanization})" for w in tr.words)
+
+
 # Output budget grows with the text: short words need only ~300 tokens,
 # while long sentences can scale up to TEXT_GUIDE_MAX_TOKENS.
 TEXT_GUIDE_MIN_TOKENS = 300
@@ -1525,6 +1545,11 @@ async def generate_text_reading_guide(
         reading_hint = japanese_reading_hint(text)
         if reading_hint:
             system_prompt += TEXT_GUIDE_JA_READING_RULE
+            user_content += f"\n<reading>{reading_hint}</reading>"
+    elif target_lang == "ko":
+        reading_hint = korean_reading_hint(text)
+        if reading_hint:
+            system_prompt += TEXT_GUIDE_KO_READING_RULE
             user_content += f"\n<reading>{reading_hint}</reading>"
 
     try:
