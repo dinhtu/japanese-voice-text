@@ -400,3 +400,26 @@ def test_japanese_reading_hint_uses_dictionary_readings():
     assert japanese_reading_hint("何を食べる") == "何(なに)を食べる(たべる)"
     assert japanese_reading_hint("何ですか") == "何(なん)ですか"
     assert japanese_reading_hint("ちかてつ") == ""
+
+
+def test_comment_language_guard_flags_vietnamese_for_en():
+    from app.services.coaching import CoachingComment, _comment_in_wrong_language
+    vi = CoachingComment(assessment="Câu đọc khá rõ.", suggestion="Hãy giữ phụ âm cuối.")
+    en = CoachingComment(assessment="Mostly clear.", suggestion="Keep the final ㄱ in 학.")
+    assert _comment_in_wrong_language(vi, "en")
+    assert not _comment_in_wrong_language(en, "en")
+    assert not _comment_in_wrong_language(vi, "vi")
+    assert _comment_in_wrong_language(en, "ja")
+
+
+def test_korean_coach_prompts_and_facts_use_syllables():
+    from app.services.coaching import resolve_system_prompt
+    assert "ENGLISH only" in resolve_system_prompt("en", target_lang="ko")
+    assert "日本語のみ" in resolve_system_prompt("ja", target_lang="ko")
+
+
+def test_chinese_coach_prompts_pin_output_language():
+    from app.services.coaching import resolve_system_prompt
+    assert "ENGLISH only" in resolve_system_prompt("en", target_lang="zh")
+    assert "日本語のみ" in resolve_system_prompt("ja", target_lang="zh")
+    assert "tiếng Việt" in resolve_system_prompt("vi", target_lang="zh")
