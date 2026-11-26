@@ -13,7 +13,7 @@ from typing import Any
 
 from app.services.aspect_scoring import score_aspects, score_f0_dynamics
 from app.services.cjk_numbers import spell_numbers_ko
-from app.services.korean_asr import KoreanASRService, KoreanRecognition
+from app.services.korean_asr import MAX_SECONDS, KoreanASRService, KoreanRecognition
 from app.services.korean_text import (
     korean_pitch_pattern,
     korean_pronunciation,
@@ -25,9 +25,6 @@ from app.services.voice_presence import no_voice_result
 from src.asr.inference import load_audio
 
 logger = logging.getLogger(__name__)
-
-# KoreanASRService.recognize's limit, kept when v2 does not run it.
-MAX_SECONDS = 30
 
 
 @dataclass
@@ -173,8 +170,8 @@ class EvaluateKoreanUseCase:
         target_norm = _target_norm(target_text)
         samples, sample_rate = load_audio(audio_path)
         duration = len(samples) / sample_rate if sample_rate else 0.0
-        if duration > MAX_SECONDS:
-            raise ValueError("Korean recordings must be 30 seconds or shorter.")
+        if duration > MAX_SECONDS:  # recognize's limit, kept when v2 does not run it
+            raise ValueError(f"Korean recordings must be {MAX_SECONDS} seconds or shorter.")
         take = KoreanTake(target_text, target_norm, samples, sample_rate, duration,
                           vad=_vad(samples, sample_rate))
         if take.vad is not None:
