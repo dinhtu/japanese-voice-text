@@ -123,8 +123,8 @@ def score_syllables(target: list[str], heard: list[str]) -> ScoreResult:
     score = round(max(0.0, 1.0 - error_rate) * 100)
     level, _ = _feedback(score)
     message = (
-        "ASR syllables match the target closely; tones are checked separately from F0."
-        if score >= 75 else "Some recognized syllables differ; tones are checked separately from F0."
+        "ASR syllables match the target closely."
+        if score >= 75 else "Some recognized syllables differ from the target."
     )
     errors = [
         PronunciationError(

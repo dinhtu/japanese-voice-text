@@ -4,7 +4,10 @@ check per syllable from its F0 shape.
 Two steps, so /evaluate-v2 can score another ASR's transcript:
 measure() is the audio side (voice check, the CTC model's transcript and
 forced alignment to the target, F0 per syllable), score_chinese() matches
-a transcript against the target on top of it."""
+a transcript against the target on top of it.
+
+The overall (`score` / `overall_score`) is a weighted mix of the four
+aspect bars, as English v2 (see zh_overall)."""
 from __future__ import annotations
 
 import logging
@@ -12,16 +15,37 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from app.services.aspect_scoring import score_aspects
+from app.services.aspect_scoring import AspectScores, score_aspects, weighted_overall
 from app.services.cjk_numbers import spell_numbers_zh
 from app.services.chinese_asr import ChineseASRService, ChineseRecognition
 from app.services.chinese_text import (
     chinese_pitch_pattern, normalize_chinese, pinyin_syllables, score_syllables, tone_check,
 )
+from app.services.scoring import _feedback
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 from app.services.voice_presence import no_voice_result
 
 logger = logging.getLogger(__name__)
+
+# Weights of the overall: the syllable match heaviest, the tones next (a
+# wrong tone is a wrong word in Mandarin), pace and evenness share the rest.
+ZH_WEIGHTS: dict[str, float] = {
+    "pronunciation": 0.40,
+    "intonation": 0.30,
+    "fluency": 0.15,
+    "rhythm": 0.15,
+}
+# Content gate (as English v2): under this share of the target syllables
+# read right, the syllable match alone is the overall, so a fluent misread
+# earns nothing for its pace.
+ZH_CONTENT_GATE = 0.5
+
+
+def zh_overall(aspects: AspectScores, read_share: float) -> float:
+    """The ZH_WEIGHTS mix of the measured bars (intonation None when no tone
+    was graded; rhythm without syllable timing -- one Hanzi, or no
+    alignment -- left out); under the content gate the syllable match alone."""
+    return weighted_overall(aspects, ZH_WEIGHTS, read_share, ZH_CONTENT_GATE)
 
 
 def tone_checks(
@@ -135,7 +159,13 @@ def score_chinese(take: ChineseTake, heard_text: str, inference_ms: float) -> Ev
         speech_ratio=vad.speech_ratio if vad else None,
         vad_method=vad.method if vad else None,
     )
-    aspects = replace(aspects, method=aspects.method.replace("cer", "pinyin-asr", 1))
+    read_share = 1.0 - len(misread) / len(take.syllables)
+    overall = zh_overall(aspects, read_share)
+    aspects = replace(aspects, overall_score=overall,
+                      method=aspects.method.replace("cer", "pinyin-asr", 1))
+    # `score` is the overall too (as English v2); the syllable match alone
+    # stays in pronunciation_score, cer and distance.
+    score = replace(score, score=round(overall), level=_feedback(round(overall))[0])
     return EvaluationResult(
         target_text=take.target_text, target_hiragana=take.target,
         recognized_text=heard_text, recognized_hiragana=recognized,

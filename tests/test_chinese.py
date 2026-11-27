@@ -1,5 +1,6 @@
 import sys
 import types
+from dataclasses import replace
 
 import numpy as np
 from fastapi import FastAPI
@@ -15,7 +16,8 @@ from app.services.chinese_text import (
     score_syllables,
     tone_check,
 )
-from app.services.chinese_use_cases import EvaluateChineseUseCase
+from app.services.aspect_scoring import AspectScores
+from app.services.chinese_use_cases import EvaluateChineseUseCase, zh_overall
 from app.services.vad_fluency import VadResult
 from app.services.voice_presence import VoicePresence
 
@@ -164,6 +166,49 @@ def test_wrong_tone_is_reported_with_the_heard_tone(monkeypatch):
     assert (first["surface_tone"], first["ok"], first["heard_tone"], first["status"]) == (2, False, 4, "bad")
 
 
+# --- the overall: weighted mix of the aspect bars -----------------------------
+
+def _aspects(pronunciation=100.0, intonation=60.0, fluency=80.0, rhythm=90.0):
+    return AspectScores(
+        overall_score=pronunciation, pronunciation_score=pronunciation, fluency_score=fluency,
+        rhythm_score=rhythm, intonation_score=intonation,
+        rhythm_measured=rhythm is not None, intonation_measured=intonation is not None,
+    )
+
+
+def test_overall_weighs_syllables_tones_fluency_rhythm():
+    # 0.40*100 + 0.30*60 + 0.15*80 + 0.15*90
+    assert zh_overall(_aspects(), read_share=1.0) == 83.5
+
+
+def test_overall_renormalizes_without_a_tone_score():
+    # (0.40*100 + 0.15*80 + 0.15*90) / 0.70
+    assert zh_overall(_aspects(intonation=None), read_share=1.0) == round(65.5 / 0.7, 2)
+
+
+def test_overall_leaves_out_an_unmeasured_rhythm():
+    # One Hanzi or no alignment: rhythm is 100 minus edit penalties, not a timing measurement.
+    aspects = replace(_aspects(intonation=None), rhythm_measured=False)
+    assert zh_overall(aspects, read_share=1.0) == round((0.40 * 100 + 0.15 * 80) / 0.55, 2)
+
+
+def test_overall_is_the_syllable_match_alone_under_the_content_gate():
+    assert zh_overall(_aspects(pronunciation=40.0, fluency=100.0, rhythm=100.0), read_share=0.4) == 40.0
+    # Half read right passes the gate.
+    assert zh_overall(_aspects(pronunciation=50.0), read_share=0.5) > 50.0
+
+
+def test_score_and_overall_are_the_weighted_mix_and_tones_lower_it(monkeypatch):
+    # Every syllable heard right, 你 said with the wrong tone, 好 right, 吗 neutral.
+    _stub_audio(monkeypatch, contours=[[2.0, 0.0, -2.0], [1.0, -1.0, 1.0], [0.0, 0.0, 0.0]])
+    result = EvaluateChineseUseCase(_FakeASR()).execute("你好吗", "x.wav")
+    aspects = result.aspects
+    assert aspects.pronunciation_score == 100 and aspects.intonation_score == 60
+    assert aspects.overall_score == zh_overall(aspects, read_share=1.0) < 100
+    assert result.score.score == round(aspects.overall_score)
+    assert result.score.cer == 0
+
+
 # --- /evaluate with coach=true ----------------------------------------------
 
 def _client(monkeypatch, comment=None, error=None):
@@ -210,7 +255,7 @@ def test_evaluate_reports_coach_error_instead_of_failing(monkeypatch):
     client, _ = _client(monkeypatch, error=coaching.CoachingUnavailableError("Ollama down"))
     body = _post(client, "/zh/evaluate", coach="true").json()
     assert body["coach"] is None and body["coach_error"] == "Ollama down"
-    assert body["score"] == 100
+    assert body["pronunciation_score"] == 100 and body["score"] == round(body["overall_score"])
 
 
 def test_evaluate_rejects_unknown_coach_lang(monkeypatch):

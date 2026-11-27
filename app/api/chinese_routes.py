@@ -85,7 +85,7 @@ def _score(asr: ChineseASRService, text: str, path: str) -> EvaluationResult:
 
 
 def _tone_facts(result: EvaluationResult) -> list[str]:
-    """The tone checks, for the coach (the score itself ignores tones)."""
+    """The tone checks, for the coach (the score counts them as its intonation share)."""
     if result.aspects.method.startswith("no-voice"):
         return [NO_VOICE_FACT]
     tones = result.tones or []

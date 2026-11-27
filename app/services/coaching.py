@@ -561,10 +561,13 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
             "Đây là câu tiếng Anh. Đơn vị là từ (không phải mora tiếng Nhật)."
         )
     elif target_lang == "ko":
-        lines.append("Đây là câu tiếng Hàn. Đơn vị là âm tiết Hangul (không phải mora tiếng Nhật).")
+        lines.append("Đây là câu tiếng Hàn. Đơn vị là âm tiết Hangul (không phải mora tiếng Nhật). "
+                     "Điểm tổng gộp độ khớp âm tiết Hangul từ ASR (55%), ngữ điệu F0 (15%), tốc độ đọc (15%) "
+                     "và độ đều nhịp (15%).")
     elif target_lang == "zh":
-        lines.append("Đây là câu tiếng Trung; điểm tổng là độ khớp âm tiết pinyin không dấu thanh từ ASR. "
-                     "Thanh điệu đo riêng từ đường F0 từng âm tiết (dòng Thanh điệu); chưa đo chất lượng âm vị.")
+        lines.append("Đây là câu tiếng Trung; điểm tổng gộp độ khớp âm tiết pinyin không dấu thanh từ ASR (40%), "
+                     "thanh điệu đo từ đường F0 từng âm tiết (30%, dòng Thanh điệu), tốc độ đọc (15%) và độ đều "
+                     "nhịp (15%); chưa đo chất lượng âm vị.")
 
     if facts.wrong_morae:
         lines.append(

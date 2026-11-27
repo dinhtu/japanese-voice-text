@@ -5,8 +5,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.aspect_scoring import score_f0_dynamics
+from app.services.aspect_scoring import AspectScores, score_f0_dynamics
 from app.services.korean_asr import KoreanRecognition, get_korean_asr_service
+from app.services.korean_use_cases import ko_overall
 from app.services.korean_text import (
     decompose_hangul,
     compose_hangul,
@@ -265,7 +266,9 @@ def test_korean_evaluate_endpoint():
     assert data["success"] is True
     # The heard 함 is scored against the written 합 by syllable CER
     # (score_pronunciation on normalize_korean), so the phonetic spelling costs one syllable.
-    assert data["score"] == 80
+    assert data["pronunciation_score"] == 80
+    # The overall mixes in intonation, fluency and rhythm (ko_overall).
+    assert data["score"] == round(data["overall_score"])
     assert data["target_text"] == "감사합니다"
     assert data["target_hiragana"] == "감사합니다"
     assert data["target_reading"] == "감사함니다"
@@ -407,3 +410,28 @@ def test_korean_text_guide_returns_503_when_ollama_unavailable():
 def test_korean_text_guide_uses_korean_prompt():
     for key in ("vi", "en", "jp", "ko", "tw"):
         assert KOREAN_TEXT_READING_GUIDE_PROMPTS[key] != TEXT_READING_GUIDE_PROMPTS[key]
+
+
+# --- the overall: weighted mix of the aspect bars -----------------------------
+
+def _ko_aspects(pronunciation=100.0, intonation=60.0, fluency=80.0, rhythm=90.0, rhythm_measured=True):
+    return AspectScores(
+        overall_score=pronunciation, pronunciation_score=pronunciation, fluency_score=fluency,
+        rhythm_score=rhythm, intonation_score=intonation,
+        rhythm_measured=rhythm_measured, intonation_measured=intonation is not None,
+    )
+
+
+def test_ko_overall_weighs_syllables_intonation_fluency_rhythm():
+    # 0.55*100 + 0.15*60 + 0.15*80 + 0.15*90
+    assert ko_overall(_ko_aspects(), read_share=1.0) == 89.5
+
+
+def test_ko_overall_leaves_out_unmeasured_bars():
+    # No intonation, rhythm from the even split: (0.55*100 + 0.15*80) / 0.70
+    aspects = _ko_aspects(intonation=None, rhythm_measured=False)
+    assert ko_overall(aspects, read_share=1.0) == round(67.0 / 0.7, 2)
+
+
+def test_ko_overall_is_the_syllable_match_alone_under_the_content_gate():
+    assert ko_overall(_ko_aspects(pronunciation=30.0, fluency=100.0), read_share=0.4) == 30.0

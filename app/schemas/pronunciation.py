@@ -92,7 +92,8 @@ class EvaluateResponse(BaseModel):
     score: int = Field(
         ge=0, le=100,
         description="Read-aloud match, 0-100. Japanese: share of mora_status "
-        "cells ok, minus a small penalty for many extra sounds; other "
+        "cells ok, minus a small penalty for many extra sounds; Chinese, Korean: "
+        "overall_score rounded (weighted mix of the aspect scores); other "
         "languages: character/syllable CER",
     )
     overall_score: float = Field(

@@ -419,7 +419,7 @@
               không được chấm; không căn được thời gian thì không kiểm tra thanh điệu. Nhận xét do Ollama viết.
             </p>
             <p class="note" id="result-note-v1">
-              Điểm tổng là độ khớp âm tiết pinyin không dấu thanh từ ASR; chữ Hán đồng âm không bị trừ điểm. Tốc độ đọc dựa trên âm tiết/giây và VAD. Ngữ điệu là tỉ lệ âm tiết có đường F0 khớp thanh điệu cần đọc (đã tính biến điệu 3+3, 不, 一; bỏ qua thanh nhẹ và âm tiết đọc sai); chưa chấm chất lượng âm vị. Nhịp và ngữ điệu hiển thị — khi chưa đo được.
+              Điểm tổng = 40% phát âm (độ khớp âm tiết pinyin không dấu thanh từ ASR; chữ Hán đồng âm không bị trừ điểm) + 30% ngữ điệu + 15% tốc độ + 15% nhịp; phần nào chưa đo được thì bỏ ra và chia lại tỉ lệ, đọc đúng dưới một nửa số âm tiết thì điểm tổng chỉ là điểm phát âm. Tốc độ đọc dựa trên âm tiết/giây và VAD. Ngữ điệu là tỉ lệ âm tiết có đường F0 khớp thanh điệu cần đọc (đã tính biến điệu 3+3, 不, 一; bỏ qua thanh nhẹ và âm tiết đọc sai); chưa chấm chất lượng âm vị. Nhịp và ngữ điệu hiển thị — khi chưa đo được.
             </p>
           </div>
         </section>

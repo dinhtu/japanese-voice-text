@@ -2,7 +2,10 @@
 
 Two steps, so /evaluate-v2 can score another ASR's transcript: the audio
 side (KoreanTake: VAD and, from a CTC model, the forced alignment to the
-target) and score_korean(), which matches a transcript on top of it."""
+target) and score_korean(), which matches a transcript on top of it.
+
+The overall (`score` / `overall_score`) is a weighted mix of the four
+aspect bars, as English v2 (see ko_overall)."""
 
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from app.services.aspect_scoring import score_aspects, score_f0_dynamics
+from app.services.aspect_scoring import AspectScores, score_aspects, score_f0_dynamics, weighted_overall
 from app.services.cjk_numbers import spell_numbers_ko
 from app.services.korean_asr import KoreanASRService, KoreanRecognition
 from app.services.korean_text import (
@@ -19,12 +22,33 @@ from app.services.korean_text import (
     korean_pronunciation,
     normalize_korean,
 )
-from app.services.scoring import score_pronunciation
+from app.services.scoring import _feedback, score_pronunciation
 from app.services.use_cases import EmptyTargetError, EvaluationResult
 from app.services.voice_presence import no_voice_result
 from src.asr.inference import load_audio
 
 logger = logging.getLogger(__name__)
+
+# Weights of the overall, the English v2 split (content 25 % + pronunciation
+# 30 % = the syllable match): Korean has no lexical tones and its intonation
+# is a coarse phrase-level H/L check, so it weighs no more than pace or
+# evenness.
+KO_WEIGHTS: dict[str, float] = {
+    "pronunciation": 0.55,
+    "intonation": 0.15,
+    "fluency": 0.15,
+    "rhythm": 0.15,
+}
+# Content gate (as English v2): under this share of the target syllables
+# read right, the syllable match alone is the overall.
+KO_CONTENT_GATE = 0.5
+
+
+def ko_overall(aspects: AspectScores, read_share: float) -> float:
+    """The KO_WEIGHTS mix of the measured bars (rhythm only from a real
+    alignment, not the even split); under the content gate the syllable
+    match alone."""
+    return weighted_overall(aspects, KO_WEIGHTS, read_share, KO_CONTENT_GATE)
 
 
 @dataclass
@@ -81,6 +105,7 @@ def score_korean(take: KoreanTake, heard_text: str, inference_ms: float) -> Eval
     vad_method = vad.method if vad else None
 
     windows = take.recognition.windows if take.recognition else None
+    aligned = bool(windows)
     if not windows and len(target_norm) > 0 and speech_duration > 0:
         step = speech_duration / len(target_norm)
         windows = [(i * step, (i + 1) * step) for i in range(len(target_norm))]
@@ -128,6 +153,17 @@ def score_korean(take: KoreanTake, heard_text: str, inference_ms: float) -> Eval
             aspects, intonation_score=intonation, intonation_measured=measured,
             method=aspects.method.replace("cer", "hangul-asr", 1) + ("+f0" if measured else ""),
         )
+    if not aligned:
+        # Even split: equal windows by construction, so their evenness
+        # measures nothing (it is 100 less the edit penalties).
+        aspects = replace(aspects, rhythm_measured=False)
+    misread = {e.position for e in score.errors if e.type in ("sub", "del")}
+    overall = ko_overall(aspects, 1.0 - len(misread) / len(target_norm))
+    aspects = replace(aspects, overall_score=overall)
+    # `score` is the overall too (as English v2); the syllable match alone
+    # stays in pronunciation_score, cer and distance.
+    level, message = _feedback(round(overall))
+    score = replace(score, score=round(overall), level=level, message=message)
 
     target_reading = korean_pronunciation(target_text)
     # The transcript as heard, numbers spelled out: the AP pattern of the
