@@ -242,16 +242,17 @@ def weighted_overall(
 ) -> float:
     """Overall as English v2: the measured bars mixed by `weights` (keys
     pronunciation / intonation / fluency / rhythm), renormalized over those
-    present. Intonation is None when nothing was graded; rhythm counts only
-    when measured from real per-unit timing (otherwise it is just an edit
-    penalty). Under `content_gate` (`read_share`: share of the target units
-    read right, insertions aside) the pronunciation score alone, so a fluent
+    present. Intonation and rhythm count only when measured
+    (`intonation_measured` / `rhythm_measured`): intonation is None when
+    nothing was graded, and either is a guess without real per-unit timing.
+    Under `content_gate` (`read_share`: share of the target units read
+    right, insertions aside) the pronunciation score alone, so a fluent
     misread earns nothing for its pace."""
     if read_share < content_gate:
         return aspects.pronunciation_score
     bars = {
         "pronunciation": aspects.pronunciation_score,
-        "intonation": aspects.intonation_score,
+        "intonation": aspects.intonation_score if aspects.intonation_measured else None,
         "fluency": aspects.fluency_score,
         "rhythm": aspects.rhythm_score if aspects.rhythm_measured else None,
     }

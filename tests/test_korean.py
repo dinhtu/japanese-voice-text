@@ -1,4 +1,5 @@
 import io
+from dataclasses import replace
 import re
 import unicodedata
 import pytest
@@ -19,7 +20,7 @@ from app.services.korean_text import (
     transcribe_korean,
 )
 from app.services.scoring import score_pronunciation
-from app.services.coaching import KOREAN_TEXT_READING_GUIDE_PROMPTS, TEXT_READING_GUIDE_PROMPTS
+from app.services.coaching import KOREAN_TEXT_READING_GUIDE_PROMPTS, TEXT_READING_GUIDE_PROMPTS, aspect_facts_line
 
 
 class StubKoreanASRService:
@@ -435,3 +436,15 @@ def test_ko_overall_leaves_out_unmeasured_bars():
 
 def test_ko_overall_is_the_syllable_match_alone_under_the_content_gate():
     assert ko_overall(_ko_aspects(pronunciation=30.0, fluency=100.0), read_share=0.4) == 30.0
+
+
+def test_ko_overall_leaves_out_intonation_from_the_even_split():
+    # No alignment: the H/L check ran on guessed windows, so it is not counted.
+    aspects = replace(_ko_aspects(rhythm_measured=False), intonation_measured=False)
+    assert ko_overall(aspects, read_share=1.0) == round(67.0 / 0.7, 2)
+
+
+def test_aspect_facts_line_names_unmeasured_bars():
+    line = aspect_facts_line(_ko_aspects(rhythm_measured=False), "ngữ điệu F0")
+    assert "độ khớp âm tiết 100/100" in line and "ngữ điệu F0 60/100" in line
+    assert "độ đều nhịp chưa đo (không tính vào điểm tổng)" in line

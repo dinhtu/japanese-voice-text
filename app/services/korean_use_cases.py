@@ -45,9 +45,9 @@ KO_CONTENT_GATE = 0.5
 
 
 def ko_overall(aspects: AspectScores, read_share: float) -> float:
-    """The KO_WEIGHTS mix of the measured bars (rhythm only from a real
-    alignment, not the even split); under the content gate the syllable
-    match alone."""
+    """The KO_WEIGHTS mix of the measured bars (intonation and rhythm only
+    from a real alignment, not the even split); under the content gate the
+    syllable match alone."""
     return weighted_overall(aspects, KO_WEIGHTS, read_share, KO_CONTENT_GATE)
 
 
@@ -155,15 +155,18 @@ def score_korean(take: KoreanTake, heard_text: str, inference_ms: float) -> Eval
         )
     if not aligned:
         # Even split: equal windows by construction, so their evenness
-        # measures nothing (it is 100 less the edit penalties).
-        aspects = replace(aspects, rhythm_measured=False)
+        # measures nothing (it is 100 less the edit penalties), and they
+        # start at t=0 over the speech span, so after any leading silence
+        # the H/L check compares F0 with another syllable's expected pitch.
+        # Neither is a measurement: both stay out of the overall.
+        aspects = replace(aspects, rhythm_measured=False, intonation_measured=False)
     misread = {e.position for e in score.errors if e.type in ("sub", "del")}
     overall = ko_overall(aspects, 1.0 - len(misread) / len(target_norm))
     aspects = replace(aspects, overall_score=overall)
     # `score` is the overall too (as English v2); the syllable match alone
-    # stays in pronunciation_score, cer and distance.
-    level, message = _feedback(round(overall))
-    score = replace(score, score=round(overall), level=level, message=message)
+    # stays in pronunciation_score, cer and distance, and the message keeps
+    # describing it (it is about sounds, not pace or pitch).
+    score = replace(score, score=round(overall), level=_feedback(round(overall))[0])
 
     target_reading = korean_pronunciation(target_text)
     # The transcript as heard, numbers spelled out: the AP pattern of the

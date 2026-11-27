@@ -507,6 +507,22 @@ def pitch_direction_match(
     return matched, total
 
 
+def aspect_facts_line(aspects, pitch_label: str = "ngữ điệu") -> str:
+    """The bars behind a weighted overall (zh, ko), so the coach can tell
+    what cost points beyond the syllable match. An unmeasured bar is said
+    to be left out of the overall."""
+    def bar(value, measured: bool = True) -> str:
+        return f"{value:.0f}/100" if value is not None and measured else "chưa đo (không tính vào điểm tổng)"
+
+    return (
+        "Điểm thành phần: "
+        f"độ khớp âm tiết {bar(aspects.pronunciation_score)}, "
+        f"{pitch_label} {bar(aspects.intonation_score, aspects.intonation_measured)}, "
+        f"tốc độ đọc {bar(aspects.fluency_score)}, "
+        f"độ đều nhịp {bar(aspects.rhythm_score, aspects.rhythm_measured)}."
+    )
+
+
 def build_facts(
     text: str,
     score: int,
@@ -563,11 +579,13 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
     elif target_lang == "ko":
         lines.append("Đây là câu tiếng Hàn. Đơn vị là âm tiết Hangul (không phải mora tiếng Nhật). "
                      "Điểm tổng gộp độ khớp âm tiết Hangul từ ASR (55%), ngữ điệu F0 (15%), tốc độ đọc (15%) "
-                     "và độ đều nhịp (15%).")
+                     "và độ đều nhịp (15%); phần chưa đo không tính, và đọc đúng dưới một nửa số âm tiết "
+                     "thì điểm tổng chỉ là độ khớp âm tiết.")
     elif target_lang == "zh":
         lines.append("Đây là câu tiếng Trung; điểm tổng gộp độ khớp âm tiết pinyin không dấu thanh từ ASR (40%), "
                      "thanh điệu đo từ đường F0 từng âm tiết (30%, dòng Thanh điệu), tốc độ đọc (15%) và độ đều "
-                     "nhịp (15%); chưa đo chất lượng âm vị.")
+                     "nhịp (15%); phần chưa đo không tính, và đọc đúng dưới một nửa số âm tiết thì điểm tổng "
+                     "chỉ là độ khớp âm tiết; chưa đo chất lượng âm vị.")
 
     if facts.wrong_morae:
         lines.append(
@@ -601,7 +619,7 @@ def _format_facts(facts: PronunciationFacts, target_lang: str = "ja") -> str:
             f"Cao độ: {facts.pitch_matched}/{facts.pitch_total} {unit} có audio "
             f"khớp đúng hướng cao/thấp so với mẫu."
         )
-    elif target_lang != "zh":  # Mandarin: the tone line in extra_lines covers pitch
+    elif target_lang not in ("zh", "ko"):  # zh, ko: the aspect line in extra_lines covers pitch
         lines.append("Không có đủ dữ liệu cao độ để đánh giá.")
 
     lines.extend(facts.extra_lines)

@@ -13,7 +13,7 @@ from app.schemas.chinese import ChineseEvaluateResponse, ChineseEvaluateV2Respon
 from app.schemas.coaching import CoachComment, CoachResponse, TextGuideResponse
 from app.schemas.pronunciation import EvaluateResponse, MoraStatusItem
 from app.services.coaching import (
-    SUPPORTED_LANGUAGES, CoachingUnavailableError, build_facts, generate_comment,
+    SUPPORTED_LANGUAGES, CoachingUnavailableError, aspect_facts_line, build_facts, generate_comment,
     generate_text_reading_guide,
 )
 from app.services.chinese_asr import ChineseASRService, get_chinese_asr_service
@@ -120,6 +120,8 @@ async def _coach_comment(result: EvaluationResult, settings: Settings, lang: str
     facts.extra_lines = _tone_facts(result)
     # Nothing heard: the no-voice line alone, not every syllable as missing.
     facts.facts_only = result.aspects.method.startswith("no-voice")
+    if not facts.facts_only:
+        facts.extra_lines.append(aspect_facts_line(result.aspects, "thanh điệu"))
     return await generate_comment(facts, settings, lang=lang, target_lang="zh")
 
 

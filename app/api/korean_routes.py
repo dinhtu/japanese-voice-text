@@ -33,6 +33,7 @@ from app.services.cjk_evaluate_v2 import AsrUnavailableError, evaluate_v2, measu
 from app.services.coaching import (
     SUPPORTED_LANGUAGES,
     CoachingUnavailableError,
+    aspect_facts_line,
     build_facts,
     generate_comment,
     generate_text_reading_guide,
@@ -215,6 +216,8 @@ async def _coach_comment(result: EvaluationResult, settings: Settings, lang: str
         # Nothing heard (v2 only): the no-voice line alone, not every syllable as missing.
         facts.extra_lines = [NO_VOICE_FACT]
         facts.facts_only = True
+    else:
+        facts.extra_lines = [aspect_facts_line(result.aspects, "ngữ điệu F0")]
     return await generate_comment(facts, settings, lang=lang, target_lang="ko")
 
 

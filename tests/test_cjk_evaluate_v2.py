@@ -287,7 +287,9 @@ def test_ko_coach_endpoint_is_unchanged(monkeypatch):
     assert r.status_code == 200
     assert r.json() == {"success": True, "assessment": "Tốt.", "suggestion": "Luyện thêm.", "lang": "vi"}
     facts = coach[0][0]
-    assert not facts.facts_only and facts.extra_lines == []
+    # The one extra line is the aspect breakdown behind the weighted overall.
+    assert not facts.facts_only and len(facts.extra_lines) == 1
+    assert facts.extra_lines[0].startswith("Điểm thành phần: độ khớp âm tiết 60/100")
     assert facts.wrong_morae == ["합→함", "니→미"]
 
 
